@@ -4,7 +4,7 @@ use arboard::Clipboard;
 use enigo::{Direction, Enigo, Key, Settings, Keyboard};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 #[cfg(windows)]
@@ -170,6 +170,18 @@ fn main() {
             // 启动时加载翻译配置（有默认值，配置文件不存在也能跑）
             let handle = app.handle().clone();
             app.manage(std::sync::Mutex::new(translate::load_config(&handle)));
+
+            // 设置窗口点 ✕ 时只隐藏不销毁，否则窗口一旦关闭
+            // 就无法再次打开（get_webview_window 返回 None）
+            if let Some(win) = app.get_webview_window("settings") {
+                let w = win.clone();
+                win.on_window_event(move |event| {
+                    if let WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = w.hide();
+                    }
+                });
+            }
 
             // 系统托盘：应用常驻后台的唯一可见入口，
             // 左键/右键弹出菜单，可打开设置或退出
