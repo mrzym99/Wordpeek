@@ -1,0 +1,282 @@
+html, body, #root {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  user-select: none;
+}
+
+/* Notion 风格配色 */
+:root {
+  --text: #37352f;
+  --text-secondary: #787774;
+  --text-faint: #9b9a97;
+  --border: #e9e9e7;
+  --bg-subtle: #f7f7f5;
+  --accent: #2383e2;
+  --error: #eb5757;
+}
+
+.card {
+  position: relative;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 16px 18px;
+  border-radius: 10px;
+  background: #ffffff;
+  color: var(--text);
+  font: 13.5px/1.65 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  border: 1px solid var(--border);
+  box-shadow:
+    0 0 0 1px rgba(15, 15, 15, 0.05),
+    0 3px 6px rgba(15, 15, 15, 0.1),
+    0 9px 24px rgba(15, 15, 15, 0.2);
+  overflow-y: auto;
+  user-select: text;
+}
+
+/* 标题区：单词 + 音标 + 考试标签，可按住拖动窗口 */
+.word-head {
+  padding-right: 22px;
+  cursor: move;
+}
+
+.word {
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  color: var(--text);
+  line-height: 1.35;
+}
+
+.phonetics {
+  margin-top: 2px;
+  color: var(--text-faint);
+  font-size: 12.5px;
+}
+.phonetics span { margin-right: 12px; }
+
+.badges { margin-top: 6px; }
+.badge {
+  display: inline-block;
+  padding: 0 6px;
+  margin: 0 4px 2px 0;
+  border-radius: 3px;
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 18px;
+}
+
+/* 释义列表 */
+.senses {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: sense;
+}
+.senses li {
+  counter-increment: sense;
+  padding: 3px 0;
+  color: var(--text);
+}
+.senses li::before {
+  content: counter(sense) ".";
+  color: var(--text-faint);
+  margin-right: 6px;
+  font-size: 12px;
+}
+.pos {
+  margin-right: 4px;
+  color: var(--text);
+}
+
+/* 小节：词形变化 / 同义词 */
+.section {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+.pos-tag {
+  color: var(--text-faint);
+  font-weight: 400;
+}
+
+.word-forms { color: var(--text-secondary); font-size: 12.5px; }
+.word-form { margin-right: 14px; }
+.word-form b {
+  font-weight: 500;
+  color: var(--accent);
+  cursor: pointer;
+}
+.word-form b:hover { text-decoration: underline; }
+
+.synos { font-size: 12.5px; }
+.syno {
+  display: inline-block;
+  margin: 2px 6px 2px 0;
+  padding: 0 8px;
+  border-radius: 3px;
+  background: var(--bg-subtle);
+  color: var(--accent);
+  cursor: pointer;
+  line-height: 22px;
+}
+.syno:hover {
+  background: #e7f3f8;
+  text-decoration: underline;
+}
+
+/* 状态 */
+.loading { color: var(--text-faint); }
+.error {
+  margin-top: 10px;
+  color: var(--error);
+  white-space: pre-wrap;
+}
+
+/* 齿轮 / 关闭按钮 */
+.icon-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+.icon-btn:hover { color: var(--text); }
+.icon-btn.gear {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+}
+
+/* 独立设置窗口：左侧菜单 + 右侧内容，保存按钮贴底 */
+.settings-layout {
+  height: 100%;
+  box-sizing: border-box;
+  background: #ffffff;
+  color: var(--text);
+  font: 13.5px/1.65 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  display: flex;
+}
+
+.settings-nav {
+  width: 128px;
+  flex-shrink: 0;
+  padding: 12px 8px;
+  background: var(--bg-subtle);
+  border-right: 1px solid var(--border);
+  box-sizing: border-box;
+}
+
+.nav-item {
+  padding: 5px 10px;
+  margin-bottom: 2px;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.nav-item:hover { background: #ececea; }
+.nav-item.active {
+  background: #e8e8e6;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.settings-content {
+  flex: 1;
+  padding: 16px 18px 14px;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.section-heading {
+  font-size: 15px;
+  font-weight: 700;
+  margin-bottom: 12px;
+}
+
+.settings-footer {
+  margin-top: auto;
+  padding-top: 10px;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+}
+
+.saved-tip {
+  color: #2f9e44;
+  font-size: 12.5px;
+}
+.save-error {
+  color: var(--error);
+  font-size: 12.5px;
+  max-width: 300px;
+  text-align: right;
+}
+
+.field-error {
+  color: var(--error);
+  font-size: 12px;
+  margin: -4px 0 8px;
+}
+.field-hint {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+.about-text p { margin: 0 0 8px; color: var(--text-secondary); }
+.about-text p:first-child { color: var(--text); font-weight: 600; }
+
+input.recording {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 2px rgba(35, 131, 226, 0.15);
+  color: var(--text-faint);
+}
+
+.field {
+  display: block;
+  margin-bottom: 10px;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+}
+.field input,
+.field select {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 4px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px solid #e3e2e0;
+  background: #ffffff;
+  color: var(--text);
+  font: inherit;
+  outline: none;
+}
+.field input:focus,
+.field select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(35, 131, 226, 0.15);
+}
+
+.save-btn {
+  padding: 5px 18px;
+  border: none;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #ffffff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.save-btn:hover { background: #1b74ca; }

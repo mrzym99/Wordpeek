@@ -1,0 +1,49 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Wordpeek",
+  "version": "0.1.0",
+  "identifier": "com.wordpeek.app",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Wordpeek",
+        "width": 400,
+        "height": 360,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "transparent": true,
+        "visible": false,
+        "resizable": true
+      },
+      {
+        "label": "settings",
+        "title": "Wordpeek 设置",
+        "url": "/?page=settings",
+        "width": 500,
+        "height": 360,
+        "visible": false,
+        "resizable": false,
+        "decorations": true,
+        "transparent": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/icon.ico", "icons/icon.png"],
+    "windows": {
+      "nsis": { "languages": ["SimpChinese", "English"] }
+    }
+  }
+}
