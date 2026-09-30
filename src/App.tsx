@@ -15,16 +15,10 @@ interface BaiduConfig {
   secret: string;
 }
 
-interface MSTranslateConfig {
-  key: string;
-  region: string;
-}
-
 interface AppConfig {
   source: string;
   hotkey: string;
   baidu: BaiduConfig;
-  microsoft: MSTranslateConfig;
 }
 
 interface WordForm {
@@ -69,8 +63,6 @@ function SettingsPage() {
   const [source, setSource] = useState("youdao");
   const [appid, setAppid] = useState("");
   const [secret, setSecret] = useState("");
-  const [msKey, setMsKey] = useState("");
-  const [msRegion, setMsRegion] = useState("global");
   const [hotkey, setHotkey] = useState("Ctrl+Alt+T");
   const [recording, setRecording] = useState(false);
   const [hotkeyError, setHotkeyError] = useState("");
@@ -84,8 +76,6 @@ function SettingsPage() {
         setHotkey(cfg.hotkey || "Ctrl+Alt+T");
         setAppid(cfg.baidu.appid);
         setSecret(cfg.baidu.secret);
-        setMsKey(cfg.microsoft?.key ?? "");
-        setMsRegion(cfg.microsoft?.region || "global");
       })
       .catch(() => {
         // 读失败就用默认值，不至于打不开设置
@@ -101,7 +91,6 @@ function SettingsPage() {
           source,
           hotkey,
           baidu: { appid: appid.trim(), secret: secret.trim() },
-          microsoft: { key: msKey.trim(), region: msRegion.trim() || "global" },
         },
       });
       setSaved(true);
@@ -176,7 +165,6 @@ function SettingsPage() {
               <select value={source} onChange={(e) => setSource(e.target.value)}>
                 <option value="youdao">有道词典（免 Key）</option>
                 <option value="baidu">百度翻译</option>
-                <option value="microsoft">微软翻译（Azure，需 Key）</option>
               </select>
             </label>
             {source === "baidu" && (
@@ -198,30 +186,6 @@ function SettingsPage() {
                     onChange={(e) => setSecret(e.target.value)}
                   />
                 </label>
-              </>
-            )}
-            {source === "microsoft" && (
-              <>
-                <label className="field">
-                  订阅密钥
-                  <input
-                    type="password"
-                    value={msKey}
-                    placeholder="Azure 翻译器资源的 KEY"
-                    onChange={(e) => setMsKey(e.target.value)}
-                  />
-                </label>
-                <label className="field">
-                  区域
-                  <input
-                    value={msRegion}
-                    placeholder="global"
-                    onChange={(e) => setMsRegion(e.target.value)}
-                  />
-                </label>
-                <div className="field-hint">
-                  在 portal.azure.com 创建"翻译器"资源后获取密钥和区域；免费 F0 档每月 200 万字符
-                </div>
               </>
             )}
           </>
@@ -249,7 +213,7 @@ function SettingsPage() {
           <>
             <div className="section-heading">关于</div>
             <div className="about-text">
-              <p>Wordpeek v0.1.0 — 最小划词翻译</p>
+              <p>Wordpeek v0.1.2 — 最小划词翻译</p>
               <p>在任意窗口选中单词，按快捷键，鼠标旁弹出翻译卡片。</p>
               <p>设置保存于 %APPDATA%\com.wordpeek.app\config.json</p>
             </div>

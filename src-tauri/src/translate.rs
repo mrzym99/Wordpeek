@@ -15,24 +15,10 @@ pub struct BaiduConfig {
     pub secret: String,
 }
 
-/// 微软 Azure 翻译 API 的鉴权配置
-#[derive(Serialize, Deserialize, Clone, Default)]
-pub struct MSTranslateConfig {
-    #[serde(default)]
-    pub key: String,
-    /// 资源区域，全局资源填 "global"，区域资源如 "chinanorth"
-    #[serde(default = "default_region")]
-    pub region: String,
-}
-
-fn default_region() -> String {
-    "global".into()
-}
-
 /// 应用配置，持久化在 app_config_dir/config.json
 #[derive(Serialize, Deserialize, Clone)]
 pub struct AppConfig {
-    /// 当前翻译源："youdao" | "baidu" | "microsoft"
+    /// 当前翻译源："youdao" | "baidu"
     #[serde(default = "default_source")]
     pub source: String,
     /// 划词快捷键，如 "Ctrl+Alt+T"
@@ -40,8 +26,6 @@ pub struct AppConfig {
     pub hotkey: String,
     #[serde(default)]
     pub baidu: BaiduConfig,
-    #[serde(default)]
-    pub microsoft: MSTranslateConfig,
 }
 
 fn default_source() -> String {
@@ -58,7 +42,6 @@ impl Default for AppConfig {
             source: default_source(),
             hotkey: default_hotkey(),
             baidu: BaiduConfig::default(),
-            microsoft: MSTranslateConfig::default(),
         }
     }
 }
@@ -305,67 +288,21 @@ async fn translate_baidu(text: &str, appid: &str, secret: &str) -> Result<WordIn
     })
 }
 
-async fn translate_microsoft(
-    text: &str,
-    key: &str,
-    region: &str,
-) -> Result<WordInfo, String> {
-    // Azure AI 翻译 REST API；不传 from 参数即自动检测源语言
-    let resp: serde_json::Value = reqwest::Client::new()
-        .post("https://api.cognitive.microsofttranslator.com/translate")
-        .query(&[("api-version", "3.0"), ("to", "zh-Hans")])
-        .header("Ocp-Apim-Subscription-Key", key)
-        .header("Ocp-Apim-Subscription-Region", region)
-        .json(&serde_json::json!([{ "Text": text }]))
-        .send()
-        .await
-        .map_err(|e| format!("请求失败: {e}"))?
-        .json()
-        .await
-        .map_err(|e| format!("响应解析失败: {e}"))?;
-
-    if let Some(err) = resp.get("error") {
-        let msg = err["message"].as_str().unwrap_or("未知错误");
-        return Err(format!("API 错误: {msg}"));
-    }
-    let translations = resp[0]["translations"].as_array().cloned().unwrap_or_default();
-    let senses: Vec<String> = translations
-        .iter()
-        .filter_map(|t| t["text"].as_str().map(str::to_string))
-        .collect();
-    if senses.is_empty() {
-        return Err("未找到释义".into());
-    }
-
-    Ok(WordInfo {
-        word: text.to_string(),
-        source: "microsoft".into(),
-        senses,
-        ..Default::default()
-    })
-}
-
-async fn try_translate(
-    source: &str,
-    text: &str,
-    baidu: &BaiduConfig,
-    microsoft: &MSTranslateConfig,
-) -> Result<WordInfo, String> {
+async fn try_translate(source: &str, text: &str, baidu: &BaiduConfig) -> Result<WordInfo, String> {
     match source {
         "baidu" => translate_baidu(text, &baidu.appid, &baidu.secret).await,
-        "microsoft" => translate_microsoft(text, &microsoft.key, &microsoft.region).await,
         _ => translate_youdao(text).await,
     }
 }
 
-/// 用配置的主源翻译，失败时按 有道→百度→微软 顺序降级（需已配置 key）
+/// 用配置的主源翻译，失败时按 有道→百度 顺序降级（需已配置 key）
 #[tauri::command]
 pub async fn translate(state: State<'_, SharedConfig>, text: String) -> Result<WordInfo, String> {
     let cfg = state.lock().unwrap().clone();
 
     // 主源排最前，其余作为降级候选
     let mut order: Vec<String> = vec![cfg.source.clone()];
-    for s in ["youdao", "baidu", "microsoft"] {
+    for s in ["youdao", "baidu"] {
         if !order.contains(&s.to_string()) {
             order.push(s.to_string());
         }
@@ -378,13 +315,9 @@ pub async fn translate(state: State<'_, SharedConfig>, text: String) -> Result<W
                 errors.push("[百度] 未配置 appid/secret".into());
                 continue;
             }
-            "microsoft" if cfg.microsoft.key.is_empty() => {
-                errors.push("[微软] 未配置 key".into());
-                continue;
-            }
             _ => {}
         }
-        match try_translate(&src, &text, &cfg.baidu, &cfg.microsoft).await {
+        match try_translate(&src, &text, &cfg.baidu).await {
             Ok(result) => return Ok(result),
             Err(e) => errors.push(format!("[{src}] {e}")),
         }
@@ -414,10 +347,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn microsoft_rejects_bad_key() {
+    async fn baidu_rejects_bad_key() {
         // 错误 key 应返回带信息的 Err（能到达 API 且错误处理正常）
-        let r = translate_microsoft("error", "dummy-key", "global").await;
+        let r = translate_baidu("error", "dummy-appid", "dummy-secret").await;
         assert!(r.is_err());
-        println!("microsoft err: {:?}", r.err());
+        println!("baidu err: {:?}", r.err());
     }
 }
