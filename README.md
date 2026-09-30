@@ -58,7 +58,7 @@ npm run tauri build   # 打包，产物在 src-tauri/target/release/bundle/nsis/
 ```
 src/App.tsx            # 弹窗 UI + 设置窗口 + 事件监听
 src-tauri/src/main.rs  # 全局快捷键、模拟 Ctrl+C、剪贴板、光标坐标、托盘
-src-tauri/src/translate.rs  # 翻译源（有道/百度/微软）、配置读写
+src-tauri/src/translate.rs  # 翻译源（有道/百度）、配置读写
 src-tauri/tauri.conf.json   # 无边框/置顶/透明弹窗 + 独立设置窗口
 ```
 
