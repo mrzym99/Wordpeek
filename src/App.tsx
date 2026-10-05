@@ -213,7 +213,7 @@ function SettingsPage() {
           <>
             <div className="section-heading">关于</div>
             <div className="about-text">
-              <p>Wordpeek v0.1.2 — 最小划词翻译</p>
+              <p>Wordpeek v0.1.3 — 最小划词翻译</p>
               <p>在任意窗口选中单词，按快捷键，鼠标旁弹出翻译卡片。</p>
               <p>设置保存于 %APPDATA%\com.wordpeek.app\config.json</p>
             </div>
@@ -312,6 +312,21 @@ function Popup() {
     }
   };
 
+  // 播放有道词典发音，只按单词字符串取音，与当前翻译源无关
+  // type=2 美音 / type=1 英音 / type=0 通用 TTS 兜底
+  const playVoice = (w: string, type: 1 | 2) => {
+    const url = (t: number) =>
+      `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(w)}&type=${t}`;
+    const audio = new Audio(url(type));
+    // 个别词条缺指定音色录音（接口返回 500），退回通用发音
+    audio.onerror = () => {
+      audio.onerror = null;
+      audio.src = url(0);
+      audio.play();
+    };
+    audio.play();
+  };
+
   return (
     <div className="card">
       <button className="icon-btn gear" title="设置" onClick={() => invoke("open_settings")}>
@@ -323,8 +338,25 @@ function Popup() {
         <div className="word" data-tauri-drag-region>{word}</div>
         {(info?.usphone || info?.ukphone) && (
           <div className="phonetics" data-tauri-drag-region>
-            {info?.usphone && <span>美 {info.usphone}</span>}
-            {info?.ukphone && <span>英 {info.ukphone}</span>}
+            {/* 点击播放有道词典发音（type=2 美音 / type=1 英音），与翻译源无关 */}
+            {info?.usphone && (
+              <span
+                className="phonetic"
+                title="播放美音"
+                onClick={() => playVoice(info.word, 2)}
+              >
+                🔊 美 {info.usphone}
+              </span>
+            )}
+            {info?.ukphone && (
+              <span
+                className="phonetic"
+                title="播放英音"
+                onClick={() => playVoice(info.word, 1)}
+              >
+                🔊 英 {info.ukphone}
+              </span>
+            )}
           </div>
         )}
         {info && info.exam_types.length > 0 && (

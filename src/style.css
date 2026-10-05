@@ -54,6 +54,8 @@ html, body, #root {
   font-size: 12.5px;
 }
 .phonetics span { margin-right: 12px; }
+.phonetic { cursor: pointer; }
+.phonetic:hover { color: var(--accent); }
 
 .badges { margin-top: 6px; }
 .badge {
