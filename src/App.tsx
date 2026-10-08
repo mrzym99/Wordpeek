@@ -261,7 +261,7 @@ function SettingsPage() {
             <div className="section-heading">关于</div>
             <div className="about-text">
               <p>
-                Wordpeek v{update?.current_version ?? "0.1.4"} — 最小划词翻译
+                Wordpeek v{update?.current_version ?? "0.1.5"} — 最小划词翻译
               </p>
               <p>在任意窗口选中单词，按快捷键，鼠标旁弹出翻译卡片。</p>
               <p>设置保存于 %APPDATA%\com.wordpeek.app\config.json</p>
