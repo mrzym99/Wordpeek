@@ -83,35 +83,13 @@ fn config_path(app: &AppHandle) -> Option<PathBuf> {
 }
 
 /// 启动时调用：读配置文件，不存在或损坏则用默认值。
-/// 改名后 identifier 变化导致配置目录变化，首次启动会把
-/// 旧目录（com.potmini.app）的配置迁移过来。
+/// 不做旧目录迁移：卸载重装后若配置丢失，把远古配置搬回来
+/// 反而会覆盖用户的当前设置（如翻译源被复旧为 baidu）。
 pub fn load_config(app: &AppHandle) -> AppConfig {
-    let path = config_path(app);
-    let raw = path
-        .as_ref()
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .or_else(|| {
-            let old = PathBuf::from(std::env::var("APPDATA").ok()?)
-                .join("com.potmini.app")
-                .join("config.json");
-            std::fs::read_to_string(old).ok()
-        });
-    let cfg: AppConfig = raw
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default();
-
-    // 旧目录迁移：把读到的配置落到新目录
-    if let Some(p) = &path {
-        if !p.exists() {
-            if let Some(dir) = p.parent() {
-                let _ = std::fs::create_dir_all(dir);
-            }
-            if let Ok(json) = serde_json::to_string_pretty(&cfg) {
-                let _ = std::fs::write(p, json);
-            }
-        }
-    }
-    cfg
+    let raw = config_path(app)
+        .and_then(|p| std::fs::read_to_string(p).ok());
+    raw.and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
 }
 
 #[tauri::command]
