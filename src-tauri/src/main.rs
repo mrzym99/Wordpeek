@@ -6,6 +6,7 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+use tauri_plugin_updater::{Update, UpdaterExt};
 
 #[cfg(windows)]
 use windows::Win32::Foundation::POINT;
@@ -116,6 +117,73 @@ fn open_settings(app: AppHandle) {
     }
 }
 
+/// 已缓存的可用更新（启动 / 手动检查后写入）
+type UpdateState = std::sync::Mutex<Option<Update>>;
+
+#[derive(serde::Serialize, Debug)]
+struct UpdateStatus {
+    available: bool,
+    current_version: String,
+    new_version: Option<String>,
+}
+
+fn status_of(app: &AppHandle, update: Option<&Update>) -> UpdateStatus {
+    UpdateStatus {
+        available: update.is_some(),
+        current_version: app.package_info().version.to_string(),
+        new_version: update.map(|u| u.version.clone()),
+    }
+}
+
+/// 检查更新并把结果缓存到应用状态
+fn check_update(app: &AppHandle) -> Result<UpdateStatus, String> {
+    let update = tauri::async_runtime::block_on(
+        app.updater()
+            .map_err(|e| e.to_string())?
+            .check(),
+    )
+    .map_err(|e| e.to_string())?;
+    let status = status_of(app, update.as_ref());
+    println!("[updater] check: {status:?}");
+    *app.state::<UpdateState>().lock().unwrap() = update;
+    Ok(status)
+}
+
+/// 设置页打开时查询缓存的检查结果（不发网络请求）
+#[tauri::command]
+fn get_update_status(app: AppHandle) -> UpdateStatus {
+    let cached = app.state::<UpdateState>().lock().unwrap().as_ref().cloned();
+    status_of(&app, cached.as_ref())
+}
+
+/// 手动检查更新（设置页「检查更新」按钮）
+#[tauri::command]
+fn check_update_now(app: AppHandle) -> Result<UpdateStatus, String> {
+    check_update(&app)
+}
+
+/// 下载并静默安装已缓存的更新，完成后重启应用（后台线程执行）
+#[tauri::command]
+fn install_update(app: AppHandle) -> Result<(), String> {
+    let update = app
+        .state::<UpdateState>()
+        .lock()
+        .unwrap()
+        .take()
+        .ok_or_else(|| "没有已缓存的更新".to_string())?;
+    std::thread::spawn(move || {
+        println!("[updater] downloading & installing...");
+        let install = update.download_and_install(|_chunk, _total| {}, || {});
+        if let Err(e) = tauri::async_runtime::block_on(install) {
+            eprintln!("[updater] install failed: {e}");
+            return;
+        }
+        // NSIS 静默安装结束后旧进程通常已被安装器接管，restart 兜底
+        app.restart();
+    });
+    Ok(())
+}
+
 /// 解析 "Ctrl+Alt+T" 形式的快捷键字符串
 fn parse_hotkey(s: &str) -> Result<Shortcut, String> {
     let mut mods = Modifiers::empty();
@@ -201,10 +269,21 @@ pub(crate) fn register_hotkey(app: &AppHandle, hotkey: &str) -> Result<(), Strin
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             // 启动时加载翻译配置（有默认值，配置文件不存在也能跑）
             let handle = app.handle().clone();
             app.manage(std::sync::Mutex::new(translate::load_config(&handle)));
+            app.manage(UpdateState::default());
+
+            // 启动后延迟几秒静默检查一次更新，结果缓存供设置页查询
+            let updater_handle = handle.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(6));
+                if let Err(e) = check_update(&updater_handle) {
+                    eprintln!("[updater] startup check failed: {e}");
+                }
+            });
 
             // 设置窗口点 ✕ 时只隐藏不销毁，否则窗口一旦关闭
             // 就无法再次打开（get_webview_window 返回 None）
@@ -255,6 +334,9 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             open_settings,
+            get_update_status,
+            check_update_now,
+            install_update,
             translate::translate,
             translate::get_config,
             translate::save_config

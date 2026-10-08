@@ -21,6 +21,12 @@ interface AppConfig {
   baidu: BaiduConfig;
 }
 
+interface UpdateStatus {
+  available: boolean;
+  current_version: string;
+  new_version: string | null;
+}
+
 interface WordForm {
   name: string;
   value: string;
@@ -68,6 +74,47 @@ function SettingsPage() {
   const [hotkeyError, setHotkeyError] = useState("");
   const [saveError, setSaveError] = useState("");
   const [saved, setSaved] = useState(false);
+  const [update, setUpdate] = useState<UpdateStatus | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [updating, setUpdating] = useState(false);
+  const [updateError, setUpdateError] = useState("");
+  const [checked, setChecked] = useState(false); // 是否检查过更新（用于显示"已是最新"）
+
+  // 进入"关于"分组时读取启动时缓存的检查结果（不发网络请求）
+  useEffect(() => {
+    if (section !== "about") return;
+    invoke<UpdateStatus>("get_update_status")
+      .then((s) => {
+        setUpdate(s);
+        setChecked(true);
+      })
+      .catch(() => {});
+  }, [section]);
+
+  const checkUpdate = async () => {
+    setChecking(true);
+    setUpdateError("");
+    try {
+      setUpdate(await invoke<UpdateStatus>("check_update_now"));
+      setChecked(true);
+    } catch (err) {
+      setUpdateError(String(err));
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  // 下载安装由 Rust 后台线程执行，成功后应用自动重启
+  const installUpdate = async () => {
+    setUpdating(true);
+    setUpdateError("");
+    try {
+      await invoke("install_update");
+    } catch (err) {
+      setUpdateError(String(err));
+      setUpdating(false);
+    }
+  };
 
   useEffect(() => {
     invoke<AppConfig>("get_config")
@@ -213,10 +260,42 @@ function SettingsPage() {
           <>
             <div className="section-heading">关于</div>
             <div className="about-text">
-              <p>Wordpeek v0.1.4 — 最小划词翻译</p>
+              <p>
+                Wordpeek v{update?.current_version ?? "0.1.4"} — 最小划词翻译
+              </p>
               <p>在任意窗口选中单词，按快捷键，鼠标旁弹出翻译卡片。</p>
               <p>设置保存于 %APPDATA%\com.wordpeek.app\config.json</p>
             </div>
+            <div className="update-tip">
+              {update?.available ? (
+                <>
+                  <span>
+                    发现新版本 v{update.new_version}，下载安装完成后将自动重启
+                  </span>
+                  <button
+                    className="update-btn"
+                    onClick={installUpdate}
+                    disabled={updating}
+                  >
+                    {updating ? "下载安装中…" : "立即更新"}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span>
+                    {checked ? "当前已是最新版本。" : ""}
+                  </span>
+                  <button
+                    className="update-btn"
+                    onClick={checkUpdate}
+                    disabled={checking}
+                  >
+                    {checking ? "检查中…" : "检查更新"}
+                  </button>
+                </>
+              )}
+            </div>
+            {updateError && <div className="field-error">{updateError}</div>}
           </>
         )}
 

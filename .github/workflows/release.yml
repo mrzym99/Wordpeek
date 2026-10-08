@@ -1,0 +1,45 @@
+# 自动发版：推送 v* 标签时构建、签名并发布 GitHub Release。
+# 需要的 secrets：
+#   TAURI_SIGNING_PRIVATE_KEY — 更新包签名私钥（本地 ~/.tauri/wordpeek.key）
+# 发版流程：git tag vX.Y.Z && git push origin vX.Y.Z
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write # 创建 Release 并上传附件
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # 构建并创建 Release：自动上传安装包、便携 exe，
+      # 且 bundle.createUpdaterArtifacts 开启时附带 .sig 签名和 latest.json 更新清单
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: ${{ github.ref_name }}
+          releaseBody: "详见更新说明。"
+          releaseDraft: false
+          prerelease: false

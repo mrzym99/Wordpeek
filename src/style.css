@@ -250,6 +250,34 @@ html, body, #root {
 .about-text p { margin: 0 0 8px; color: var(--text-secondary); }
 .about-text p:first-child { color: var(--text); font-weight: 600; }
 
+/* 更新检查：提示文字 + 操作按钮 */
+.update-tip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+}
+.update-btn {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-subtle);
+  color: var(--text);
+  font-size: 12px;
+  padding: 3px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.update-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.update-btn:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+
 input.recording {
   border-color: var(--accent) !important;
   box-shadow: 0 0 0 2px rgba(35, 131, 226, 0.15);
