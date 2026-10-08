@@ -74,6 +74,39 @@ fn cursor_pos() -> (i32, i32) {
     (100, 100)
 }
 
+/// 把弹窗位置钳制在光标所在屏幕内，避免边缘选词时弹窗伸出屏幕外。
+/// 任一步骤拿不到信息（找不到窗口/显示器）就原样返回，不钳制。
+fn clamp_to_screen(app: &AppHandle, x: i32, y: i32) -> (i32, i32) {
+    let Some(win) = app.get_webview_window("main") else {
+        return (x, y);
+    };
+    let Ok(monitors) = win.available_monitors() else {
+        return (x, y);
+    };
+    // 找到光标落在哪块屏幕上
+    let Some(m) = monitors.into_iter().find(|m| {
+        let p = m.position();
+        let s = m.size();
+        x >= p.x && x < p.x + s.width as i32 && y >= p.y && y < p.y + s.height as i32
+    }) else {
+        return (x, y);
+    };
+    let Ok(win_size) = win.outer_size() else {
+        return (x, y);
+    };
+    let p = m.position();
+    let s = m.size();
+    let max_x = p.x + s.width as i32 - win_size.width as i32;
+    let max_y = p.y + s.height as i32 - win_size.height as i32;
+    let cx = x.clamp(p.x, max_x.max(p.x));
+    let cy = y.clamp(p.y, max_y.max(p.y));
+    println!(
+        "[pos] cursor ({x}, {y}) -> clamped ({cx}, {cy}); monitor {:?} {:?}, window {win_size:?}",
+        p, s
+    );
+    (cx, cy)
+}
+
 /// 显示独立的设置窗口（弹窗齿轮按钮 / 托盘菜单共用）
 #[tauri::command]
 fn open_settings(app: AppHandle) {
@@ -141,8 +174,10 @@ fn handle_hotkey_trigger(app: &AppHandle) {
     std::thread::spawn(move || {
         match grab_selection() {
             Some(text) => {
-                let (x, y) = cursor_pos();
-                println!("[grab] got text: {:?} at ({}, {})", text, x, y);
+                let (cx, cy) = cursor_pos();
+                println!("[grab] got text: {:?} at ({}, {})", text, cx, cy);
+                // 在 Rust 端钳制到屏幕内后再发事件，前端直接使用
+                let (x, y) = clamp_to_screen(&app, cx + 12, cy + 16);
                 let _ = app.emit("selection", Selection { text, x, y });
             }
             None => println!("[grab] no text captured"),

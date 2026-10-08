@@ -278,10 +278,11 @@ function Popup() {
     };
 
     const setup = async () => {
-      // Rust 端抓取到选中文本后通过 "selection" 事件发过来
+      // Rust 端抓取到选中文本后通过 "selection" 事件发过来；
+      // x/y 已在 Rust 端钳制到光标所在屏幕内
       unlistenSelection = await listen<Selection>("selection", async (e) => {
         const { text, x, y } = e.payload;
-        await win.setPosition(new PhysicalPosition(x + 12, y + 16));
+        await win.setPosition(new PhysicalPosition(x, y));
         await win.show();
         await win.setFocus();
         lookup(text.trim());
@@ -329,15 +330,16 @@ function Popup() {
 
   return (
     <div className="card">
+      {/* 顶部 padding 区是隐形拖拽热区：按住可移动窗口；窗口边缘仍可拉伸 */}
+      <div className="drag-strip" data-tauri-drag-region />
       <button className="icon-btn gear" title="设置" onClick={() => invoke("open_settings")}>
         ⚙
       </button>
 
-      {/* 标题区可按住拖动窗口 */}
-      <div className="word-head" data-tauri-drag-region>
-        <div className="word" data-tauri-drag-region>{word}</div>
+      <div className="word-head">
+        <div className="word">{word}</div>
         {(info?.usphone || info?.ukphone) && (
-          <div className="phonetics" data-tauri-drag-region>
+          <div className="phonetics">
             {/* 点击播放有道词典发音（type=2 美音 / type=1 英音），与翻译源无关 */}
             {info?.usphone && (
               <span
@@ -360,7 +362,7 @@ function Popup() {
           </div>
         )}
         {info && info.exam_types.length > 0 && (
-          <div className="badges" data-tauri-drag-region>
+          <div className="badges">
             {info.exam_types.map((t) => (
               <span key={t} className="badge">
                 {t}

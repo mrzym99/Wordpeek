@@ -34,9 +34,19 @@ html, body, #root {
   user-select: text;
 }
 
-/* 标题区：单词 + 音标 + 考试标签，可按住拖动窗口 */
+/* 标题区：单词 + 音标 + 考试标签（拖动窗口请用顶部边缘） */
 .word-head {
   padding-right: 22px;
+}
+
+/* 顶部拖拽热区：覆盖卡片上 padding（16px），隐形但鼠标移入变移动光标。
+   fixed 钉在窗口顶部，内容滚动时热区不会跟着跑 */
+.drag-strip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 16px;
   cursor: move;
 }
 
@@ -157,6 +167,7 @@ html, body, #root {
   position: absolute;
   top: 14px;
   right: 14px;
+  z-index: 1; /* 盖过顶部拖拽热区，保证可点击 */
 }
 
 /* 独立设置窗口：左侧菜单 + 右侧内容，保存按钮贴底 */
