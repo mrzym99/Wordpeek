@@ -40,6 +40,7 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: ${{ github.ref_name }}
-          releaseBody: "详见更新说明。"
+          # 自动生成 Release 说明（上个发版以来的提交/PR）；若另设 releaseBody 会被前置
+          generateReleaseNotes: true
           releaseDraft: false
           prerelease: false
