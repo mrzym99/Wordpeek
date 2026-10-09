@@ -818,3 +818,13 @@ T6X
 1. **GetDIBits 时序坑**：MSDN 要求调用时位图不能被选入任何 DC —— `SelectObject(mem_dc, old)` 必须放在 `GetDIBits` **之前**，否则返回 0 行
 2. **biSize 坑**：windows crate 的 `BITMAPINFOHEADER::default()` 是全零结构体，`biSize=0` 导致 GetDIBits 直接失败 —— 必须显式 `biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32`
 3. 错误消息已区分 BitBlt / GetDIBits 两个失败点，便于定位
+
+---
+
+## 附录 D：Task 3 真机偏差——有道免费整句接口已下线（对 spec 的偏离）
+
+- 计划假设 deskdict jsonapi 整句返回 `fanyi.tran`，真机实测无该节点（响应仅含 ee/blng_sents_part/input/meta/le/wikipedia_digest/lang）
+- `fanyi.youdao.com/translate` 返回 HTTP 302（接口废弃）；`jsonversion=4` 需要签名。零 key 的有道整句通道已不可用
+- **降级决策**：整句回落链 = 有道（保留 fanyi 节点兜底代码）→ 百度（需 key）。有道整句报错信息：「有道不支持整句翻译，请配置百度密钥后使用整句翻译」，`translate_text` 自动降级
+- **对 spec 影响**：零配置仅覆盖单词查询；**整句翻译需要百度 key**。M3 截图翻译整句场景同此链路，错误信息会引导配置
+- 后续若有稳定零 key 整句通道（如第三方代理或恢复的接口），替换 `translate_youdao` 整句分支即可
