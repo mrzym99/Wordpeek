@@ -792,3 +792,19 @@ T6X
 3. `cargo test capture` 全绿（4 passed）后，按 Task 1 Step 6 提交：
    `git add -A && git commit -m "feat: GDI 抓屏模块（虚拟屏截取/裁剪/PNG 编码）"`
 4. 继续 Task 2。注意：OCR 相关 WinRT API（`BitmapDecoder::CreateAsync` 等）同样可能返回 `Result` 包装，以编译器提示为准，勿照抄计划中的 Option 假设。
+
+---
+
+## 附录 B：Task 2 完成记录
+
+> 2026-10-09：Task 1、2 已完成并提交（`85a8867`、`a8e0e49`），全量 `cargo test` 12 passed 无回归。
+
+### Task 2 关键修正（下个执行者注意）
+- windows features 必须含 **`Foundation_Collections`**：`OcrEngine::AvailableRecognizerLanguages`（cfg: `Foundation_Collections` + `Globalization`）与 `OcrResult::Lines`（cfg: `Foundation_Collections`）被 feature 门控，缺了报 E0599
+- `recognize` 其余 WinRT API（`DataWriter::CreateDataWriter`/`Seek`/`StoreAsync`/`BitmapDecoder::CreateAsync`/`RecognizeAsync` 等）在 0.58 均返回 `Result` 包装，按计划代码的 `.map_err(..)?` 链式写法一次编译通过
+- `InMemoryRandomAccessStream` 的方法为 inherent，无需 cast 到接口
+
+### 当前进度与恢复点
+- ✅ Task 1（capture.rs）→ commit `85a8867`
+- ✅ Task 2（ocr.rs）→ commit `a8e0e49`
+- ⏭ **从 Task 3 开始**（translate.rs 重构：`translate_text` 抽取 + 有道整句分支，TDD：先写 `youdao_translates_full_sentence` 失败测试）
