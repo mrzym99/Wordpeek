@@ -145,10 +145,19 @@ async fn translate_youdao(text: &str) -> Result<WordInfo, String> {
 
     let w = &resp["ec"]["word"][0];
     if w.is_null() {
-        return Err("未找到释义".into());
+        // 整句/长句没有词条：回落到 fanyi.tran（有道整句翻译节点）
+        let tran = resp["fanyi"]["tran"].as_str().unwrap_or_default();
+        if !tran.trim().is_empty() {
+            return Ok(WordInfo {
+                word: text.to_string(),
+                source: "youdao".into(),
+                senses: vec![tran.to_string()],
+                ..Default::default()
+            });
+        }
+        // 有道免费整句接口已下线（fanyi 节点不再返回）：交由上层降级到百度
+        return Err("有道不支持整句翻译，请配置百度密钥后使用整句翻译".into());
     }
-
-    // 释义：trs[].tr[].l.i（可能多条，每条含词性）
     let mut senses = Vec::new();
     for trs in w["trs"].as_array().cloned().unwrap_or_default() {
         for tr in trs["tr"].as_array().cloned().unwrap_or_default() {
@@ -273,11 +282,9 @@ async fn try_translate(source: &str, text: &str, baidu: &BaiduConfig) -> Result<
     }
 }
 
-/// 用配置的主源翻译，失败时按 有道→百度 顺序降级（需已配置 key）
-#[tauri::command]
-pub async fn translate(state: State<'_, SharedConfig>, text: String) -> Result<WordInfo, String> {
-    let cfg = state.lock().unwrap().clone();
-
+/// 翻译核心：主源优先，失败按 有道→百度 顺序降级（百度需已配置 key）。
+/// 从 translate 命令抽出，供截图翻译管线在无 State 的上下文直接调用。
+pub async fn translate_text(cfg: &AppConfig, text: &str) -> Result<WordInfo, String> {
     // 主源排最前，其余作为降级候选
     let mut order: Vec<String> = vec![cfg.source.clone()];
     for s in ["youdao", "baidu"] {
@@ -288,19 +295,22 @@ pub async fn translate(state: State<'_, SharedConfig>, text: String) -> Result<W
 
     let mut errors: Vec<String> = Vec::new();
     for src in order {
-        match src.as_str() {
-            "baidu" if cfg.baidu.appid.is_empty() || cfg.baidu.secret.is_empty() => {
-                errors.push("[百度] 未配置 appid/secret".into());
-                continue;
-            }
-            _ => {}
+        if src == "baidu" && (cfg.baidu.appid.is_empty() || cfg.baidu.secret.is_empty()) {
+            errors.push("[百度] 未配置 appid/secret".into());
+            continue;
         }
-        match try_translate(&src, &text, &cfg.baidu).await {
+        match try_translate(&src, text, &cfg.baidu).await {
             Ok(result) => return Ok(result),
             Err(e) => errors.push(format!("[{src}] {e}")),
         }
     }
     Err(errors.join("；"))
+}
+
+#[tauri::command]
+pub async fn translate(state: State<'_, SharedConfig>, text: String) -> Result<WordInfo, String> {
+    let cfg = state.lock().unwrap().clone();
+    translate_text(&cfg, &text).await
 }
 
 #[cfg(test)]
@@ -322,6 +332,14 @@ mod tests {
         println!("synos: {:?}", info.synos);
         assert!(!info.synos.is_empty());
         assert!(!info.word_forms.is_empty());
+    }
+
+    #[tokio::test]
+    async fn full_sentence_reports_baidu_guidance() {
+        // 有道免费整句接口已下线：整句应报引导配置百度的错误（translate_text 会自动降级百度）
+        let r = translate_youdao("The quick brown fox jumps over the lazy dog").await;
+        let msg = r.expect_err("整句应报引导性错误");
+        assert!(msg.contains("整句"), "错误信息应说明整句原因: {msg}");
     }
 
     #[tokio::test]
