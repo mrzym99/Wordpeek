@@ -83,9 +83,14 @@ pub fn capture_virtual_screen() -> Result<CapturedScreen, String> {
 
         let blit = BitBlt(mem_dc, 0, 0, w, h, screen_dc, ox, oy, SRCCOPY);
 
-        // 负高度 = 自上而下行序；32bpp BI_RGB 输出为 BGRA
+        // MSDN：GetDIBits 调用时位图不能被选入任何 DC —— 必须先取下位图再读像素
+        SelectObject(mem_dc, old);
+
+        // 负高度 = 自上而下行序；32bpp BI_RGB 输出为 BGRA。
+        // biSize 必须显式设置：windows crate 的 Default() 是全零，缺了它 GetDIBits 直接失败
         let mut bmi = BITMAPINFO::default();
         bmi.bmiHeader = BITMAPINFOHEADER {
+            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
             biWidth: w,
             biHeight: -h,
             biPlanes: 1,
@@ -95,7 +100,7 @@ pub fn capture_virtual_screen() -> Result<CapturedScreen, String> {
         };
         let mut rgba = vec![0u8; (w as usize) * (h as usize) * 4];
         let lines = GetDIBits(
-            mem_dc,
+            screen_dc,
             bitmap,
             0,
             h as u32,
@@ -104,13 +109,15 @@ pub fn capture_virtual_screen() -> Result<CapturedScreen, String> {
             DIB_RGB_COLORS,
         );
 
-        SelectObject(mem_dc, old);
         let _ = DeleteObject(bitmap);
         let _ = DeleteDC(mem_dc);
         ReleaseDC(None, screen_dc);
 
-        if blit.is_err() || lines == 0 {
-            return Err("BitBlt/GetDIBits 抓屏失败".into());
+        if let Err(e) = blit {
+            return Err(format!("BitBlt 抓屏失败: {e}"));
+        }
+        if lines == 0 {
+            return Err("GetDIBits 读取像素失败".into());
         }
         bgra_to_rgba(&mut rgba);
         Ok(CapturedScreen { width: w, height: h, origin_x: ox, origin_y: oy, rgba })
