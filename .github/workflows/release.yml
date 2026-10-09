@@ -16,6 +16,8 @@ jobs:
       contents: write # 创建 Release 并上传附件
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 生成 Release 说明需要完整提交历史与标签
 
       - uses: actions/setup-node@v4
         with:
@@ -31,6 +33,25 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      # 仓库直接向 main 推送（无 PR），GitHub 的 Release Notes API 只认合并的 PR，
+      # 因此改为按上个标签以来的提交信息生成正文。
+      - name: Generate release notes
+        id: notes
+        shell: bash
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
+          if [ -n "$PREV_TAG" ]; then
+            RANGE="$PREV_TAG..HEAD"
+          else
+            RANGE="HEAD"
+          fi
+          {
+            echo "body<<RELEASE_NOTES_EOF"
+            git log "$RANGE" --no-merges --pretty=format:'- %s'
+            echo ""
+            echo "RELEASE_NOTES_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       # 构建并创建 Release：自动上传安装包、便携 exe，
       # 且 bundle.createUpdaterArtifacts 开启时附带 .sig 签名和 latest.json 更新清单
       - uses: tauri-apps/tauri-action@v0
@@ -40,7 +61,8 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: ${{ github.ref_name }}
-          # 自动生成 Release 说明（上个发版以来的提交/PR）；若另设 releaseBody 会被前置
+          # 上面的提交列表会被前置；generateReleaseNotes 再追加贡献者与 Full Changelog
           generateReleaseNotes: true
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: false
           prerelease: false
