@@ -14,6 +14,7 @@ use windows::Win32::Foundation::POINT;
 use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
 
 mod capture;
+mod ocr;
 mod translate;
 
 #[derive(serde::Serialize, Clone)]

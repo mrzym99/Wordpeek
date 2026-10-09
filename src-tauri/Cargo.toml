@@ -19,7 +19,10 @@ md-5 = "0.10"     # 百度翻译 API 签名
 image = { version = "0.25", default-features = false, features = ["png"] }  # 仅 PNG 编码
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.58", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation", "Win32_Graphics_Gdi"] }
+windows = { version = "0.58", features = [
+    "Win32_UI_WindowsAndMessaging", "Win32_Foundation", "Win32_Graphics_Gdi",
+    "Foundation", "Foundation_Collections", "Globalization", "Graphics_Imaging", "Media_Ocr", "Storage_Streams",
+] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros"] }
