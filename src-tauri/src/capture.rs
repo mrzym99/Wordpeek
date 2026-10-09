@@ -173,4 +173,41 @@ mod tests {
         assert_eq!((img.width(), img.height()), (2, 2));
         assert_eq!(img.to_rgba8().into_raw(), rgba);
     }
+
+    /// 手动冒烟：真实抓屏 → PNG → OCR（需系统装 OCR 语言包）。
+    /// 运行：cargo test smoke_real_pipeline -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn smoke_real_pipeline() {
+        let screen = capture_virtual_screen().expect("GDI 抓屏应成功");
+        println!(
+            "虚拟屏: {}x{} @({}, {})，字节长度 {}",
+            screen.width, screen.height, screen.origin_x, screen.origin_y, screen.rgba.len()
+        );
+        assert_eq!(
+            screen.rgba.len(),
+            (screen.width as usize) * (screen.height as usize) * 4
+        );
+
+        // 全屏快照落盘，肉眼检查通道顺序/方向是否正确
+        let png = encode_png(&screen.rgba, screen.width, screen.height).expect("PNG 编码应成功");
+        let path = std::env::temp_dir().join("wordpeek-capture-smoke.png");
+        std::fs::write(&path, &png).expect("写盘应成功");
+        println!("全屏快照已写入: {}", path.display());
+
+        // 屏幕中央 800x400 区域跑真 OCR（无文字/无语言包时只告警不失败）
+        let region = Rect { x: screen.width / 2 - 400, y: screen.height / 2 - 200, w: 800, h: 400 };
+        if let Ok(cropped) = crop(&screen.rgba, screen.width, screen.height, region) {
+            let small = encode_png(&cropped, region.w, region.h).expect("小图编码应成功");
+            match crate::ocr::recognize(&small, "auto") {
+                Ok(lines) => {
+                    println!("OCR 识别 {} 行:", lines.len());
+                    for l in lines.iter().take(10) {
+                        println!("  {:?}", l.text);
+                    }
+                }
+                Err(e) => println!("OCR 跳过（系统可能未装语言包）: {e}"),
+            }
+        }
+    }
 }
