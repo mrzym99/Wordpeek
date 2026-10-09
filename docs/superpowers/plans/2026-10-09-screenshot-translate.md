@@ -763,3 +763,32 @@ T6X
 - [ ] README 增补：功能简介、快捷键表（划词 `Ctrl+Alt+T` / 截图 `Ctrl+Alt+S`）、OCR 语言设置说明、「仅 Windows、混合 DPI 多屏尽力而为」局限
 - [ ] 手动验证：全屏遮罩出现且画面冻结 → ESC 取消；拖框 ≥8px → `%TEMP%\wordpeek-crop.png` 内容正确（M1 遗留调试可删）；OCR 中文/英文/中英混排；有道主源整句、百度未配置时降级；托盘「截图翻译」入口；设置修改两个快捷键并重启生效；失焦取消；125% 缩放单屏；多屏同 DPI
 - [ ] 终检：`cd src-tauri && cargo test` 全绿 + `npx tsc --noEmit` 无错；`git commit -m "feat: 截图翻译完整流程与文档"`
+
+---
+
+## 附录 A：Task 1 执行进度与 windows 0.58 签名修正记录
+
+> 2026-10-09 执行会话遗留：Task 1 代码已全部落盘，卡在最后 1 个编译错误。下个执行会话从「恢复步骤」继续，勿重写已有文件。
+
+### 已完成（勿重复）
+- `src-tauri/src/capture.rs` 已写全：`Rect`/`CapturedScreen` 类型、4 个单测、`crop`/`encode_png`/`capture_virtual_screen` 实现
+- `main.rs` 已声明 `mod capture;`（`mod translate;` 之前）
+- `Cargo.toml` 已加 `image 0.25（仅 png feature）`；windows features 已加 `Win32_Graphics_Gdi`
+
+### windows 0.58 真实签名（与计划假设的差异，代码已按此修正）
+| 计划假设 | 0.58 实际签名 | 已做的修正 |
+|---|---|---|
+| `BitBlt` 返回 BOOL | 返回 `windows_core::Result<()>` | 改 `if blit.is_err()` |
+| `CreateCompatibleDC(Some(dc))` | 参数 `P0: Param<HDC>`，不接受 `Option` | 改 `CreateCompatibleDC(screen_dc)` |
+| `BitBlt(..., Some(screen_dc), ...)` | `hdcsrc` 同样直收 `HDC` | 改 `BitBlt(mem_dc, 0, 0, w, h, screen_dc, ox, oy, SRCCOPY)` |
+| `PngEncoder::encode(...)` | image 0.25 无此固有方法 | 改 `.write_image(...)` 并 `use image::ImageEncoder;` |
+| `SelectObject(mem_dc, bitmap.into())` | `HBITMAP` 本身满足 `Param<HGDIOBJ>` | 去掉 `.into()`，直接 `SelectObject(mem_dc, bitmap)` |
+
+### 恢复步骤
+1. `cd src-tauri && cargo test capture` —— 预期仅剩 1 个错误：约 107 行残留 turbofish 调用
+   `SelectObject::<HDC, _>(mem_dc, old);`（`HDC` 未导入 → E0425）。
+   改为普通调用 `SelectObject(mem_dc, old);` —— `mem_dc: HDC`、`old: HGDIOBJ` 对两个泛型参数均唯一匹配，无需标注。
+2. 若出现 `HGDIOBJ` unused import 警告，把它从 use 列表删除即可。
+3. `cargo test capture` 全绿（4 passed）后，按 Task 1 Step 6 提交：
+   `git add -A && git commit -m "feat: GDI 抓屏模块（虚拟屏截取/裁剪/PNG 编码）"`
+4. 继续 Task 2。注意：OCR 相关 WinRT API（`BitmapDecoder::CreateAsync` 等）同样可能返回 `Result` 包装，以编译器提示为准，勿照抄计划中的 Option 假设。
