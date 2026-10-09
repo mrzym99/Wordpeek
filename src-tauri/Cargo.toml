@@ -16,9 +16,10 @@ arboard = "3"     # 剪贴板读写
 enigo = "0.2"     # 模拟键盘（Ctrl+C）
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 md-5 = "0.10"     # 百度翻译 API 签名
+image = { version = "0.25", default-features = false, features = ["png"] }  # 仅 PNG 编码
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.58", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation"] }
+windows = { version = "0.58", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation", "Win32_Graphics_Gdi"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros"] }
