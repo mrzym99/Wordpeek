@@ -808,3 +808,13 @@ T6X
 - ✅ Task 1（capture.rs）→ commit `85a8867`
 - ✅ Task 2（ocr.rs）→ commit `a8e0e49`
 - ⏭ **从 Task 3 开始**（translate.rs 重构：`translate_text` 抽取 + 有道整句分支，TDD：先写 `youdao_translates_full_sentence` 失败测试）
+
+---
+
+## 附录 C：Task 1 真机冒烟发现的两个 GDI 坑（已修复）
+
+> 冒烟测试 `smoke_real_pipeline`（ignored，`cargo test smoke_real_pipeline -- --ignored --nocapture`）真机验证：4096x1440 多屏虚拟屏抓取成功、OCR 识别 34 行，抓屏→PNG→OCR 全链路打通。
+
+1. **GetDIBits 时序坑**：MSDN 要求调用时位图不能被选入任何 DC —— `SelectObject(mem_dc, old)` 必须放在 `GetDIBits` **之前**，否则返回 0 行
+2. **biSize 坑**：windows crate 的 `BITMAPINFOHEADER::default()` 是全零结构体，`biSize=0` 导致 GetDIBits 直接失败 —— 必须显式 `biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32`
+3. 错误消息已区分 BitBlt / GetDIBits 两个失败点，便于定位
