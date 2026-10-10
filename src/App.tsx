@@ -19,6 +19,8 @@ interface BaiduConfig {
 interface AppConfig {
   source: string;
   hotkey: string;
+  screenshot_hotkey: string;
+  ocr_lang: string;
   baidu: BaiduConfig;
 }
 
@@ -56,13 +58,74 @@ function splitSense(sense: string): { pos: string; text: string } {
   return { pos: m?.[1]?.trim() ?? "", text: m?.[2] ?? sense };
 }
 
-type SettingsSection = "translate" | "hotkey" | "about";
+type SettingsSection = "translate" | "hotkey" | "shot" | "about";
 
 const SECTIONS: { id: SettingsSection; label: string }[] = [
   { id: "translate", label: "翻译" },
   { id: "hotkey", label: "快捷键" },
+  { id: "shot", label: "截图翻译" },
   { id: "about", label: "关于" },
 ];
+
+/** 快捷键录制输入框：点击后按下组合键录制，Esc 取消。
+ *  用 e.code（物理按键）而非 e.key，避免中文输入法把按键吞成 "Process" */
+function HotkeyRecorder({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [recording, setRecording] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!recording) return;
+    const onKey = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.code === "Escape") {
+        setRecording(false);
+        setError("");
+        return;
+      }
+      // 修饰键单独按下时先等待完整组合
+      if (/^(Control|Alt|Shift|Meta)(Left|Right)?$/.test(e.code)) return;
+
+      const parts: string[] = [];
+      if (e.ctrlKey) parts.push("Ctrl");
+      if (e.altKey) parts.push("Alt");
+      if (e.shiftKey) parts.push("Shift");
+      if (e.metaKey) parts.push("Super");
+
+      let keyName: string | null = null;
+      if (/^Key[A-Z]$/.test(e.code)) keyName = e.code.slice(3);
+      else if (/^Digit[0-9]$/.test(e.code)) keyName = e.code.slice(5);
+      else if (/^F([1-9]|1[0-2])$/.test(e.code)) keyName = e.code;
+
+      if (!keyName) {
+        setError("不支持的按键，可用字母、数字、F1-F12");
+        return;
+      }
+      if (parts.length === 0) {
+        setError("需要至少一个修饰键（Ctrl / Alt / Shift）");
+        return;
+      }
+      setError("");
+      onChange([...parts, keyName].join("+"));
+      setRecording(false);
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [recording]);
+
+  return (
+    <>
+      <input
+        className={recording ? "recording" : ""}
+        readOnly
+        value={recording ? "" : value}
+        placeholder={recording ? "按下新的组合键（Esc 取消）" : ""}
+        onClick={() => setRecording(true)}
+      />
+      {error && <div className="field-error">{error}</div>}
+    </>
+  );
+}
 
 /** 独立设置窗口：左侧菜单切换分组，用户手动关闭，不会被 blur 隐藏 */
 function SettingsPage() {
@@ -71,8 +134,8 @@ function SettingsPage() {
   const [appid, setAppid] = useState("");
   const [secret, setSecret] = useState("");
   const [hotkey, setHotkey] = useState("Ctrl+Alt+T");
-  const [recording, setRecording] = useState(false);
-  const [hotkeyError, setHotkeyError] = useState("");
+  const [screenshotHotkey, setScreenshotHotkey] = useState("Ctrl+Alt+S");
+  const [ocrLang, setOcrLang] = useState("auto");
   const [saveError, setSaveError] = useState("");
   const [saved, setSaved] = useState(false);
   const [update, setUpdate] = useState<UpdateStatus | null>(null);
@@ -122,6 +185,8 @@ function SettingsPage() {
       .then((cfg) => {
         setSource(cfg.source);
         setHotkey(cfg.hotkey || "Ctrl+Alt+T");
+        setScreenshotHotkey(cfg.screenshot_hotkey || "Ctrl+Alt+S");
+        setOcrLang(cfg.ocr_lang || "auto");
         setAppid(cfg.baidu.appid);
         setSecret(cfg.baidu.secret);
       })
@@ -134,10 +199,16 @@ function SettingsPage() {
     setSaved(false);
     setSaveError("");
     try {
+      if (hotkey.trim().toLowerCase() === screenshotHotkey.trim().toLowerCase()) {
+        setSaveError("划词与截图快捷键不能相同");
+        return;
+      }
       await invoke("save_config", {
         config: {
           source,
           hotkey,
+          screenshot_hotkey: screenshotHotkey,
+          ocr_lang: ocrLang,
           baidu: { appid: appid.trim(), secret: secret.trim() },
         },
       });
@@ -148,47 +219,7 @@ function SettingsPage() {
     }
   };
 
-  // 快捷键录制：录制态下在 document 上捕获按键。
-  // 用 e.code（物理按键）而非 e.key，避免中文输入法把按键吞成 "Process"
-  useEffect(() => {
-    if (!recording) return;
-    const onKey = (e: KeyboardEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (e.code === "Escape") {
-        setRecording(false);
-        setHotkeyError("");
-        return;
-      }
-      // 修饰键单独按下时先等待完整组合
-      if (/^(Control|Alt|Shift|Meta)(Left|Right)?$/.test(e.code)) return;
-
-      const parts: string[] = [];
-      if (e.ctrlKey) parts.push("Ctrl");
-      if (e.altKey) parts.push("Alt");
-      if (e.shiftKey) parts.push("Shift");
-      if (e.metaKey) parts.push("Super");
-
-      let keyName: string | null = null;
-      if (/^Key[A-Z]$/.test(e.code)) keyName = e.code.slice(3);
-      else if (/^Digit[0-9]$/.test(e.code)) keyName = e.code.slice(5);
-      else if (/^F([1-9]|1[0-2])$/.test(e.code)) keyName = e.code;
-
-      if (!keyName) {
-        setHotkeyError("不支持的按键，可用字母、数字、F1-F12");
-        return;
-      }
-      if (parts.length === 0) {
-        setHotkeyError("需要至少一个修饰键（Ctrl / Alt / Shift）");
-        return;
-      }
-      setHotkeyError("");
-      setHotkey([...parts, keyName].join("+"));
-      setRecording(false);
-    };
-    document.addEventListener("keydown", onKey, true);
-    return () => document.removeEventListener("keydown", onKey, true);
-  }, [recording]);
+  // 快捷键录制已抽取为 HotkeyRecorder 组件（划词/截图共用）
 
   return (
     <div className="settings-layout">
@@ -244,16 +275,28 @@ function SettingsPage() {
             <div className="section-heading">快捷键</div>
             <label className="field">
               划词快捷键
-              <input
-                className={recording ? "recording" : ""}
-                readOnly
-                value={recording ? "" : hotkey}
-                placeholder={recording ? "按下新的组合键（Esc 取消）" : ""}
-                onClick={() => setRecording(true)}
-              />
+              <HotkeyRecorder value={hotkey} onChange={setHotkey} />
             </label>
-            {hotkeyError && <div className="field-error">{hotkeyError}</div>}
             <div className="field-hint">点击输入框后按下组合键即可更换，需包含 Ctrl / Alt / Shift 之一</div>
+          </>
+        )}
+
+        {section === "shot" && (
+          <>
+            <div className="section-heading">截图翻译</div>
+            <label className="field">
+              截图快捷键
+              <HotkeyRecorder value={screenshotHotkey} onChange={setScreenshotHotkey} />
+            </label>
+            <label className="field">
+              OCR 识别语言
+              <select value={ocrLang} onChange={(e) => setOcrLang(e.target.value)}>
+                <option value="auto">跟随系统语言</option>
+                <option value="zh">中文优先</option>
+                <option value="en">英文优先</option>
+              </select>
+            </label>
+            <div className="field-hint">按截图快捷键框选屏幕区域即可识别并翻译；整句翻译需配置百度密钥</div>
           </>
         )}
 
@@ -317,12 +360,20 @@ function Popup() {
   const [word, setWord] = useState("");
   const [info, setInfo] = useState<WordInfo | null>(null);
   const [error, setError] = useState("");
+  // 截图翻译结果卡片（screenshot-result 事件）；非空时优先展示
+  const [shotResult, setShotResult] = useState<{
+    ok: boolean;
+    text: string | null;
+    info: WordInfo | null;
+    error: string | null;
+  } | null>(null);
 
   useEffect(() => {
     const win = getCurrentWindow();
     let unlistenSelection: (() => void) | undefined;
     let unlistenBlur: (() => void) | undefined;
     let unlistenFocus: (() => void) | undefined;
+    let unlistenShot: (() => void) | undefined;
 
     const lookup = async (w: string) => {
       setWord(w);
@@ -362,10 +413,23 @@ function Popup() {
       // x/y 已在 Rust 端钳制到光标所在屏幕内
       unlistenSelection = await listen<Selection>("selection", async (e) => {
         const { text, x, y } = e.payload;
+        setShotResult(null); // 新的划词到达，退出截图卡片视图
         await win.setPosition(new PhysicalPosition(x, y));
         await win.show();
         await win.setFocus();
         lookup(text.trim());
+      });
+
+      // 截图结果回来时主窗口多半隐藏着，show+focus 弹卡片（位置沿用上次划词位置）
+      unlistenShot = await listen<{
+        ok: boolean;
+        text: string | null;
+        info: WordInfo | null;
+        error: string | null;
+      }>("screenshot-result", (e) => {
+        setShotResult(e.payload);
+        win.show();
+        win.setFocus();
       });
 
       unlistenBlur = await win.listen("tauri://blur", startHideCheck);
@@ -377,6 +441,7 @@ function Popup() {
       unlistenSelection?.();
       unlistenBlur?.();
       unlistenFocus?.();
+      unlistenShot?.();
       stopHideCheck();
     };
   }, []);
@@ -407,6 +472,51 @@ function Popup() {
     };
     audio.play();
   };
+
+  // 截图翻译卡片：原文 + 复制 + 译文（OCR 成功且翻译有结果时）
+  if (shotResult) {
+    return (
+      <div className="card">
+        <div className="drag-strip" data-tauri-drag-region />
+        <button className="icon-btn gear" title="设置" onClick={() => invoke("open_settings")}>
+          ⚙
+        </button>
+        <div className="word-head">
+          <div className="word">截图识别结果</div>
+        </div>
+        {shotResult.text && (
+          <>
+            <div className="shot-text">{shotResult.text}</div>
+            <button className="shot-copy" onClick={() => invoke("copy_text", { text: shotResult.text ?? "" })}>
+              复制原文
+            </button>
+          </>
+        )}
+        {shotResult.error && <div className="error">{shotResult.error}</div>}
+        {shotResult.info && (
+          <>
+            <ul className="senses">
+              {shotResult.info.senses.map((s, i) => {
+                const { pos, text } = splitSense(s);
+                return (
+                  <li key={i}>
+                    {pos && <b className="pos">{pos}</b>}
+                    {text}
+                  </li>
+                );
+              })}
+            </ul>
+            <button
+              className="shot-copy"
+              onClick={() => invoke("copy_text", { text: shotResult.info!.senses.join("\n") })}
+            >
+              复制译文
+            </button>
+          </>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="card">

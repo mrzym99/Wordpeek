@@ -343,3 +343,27 @@ input.recording {
   box-shadow: 0 0 0 100000px rgba(0, 0, 0, 0.35);
   pointer-events: none;
 }
+
+/* ===== 截图翻译结果卡片 ===== */
+.shot-text {
+  white-space: pre-wrap;
+  max-height: 180px;
+  overflow-y: auto;
+  background: #f5f7fa;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  margin-bottom: 8px;
+}
+.shot-copy {
+  display: inline-block;
+  border: none;
+  background: #4f8cff;
+  color: #fff;
+  border-radius: 6px;
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  margin-bottom: 8px;
+}

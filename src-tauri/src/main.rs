@@ -320,17 +320,18 @@ fn handle_screenshot_trigger(app: &AppHandle) {
         let _ = app.emit_to(
             "screenshot",
             "screenshot-start",
-            serde_json::json!({ "dataUrl": data_url, "width": sw, "height": sh }),
+            serde_json::json!({ "data_url": data_url, "width": sw, "height": sh }),
         );
     });
 }
 
-/// 前端框选完成：裁剪出选区。M1 阶段写临时文件验证，Task 7 接 OCR 管线
+/// 前端框选完成：裁剪选区 → OCR → 翻译，结果发回主窗口弹卡片
 #[tauri::command]
 fn screenshot_finish(app: AppHandle, x: i32, y: i32, w: i32, h: i32) -> Result<(), String> {
     let state = app.state::<ScreenshotState>();
     let mut session = state.0.lock().unwrap();
     let screen = session.screen.take().ok_or("没有进行中的截图会话")?;
+    let was_visible = session.settings_was_visible;
     let win = app.get_webview_window("screenshot").ok_or("截图窗口不存在")?;
     let _ = win.hide();
 
@@ -343,20 +344,72 @@ fn screenshot_finish(app: AppHandle, x: i32, y: i32, w: i32, h: i32) -> Result<(
 
     let cropped = crate::capture::crop(&screen.rgba, screen.width, screen.height, rect)?;
     let png = crate::capture::encode_png(&cropped, rect.w, rect.h)?;
+    drop(session); // 后续流程不再需要会话锁
 
-    let path = std::env::temp_dir().join("wordpeek-crop.png");
-    std::fs::write(&path, &png).map_err(|e| format!("写入临时文件失败: {e}"))?;
-    println!("[screenshot] 裁剪已写入: {}", path.display());
+    // OCR/翻译耗时且走网络，放后台线程避免阻塞命令；结果发主窗口弹卡片
+    std::thread::spawn(move || {
+        let ocr_lang = app
+            .state::<std::sync::Mutex<translate::AppConfig>>()
+            .lock()
+            .unwrap()
+            .ocr_lang
+            .clone();
+        let payload = match crate::ocr::recognize(&png, &ocr_lang) {
+            Ok(lines) => {
+                let text = lines
+                    .iter()
+                    .map(|l| l.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if text.trim().is_empty() {
+                    serde_json::json!({
+                        "ok": false, "text": null, "info": null,
+                        "error": "未识别到文字，请框选包含文字的区域"
+                    })
+                } else {
+                    // 翻译（主源→降级；整句需百度 key，错误信息会引导）
+                    let cfg = app
+                        .state::<std::sync::Mutex<translate::AppConfig>>()
+                        .lock()
+                        .unwrap()
+                        .clone();
+                    match tauri::async_runtime::block_on(crate::translate::translate_text(&cfg, &text)) {
+                        Ok(info) => serde_json::json!({ "ok": true, "text": text, "info": info, "error": null }),
+                        Err(e) => serde_json::json!({ "ok": true, "text": text, "info": null, "error": e }),
+                    }
+                }
+            }
+            Err(e) => serde_json::json!({ "ok": false, "text": null, "info": null, "error": e }),
+        };
+        let _ = app.emit_to("main", "screenshot-result", payload);
+
+        // 截图前设置窗口可见则恢复
+        if was_visible {
+            if let Some(s) = app.get_webview_window("settings") {
+                let _ = s.show();
+            }
+        }
+    });
     Ok(())
 }
 
 /// 前端按 ESC 或窗口失焦取消：丢弃会话并隐藏遮罩
 #[tauri::command]
 fn screenshot_cancel(app: AppHandle) {
-    let state = app.state::<ScreenshotState>();
-    state.0.lock().unwrap().screen = None;
+    let was_visible;
+    {
+        let state = app.state::<ScreenshotState>();
+        let mut session = state.0.lock().unwrap();
+        was_visible = session.settings_was_visible;
+        session.screen = None;
+    }
     if let Some(win) = app.get_webview_window("screenshot") {
         let _ = win.hide();
+    }
+    if was_visible {
+        if let Some(s) = app.get_webview_window("settings") {
+            let _ = s.show();
+        }
     }
     println!("[screenshot] cancelled");
 }
@@ -373,6 +426,11 @@ fn copy_text(text: String) -> Result<(), String> {
 pub(crate) fn register_hotkeys(app: &AppHandle, cfg: &translate::AppConfig) {
     if let Err(e) = app.global_shortcut().unregister_all() {
         eprintln!("[shortcut] 注销旧快捷键失败: {e}");
+    }
+    // 两个快捷键相同会导致行为歧义，直接都不注册
+    if cfg.hotkey.eq_ignore_ascii_case(&cfg.screenshot_hotkey) {
+        eprintln!("[shortcut] 划词与截图快捷键不能相同");
+        return;
     }
     if let Ok(sc) = parse_hotkey(&cfg.hotkey) {
         if let Err(e) = app.global_shortcut().on_shortcut(sc, |app, _s, event| {
