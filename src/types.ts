@@ -59,4 +59,6 @@ export interface ShotResult {
   virtual: { x: number; y: number; width: number; height: number };
   /** 松手瞬间鼠标位置（物理像素），卡片弹到鼠标旁边 */
   mouse: { x: number; y: number };
+  /** 光标所在屏的工作区（排除任务栏，物理像素）；width/height 为 0 时表示未获取到 */
+  work: { x: number; y: number; width: number; height: number };
 }

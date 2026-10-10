@@ -77,6 +77,30 @@ fn cursor_pos() -> (i32, i32) {
     (100, 100)
 }
 
+/// 光标所在显示器的工作区（物理像素，排除任务栏等应用栏）。
+/// 拿不到信息时返回 (0,0,0,0)，前端会退回用虚拟屏边界錨制。
+#[cfg(windows)]
+fn work_area_at(x: i32, y: i32) -> (i32, i32, i32, i32) {
+    use windows::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    };
+    let mut info = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    let hmon = unsafe { MonitorFromPoint(POINT { x, y }, MONITOR_DEFAULTTONEAREST) };
+    if unsafe { GetMonitorInfoW(hmon, &mut info) }.as_bool() {
+        let rc = info.rcWork;
+        return (rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top);
+    }
+    (0, 0, 0, 0)
+}
+
+#[cfg(not(windows))]
+fn work_area_at(_x: i32, _y: i32) -> (i32, i32, i32, i32) {
+    (0, 0, 0, 0)
+}
+
 /// 把弹窗位置钳制在光标所在屏幕内，避免边缘选词时弹窗伸出屏幕外。
 /// 任一步骤拿不到信息（找不到窗口/显示器）就原样返回，不钳制。
 fn clamp_to_screen(app: &AppHandle, x: i32, y: i32) -> (i32, i32) {
@@ -335,6 +359,8 @@ fn screenshot_finish(app: AppHandle, x: i32, y: i32, w: i32, h: i32) -> Result<(
     let _ = win.hide();
     // 松手瞬间的光标位置（物理像素），结果卡片弹到鼠标旁边；OCR 完再取会被用户摌走
     let (mx, my) = cursor_pos();
+    // 光标所在屏的工作区（排除任务栏），前端錨制用
+    let (wx, wy, ww, wh) = work_area_at(mx, my);
 
     // 钳制到快照范围内，避免越界尺寸与裁剪像素长度不符
     let cx = x.max(0).min(screen.width - 1);
@@ -351,6 +377,7 @@ fn screenshot_finish(app: AppHandle, x: i32, y: i32, w: i32, h: i32) -> Result<(
     let sel = serde_json::json!({ "x": cx, "y": cy, "w": cw, "h": ch });
     let virt = serde_json::json!({ "x": vx, "y": vy, "width": vw, "height": vh });
     let mouse = serde_json::json!({ "x": mx, "y": my });
+    let work = serde_json::json!({ "x": wx, "y": wy, "width": ww, "height": wh });
     let png = crate::capture::encode_png(&cropped, rect.w, rect.h)?;
     drop(session); // 后续流程不再需要会话锁
 
@@ -373,7 +400,7 @@ fn screenshot_finish(app: AppHandle, x: i32, y: i32, w: i32, h: i32) -> Result<(
                     serde_json::json!({
                         "ok": false, "text": null, "info": null,
                         "error": "未识别到文字，请框选包含文字的区域",
-                        "sel": sel, "virtual": virt, "mouse": mouse
+                        "sel": sel, "virtual": virt, "mouse": mouse, "work": work
                     })
                 } else {
                     // 翻译（主源→降级；整句需百度 key，错误信息会引导）
@@ -383,12 +410,12 @@ fn screenshot_finish(app: AppHandle, x: i32, y: i32, w: i32, h: i32) -> Result<(
                         .unwrap()
                         .clone();
                     match tauri::async_runtime::block_on(crate::translate::translate_text(&cfg, &text)) {
-                        Ok(info) => serde_json::json!({ "ok": true, "text": text, "info": info, "error": null, "sel": sel, "virtual": virt, "mouse": mouse }),
-                        Err(e) => serde_json::json!({ "ok": true, "text": text, "info": null, "error": e, "sel": sel, "virtual": virt, "mouse": mouse }),
+                        Ok(info) => serde_json::json!({ "ok": true, "text": text, "info": info, "error": null, "sel": sel, "virtual": virt, "mouse": mouse, "work": work }),
+                        Err(e) => serde_json::json!({ "ok": true, "text": text, "info": null, "error": e, "sel": sel, "virtual": virt, "mouse": mouse, "work": work }),
                     }
                 }
             }
-            Err(e) => serde_json::json!({ "ok": false, "text": null, "info": null, "error": e, "sel": sel, "virtual": virt, "mouse": mouse }),
+            Err(e) => serde_json::json!({ "ok": false, "text": null, "info": null, "error": e, "sel": sel, "virtual": virt, "mouse": mouse, "work": work }),
         };
         let _ = app.emit_to("main", "screenshot-result", payload);
 

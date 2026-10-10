@@ -93,21 +93,26 @@ export default function Popup() {
       unlistenShot = await listen<ShotResult>("screenshot-result", async (e) => {
         setShotResult(e.payload);
         setDraft(e.payload.text ?? ""); // 新一轮结果重置编辑副本
-        const { virtual, mouse } = e.payload;
+        const { virtual, mouse, work } = e.payload;
         try {
           // 两步定位：先粗移到鼠标旁——窗口落到目标屏后，Windows 会按该屏缩放
           // 重新解释窗口尺寸，此时再量真实尺寸（outerSize）做钳制，
           // 避免跨屏 DPI 尺寸漂移导致卡片超出边界
           await win.setPosition(new PhysicalPosition(mouse.x + 4, mouse.y + 4));
           const size = await win.outerSize();
-          // 卡片左上角贴在鼠标右下 4px 处（同划词），錨制在虚拟屏内（真实窗口尺寸）
+          // 钳制在光标所在屏的工作区内（排除任务栏）；拿不到则退回虚拟屏
+          const bx = work.width > 0 ? work.x : virtual.x;
+          const by = work.height > 0 ? work.y : virtual.y;
+          const bw = work.width > 0 ? work.width : virtual.width;
+          const bh = work.height > 0 ? work.height : virtual.height;
+          // 水平：鼠标居中；垂直：鼠标下方 4px；靠边时整体收进工作区
           const px = Math.max(
-            virtual.x + 4,
-            Math.min(mouse.x + 4, virtual.x + virtual.width - size.width - 4)
+            bx + 4,
+            Math.min(mouse.x - size.width / 2, bx + bw - size.width - 4)
           );
           const py = Math.max(
-            virtual.y + 4,
-            Math.min(mouse.y + 4, virtual.y + virtual.height - size.height - 4)
+            by + 4,
+            Math.min(mouse.y + 4, by + bh - size.height - 4)
           );
           await win.setPosition(new PhysicalPosition(Math.round(px), Math.round(py)));
         } catch (err) {
