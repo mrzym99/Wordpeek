@@ -496,6 +496,8 @@ function Popup() {
 
   // 截图翻译卡片：原文 + 复制 + 译文（OCR 成功且翻译有结果时）
   if (shotResult) {
+    // 重新翻译进行中：info/error 均空且原文存在
+    const shotLoading = !!shotResult.text && !shotResult.info && !shotResult.error;
     return (
       <div className="card">
         <div className="drag-strip" data-tauri-drag-region />
@@ -518,11 +520,15 @@ function Popup() {
               spellCheck={false}
             />
             <div className="shot-actions">
-              <button className="shot-copy" onClick={() => doCopy("text", draft)}>
-                {copied === "text" ? "已复制 ✓" : "复制原文"}
+              <button className="icon-btn" title="复制原文" onClick={() => doCopy("text", draft)}>
+                {copied === "text" ? "✓" : "⧉"}
               </button>
-              <button className="shot-copy ghost" onClick={() => retranslate(draft)}>
-                重新翻译
+              <button
+                className={"icon-btn" + (shotLoading ? " spinning" : "")}
+                title="重新翻译"
+                onClick={() => retranslate(draft)}
+              >
+                ↻
               </button>
             </div>
           </>
@@ -545,10 +551,11 @@ function Popup() {
               })}
             </ul>
             <button
-              className="shot-copy"
+              className="icon-btn"
+              title="复制译文"
               onClick={() => doCopy("translation", shotResult.info!.senses.join("\n"))}
             >
-              {copied === "translation" ? "已复制 ✓" : "复制译文"}
+              {copied === "translation" ? "✓" : "⧉"}
             </button>
           </>
         )}

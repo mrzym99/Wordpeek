@@ -356,21 +356,6 @@ input.recording {
   line-height: 1.5;
   margin-bottom: 8px;
 }
-.shot-copy {
-  border: none;
-  border-radius: 6px;
-  background: var(--accent);
-  color: #ffffff;
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  padding: 3px 10px;
-  margin-bottom: 8px;
-  margin-right: 8px;
-  transition: background 0.15s ease;
-}
-.shot-copy:hover { background: #1b74ca; }
-.shot-copy:active { background: #1668b8; }
 
 /* 原文可编辑区（textarea 复用 .shot-text 外观）+ 按钮行 */
 textarea.shot-text {
@@ -388,23 +373,22 @@ textarea.shot-text:focus {
 }
 .shot-actions {
   display: flex;
-  gap: 8px;
+  gap: 10px;
   margin-bottom: 8px;
 }
-.shot-actions .shot-copy { margin-bottom: 0; }
-.shot-copy.ghost {
-  background: transparent;
-  color: var(--accent);
-  border: 1px solid var(--accent);
+/* 重新翻译进行中：图标旋转 */
+.icon-btn.spinning {
+  animation: shot-spin 0.9s linear infinite;
 }
-.shot-copy.ghost:hover { background: rgba(79, 140, 255, 0.1); }
-.shot-copy.ghost:active { background: rgba(79, 140, 255, 0.2); }
+@keyframes shot-spin {
+  to { transform: rotate(360deg); }
+}
 .shot-loading {
   font-size: 12px;
   color: #888;
   margin-bottom: 8px;
 }
-/* 截图卡片译文容器：与原文区同款浅灰圆角 */
+/* 截图卡片译文容器：与原文区同款浅灰圆角；不显示序号 */
 .shot-senses {
   margin: 0 0 8px;
   background: #f5f7fa;
@@ -413,6 +397,7 @@ textarea.shot-text:focus {
   max-height: 220px;
   overflow-y: auto;
 }
+.shot-senses li::before { display: none; }
 
 /* ===== 截图卡片内的选区预览 ===== */
 .shot-preview {
