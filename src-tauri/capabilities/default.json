@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "弹窗需要的基本窗口操作权限",
-  "windows": ["main"],
+  "windows": ["main", "screenshot"],
   "permissions": [
     "core:event:default",
     "core:window:allow-is-focused",

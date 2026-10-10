@@ -32,10 +32,23 @@
         "resizable": false,
         "decorations": true,
         "transparent": false
+      },
+      {
+        "label": "screenshot",
+        "url": "/?page=screenshot",
+        "width": 100,
+        "height": 100,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "shadow": false,
+        "resizable": false
       }
     ],
     "security": {
-      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; media-src https://dict.youdao.com"
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src https://dict.youdao.com"
     }
   },
   "plugins": {
