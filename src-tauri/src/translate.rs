@@ -24,6 +24,12 @@ pub struct AppConfig {
     /// 划词快捷键，如 "Ctrl+Alt+T"
     #[serde(default = "default_hotkey")]
     pub hotkey: String,
+    /// 截图翻译快捷键，如 "Ctrl+Alt+S"
+    #[serde(default = "default_screenshot_hotkey")]
+    pub screenshot_hotkey: String,
+    /// 截图 OCR 识别语言："auto" | "zh" | "en"
+    #[serde(default = "default_ocr_lang")]
+    pub ocr_lang: String,
     #[serde(default)]
     pub baidu: BaiduConfig,
 }
@@ -36,11 +42,21 @@ fn default_hotkey() -> String {
     "Ctrl+Alt+T".into()
 }
 
+fn default_screenshot_hotkey() -> String {
+    "Ctrl+Alt+S".into()
+}
+
+fn default_ocr_lang() -> String {
+    "auto".into()
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         AppConfig {
             source: default_source(),
             hotkey: default_hotkey(),
+            screenshot_hotkey: default_screenshot_hotkey(),
+            ocr_lang: default_ocr_lang(),
             baidu: BaiduConfig::default(),
         }
     }
@@ -316,6 +332,14 @@ pub async fn translate(state: State<'_, SharedConfig>, text: String) -> Result<W
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn config_defaults_fill_screenshot_fields() {
+        // 旧配置文件没有这两个新字段，serde 默认值必须兜底
+        let cfg: AppConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(cfg.screenshot_hotkey, "Ctrl+Alt+S");
+        assert_eq!(cfg.ocr_lang, "auto");
+    }
 
     #[tokio::test]
     async fn youdao_returns_entries() {
