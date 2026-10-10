@@ -52,6 +52,16 @@ interface WordInfo {
   exam_types: string[];
 }
 
+/** 截图翻译结果卡片载荷（screenshot-result 事件） */
+interface ShotResult {
+  ok: boolean;
+  text: string | null;
+  info: WordInfo | null;
+  error: string | null;
+  /** 选区快照 data URL，卡片内预览；新划词/新截图时旧图自动释放 */
+  image: string | null;
+}
+
 /** 把 "n. 错误，差错" 拆成词性和释义两部分 */
 function splitSense(sense: string): { pos: string; text: string } {
   const m = sense.match(/^([a-z]+\.\s*)?(.*)$/s);
@@ -361,12 +371,7 @@ function Popup() {
   const [info, setInfo] = useState<WordInfo | null>(null);
   const [error, setError] = useState("");
   // 截图翻译结果卡片（screenshot-result 事件）；非空时优先展示
-  const [shotResult, setShotResult] = useState<{
-    ok: boolean;
-    text: string | null;
-    info: WordInfo | null;
-    error: string | null;
-  } | null>(null);
+  const [shotResult, setShotResult] = useState<ShotResult | null>(null);
 
   useEffect(() => {
     const win = getCurrentWindow();
@@ -421,12 +426,7 @@ function Popup() {
       });
 
       // 截图结果回来时主窗口多半隐藏着，show+focus 弹卡片（位置沿用上次划词位置）
-      unlistenShot = await listen<{
-        ok: boolean;
-        text: string | null;
-        info: WordInfo | null;
-        error: string | null;
-      }>("screenshot-result", (e) => {
+      unlistenShot = await listen<ShotResult>("screenshot-result", (e) => {
         setShotResult(e.payload);
         win.show();
         win.setFocus();
@@ -484,6 +484,9 @@ function Popup() {
         <div className="word-head">
           <div className="word">截图识别结果</div>
         </div>
+        {shotResult.image && (
+          <img className="shot-preview" src={shotResult.image} alt="截图预览" />
+        )}
         {shotResult.text && (
           <>
             <div className="shot-text">{shotResult.text}</div>

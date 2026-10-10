@@ -73,7 +73,13 @@ export default function ScreenshotPage() {
 
   return (
     <div className="shot-mask" onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp}>
-      <img src={shot.data_url} className="shot-frame" draggable={false} alt="" />
+      <img
+        src={shot.data_url}
+        className="shot-frame"
+        draggable={false}
+        alt=""
+        onLoad={() => invoke("screenshot_ready")}
+      />
       {sel && (
         <div
           className="shot-selection"

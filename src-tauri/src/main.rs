@@ -312,17 +312,33 @@ fn handle_screenshot_trigger(app: &AppHandle) {
             }
         }
 
-        let _ = win.show();
-        let _ = win.set_focus();
-
-        // 快照以 data URL 发给前端做背景（几 MB 可接受，仅触发时传输）
+        // 快照以 data URL 发给前端做背景（几 MB 可接受，仅触发时传输）。
+        // 先发事件等前端渲染好（img onLoad → screenshot_ready）再显示遮罩，
+        // 避免窗口显示时内容未就绪闪一下；1.5s 兜底强制显示防止会话卡死
         let data_url = format!("data:image/png;base64,{}", STANDARD.encode(&png));
         let _ = app.emit_to(
             "screenshot",
             "screenshot-start",
             serde_json::json!({ "data_url": data_url, "width": sw, "height": sh }),
         );
+        let app2 = app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+            if let Some(w) = app2.get_webview_window("screenshot") {
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        });
     });
+}
+
+/// 前端快照渲染完成（img onLoad），现在可以显示遮罩
+#[tauri::command]
+fn screenshot_ready(app: AppHandle) {
+    if let Some(win) = app.get_webview_window("screenshot") {
+        let _ = win.show();
+        let _ = win.set_focus();
+    }
 }
 
 /// 前端框选完成：裁剪选区 → OCR → 翻译，结果发回主窗口弹卡片
@@ -348,6 +364,9 @@ fn screenshot_finish(app: AppHandle, x: i32, y: i32, w: i32, h: i32) -> Result<(
 
     // OCR/翻译耗时且走网络，放后台线程避免阻塞命令；结果发主窗口弹卡片
     std::thread::spawn(move || {
+        // 选区快照 data URL：随结果发卡片内预览，前端替换/新划词时旧图自动释放
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        let crop_url = format!("data:image/png;base64,{}", STANDARD.encode(&png));
         let ocr_lang = app
             .state::<std::sync::Mutex<translate::AppConfig>>()
             .lock()
@@ -364,7 +383,7 @@ fn screenshot_finish(app: AppHandle, x: i32, y: i32, w: i32, h: i32) -> Result<(
                 if text.trim().is_empty() {
                     serde_json::json!({
                         "ok": false, "text": null, "info": null,
-                        "error": "未识别到文字，请框选包含文字的区域"
+                        "error": "未识别到文字，请框选包含文字的区域", "image": crop_url
                     })
                 } else {
                     // 翻译（主源→降级；整句需百度 key，错误信息会引导）
@@ -374,12 +393,12 @@ fn screenshot_finish(app: AppHandle, x: i32, y: i32, w: i32, h: i32) -> Result<(
                         .unwrap()
                         .clone();
                     match tauri::async_runtime::block_on(crate::translate::translate_text(&cfg, &text)) {
-                        Ok(info) => serde_json::json!({ "ok": true, "text": text, "info": info, "error": null }),
-                        Err(e) => serde_json::json!({ "ok": true, "text": text, "info": null, "error": e }),
+                        Ok(info) => serde_json::json!({ "ok": true, "text": text, "info": info, "error": null, "image": crop_url }),
+                        Err(e) => serde_json::json!({ "ok": true, "text": text, "info": null, "error": e, "image": crop_url }),
                     }
                 }
             }
-            Err(e) => serde_json::json!({ "ok": false, "text": null, "info": null, "error": e }),
+            Err(e) => serde_json::json!({ "ok": false, "text": null, "info": null, "error": e, "image": crop_url }),
         };
         let _ = app.emit_to("main", "screenshot-result", payload);
 
@@ -522,6 +541,7 @@ fn main() {
             install_update,
             screenshot_finish,
             screenshot_cancel,
+            screenshot_ready,
             copy_text,
             translate::translate,
             translate::get_config,
