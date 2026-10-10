@@ -329,14 +329,6 @@ input.recording {
   cursor: crosshair;
   overflow: hidden;
 }
-.shot-frame {
-  width: 100vw;
-  height: 100vh;
-  object-fit: fill;
-  user-select: none;
-  pointer-events: none;
-  display: block;
-}
 .shot-selection {
   position: absolute;
   border: 1px solid #4f8cff;
@@ -361,10 +353,10 @@ input.recording {
   border-radius: 6px;
   background: var(--accent);
   color: #ffffff;
-  font: inherit;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 500;
   cursor: pointer;
-  padding: 5px 14px;
+  padding: 3px 10px;
   margin-bottom: 8px;
   margin-right: 8px;
   transition: background 0.15s ease;

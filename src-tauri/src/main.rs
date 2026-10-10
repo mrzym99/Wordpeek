@@ -265,23 +265,15 @@ struct ScreenshotSession {
     settings_was_visible: bool,
 }
 
-/// 截图翻译触发：抓全屏 → 铺满遮罩窗口 → 发快照给前端做背景
+/// 截图翻译触发：后台抓屏供裁剪，遮罩立即显示（透明，框选对实时桌面）
 fn handle_screenshot_trigger(app: &AppHandle) {
     println!("[screenshot] triggered");
-    use base64::{engine::general_purpose::STANDARD, Engine as _};
     let app = app.clone();
     std::thread::spawn(move || {
         let screen = match crate::capture::capture_virtual_screen() {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("[screenshot] 抓屏失败: {e}");
-                return;
-            }
-        };
-        let png = match crate::capture::encode_png(&screen.rgba, screen.width, screen.height) {
-            Ok(p) => p,
-            Err(e) => {
-                eprintln!("[screenshot] PNG 编码失败: {e}");
                 return;
             }
         };
@@ -320,33 +312,16 @@ fn handle_screenshot_trigger(app: &AppHandle) {
             }
         }
 
-        // 快照以 data URL 发给前端做背景（几 MB 可接受，仅触发时传输）。
-        // 先发事件等前端渲染好（img onLoad → screenshot_ready）再显示遮罩，
-        // 避免窗口显示时内容未就绪闪一下；1.5s 兜底强制显示防止会话卡死
-        let data_url = format!("data:image/png;base64,{}", STANDARD.encode(&png));
+        // 遮罩内容常驻就绪（纯 CSS，无大图传输），立即显示即可框选；
+        // screenshot-start 仅作轻量信号让前端重置选区
         let _ = app.emit_to(
             "screenshot",
             "screenshot-start",
-            serde_json::json!({ "data_url": data_url, "width": sw, "height": sh }),
+            serde_json::json!({}),
         );
-        let app2 = app.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(1500));
-            if let Some(w) = app2.get_webview_window("screenshot") {
-                let _ = w.show();
-                let _ = w.set_focus();
-            }
-        });
-    });
-}
-
-/// 前端快照渲染完成（img onLoad），现在可以显示遮罩
-#[tauri::command]
-fn screenshot_ready(app: AppHandle) {
-    if let Some(win) = app.get_webview_window("screenshot") {
         let _ = win.show();
         let _ = win.set_focus();
-    }
+    });
 }
 
 /// 前端框选完成：裁剪选区 → OCR → 翻译，结果发回主窗口弹卡片
@@ -566,7 +541,6 @@ fn main() {
             install_update,
             screenshot_finish,
             screenshot_cancel,
-            screenshot_ready,
             copy_text,
             translate::translate,
             translate::get_config,

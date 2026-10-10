@@ -2,33 +2,25 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
-/** screenshot-start 事件载荷：冻结快照 data URL + 虚拟屏物理尺寸 */
-interface ScreenshotStart {
-  data_url: string;
-  width: number;
-  height: number;
-}
-
-/** 全屏遮罩框选页：背景为冻结快照，拖拽出选区后交给后端裁剪 */
+/** 全屏遮罩框选页：遮罩窗口透明，框选直接对着实时桌面（选区外变暗）；
+ *  快照由后端在触发瞬间抓取，仅供松手后裁剪，前端不显示大图 */
 export default function ScreenshotPage() {
-  const [shot, setShot] = useState<ScreenshotStart | null>(null);
   // 选区：起点 + 当前点（CSS 像素，窗口内坐标）
   const [sel, setSel] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const dragging = useRef(false);
 
+  // screenshot-start 仅作轻量信号：重置上一轮选区（遮罩内容常驻就绪，无需加载）
   useEffect(() => {
     let unlisten: (() => void) | undefined;
-    listen<ScreenshotStart>("screenshot-start", (e) => {
-      setShot(e.payload);
+    listen("screenshot-start", () => {
       setSel(null);
       dragging.current = false;
     }).then((fn) => (unlisten = fn));
     return () => unlisten?.();
   }, []);
 
-  // ESC / 窗口失焦 → 取消本次截图会话
+  // ESC / 窗口失焦 → 取消本次截图会话（窗口隐藏后事件不会再触发）
   useEffect(() => {
-    if (!shot) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") invoke("screenshot_cancel");
     };
@@ -39,9 +31,7 @@ export default function ScreenshotPage() {
       document.removeEventListener("keydown", onKey, true);
       window.removeEventListener("blur", onBlur);
     };
-  }, [shot]);
-
-  if (!shot) return null;
+  }, []);
 
   const dpr = window.devicePixelRatio || 1;
 
@@ -73,13 +63,6 @@ export default function ScreenshotPage() {
 
   return (
     <div className="shot-mask" onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp}>
-      <img
-        src={shot.data_url}
-        className="shot-frame"
-        draggable={false}
-        alt=""
-        onLoad={() => invoke("screenshot_ready")}
-      />
       {sel && (
         <div
           className="shot-selection"
