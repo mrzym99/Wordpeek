@@ -828,3 +828,14 @@ T6X
 - **降级决策**：整句回落链 = 有道（保留 fanyi 节点兜底代码）→ 百度（需 key）。有道整句报错信息：「有道不支持整句翻译，请配置百度密钥后使用整句翻译」，`translate_text` 自动降级
 - **对 spec 影响**：零配置仅覆盖单词查询；**整句翻译需要百度 key**。M3 截图翻译整句场景同此链路，错误信息会引导配置
 - 后续若有稳定零 key 整句通道（如第三方代理或恢复的接口），替换 `translate_youdao` 整句分支即可
+
+---
+
+## 附录 E：执行完成记录（Task 6-9，9/9 全部完成）
+
+- Task 6：`ScreenshotPage.tsx` 遮罩框选（commit `2e7c75a`）
+- Task 7+8 合并实现（commit `ec288b0`）：`screenshot_finish` 接 OCR+`translate_text`、`screenshot-result` 载荷 `{ok,text,info,error}`、Popup 双语卡片（复制原文/译文）、`HotkeyRecorder` 组件抽取复用、`ocr_lang` select、双热键相同校验（前端 save 拦截 + 后端 register_hotkeys 拦截双保险）
+- 事件载荷字段为 snake_case `data_url`（与计划一致）；M1 临时落盘 `%TEMP%\wordpeek-crop.png` 已移除（OCR 直接消费 PNG 字节）
+- Task 9：README 增补截图翻译章节（快捷键表 + OCR 语言说明 + 百度整句前提 + 局限）
+- 终态：`cargo test` 14 passed + 1 ignored（真机冒烟）；`npx tsc --noEmit` 无错
+- **剩余工作 = 手动验证**（计划 Task 9 清单）：`cargo tauri dev` 后验证框选/ESC/失焦/中英 OCR/整句降级/设置双快捷键/多屏
