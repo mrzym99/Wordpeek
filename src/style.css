@@ -35,19 +35,19 @@ html, body, #root {
 }
 
 /* 标题区：单词 + 音标 + 考试标签（拖动窗口请用顶部边缘） */
-/* 标题行水平居中(词+音标+徽章+设置齿轮)，与内容留 gap */
+/* 标题行：内容靠左、设置齿轮靠右（两端对齐），整行垂直居中，与内容留 gap */
 .word-head {
   display: flex;
   align-items: center;
-  justify-content: center;
   flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 10px;
 }
-/* 齿轮随流排列；relative 保住 z-index 以盖过顶部拖拽热区 */
+/* 齿轮推到行最右侧；relative 保住 z-index 以盖过顶部拖拽热区 */
 .word-head .icon-btn.gear {
   position: relative;
   z-index: 2;
+  margin-left: auto;
 }
 
 /* 顶部拖拽热区：覆盖卡片上 padding（16px），隐形但鼠标移入变移动光标。
