@@ -347,9 +347,6 @@ fn screenshot_finish(app: AppHandle, x: i32, y: i32, w: i32, h: i32) -> Result<(
 
     // OCR/翻译耗时且走网络，放后台线程避免阻塞命令；结果发主窗口弹卡片
     std::thread::spawn(move || {
-        // 选区快照 data URL：随结果发卡片内预览，前端替换/新划词时旧图自动释放
-        use base64::{engine::general_purpose::STANDARD, Engine as _};
-        let crop_url = format!("data:image/png;base64,{}", STANDARD.encode(&png));
         let ocr_lang = app
             .state::<std::sync::Mutex<translate::AppConfig>>()
             .lock()
@@ -366,7 +363,7 @@ fn screenshot_finish(app: AppHandle, x: i32, y: i32, w: i32, h: i32) -> Result<(
                 if text.trim().is_empty() {
                     serde_json::json!({
                         "ok": false, "text": null, "info": null,
-                        "error": "未识别到文字，请框选包含文字的区域", "image": crop_url
+                        "error": "未识别到文字，请框选包含文字的区域"
                     })
                 } else {
                     // 翻译（主源→降级；整句需百度 key，错误信息会引导）
@@ -376,12 +373,12 @@ fn screenshot_finish(app: AppHandle, x: i32, y: i32, w: i32, h: i32) -> Result<(
                         .unwrap()
                         .clone();
                     match tauri::async_runtime::block_on(crate::translate::translate_text(&cfg, &text)) {
-                        Ok(info) => serde_json::json!({ "ok": true, "text": text, "info": info, "error": null, "image": crop_url }),
-                        Err(e) => serde_json::json!({ "ok": true, "text": text, "info": null, "error": e, "image": crop_url }),
+                        Ok(info) => serde_json::json!({ "ok": true, "text": text, "info": info, "error": null }),
+                        Err(e) => serde_json::json!({ "ok": true, "text": text, "info": null, "error": e }),
                     }
                 }
             }
-            Err(e) => serde_json::json!({ "ok": false, "text": null, "info": null, "error": e, "image": crop_url }),
+            Err(e) => serde_json::json!({ "ok": false, "text": null, "info": null, "error": e }),
         };
         let _ = app.emit_to("main", "screenshot-result", payload);
 

@@ -402,12 +402,3 @@ textarea.shot-text:focus {
 }
 .shot-senses li::before { display: none; }
 
-/* ===== 截图卡片内的选区预览 ===== */
-.shot-preview {
-  width: 100%;
-  max-height: 220px;
-  object-fit: contain;
-  border-radius: 6px;
-  background: #f5f7fa;
-  margin-bottom: 8px;
-}

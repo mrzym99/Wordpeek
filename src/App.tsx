@@ -58,8 +58,6 @@ interface ShotResult {
   text: string | null;
   info: WordInfo | null;
   error: string | null;
-  /** 选区快照 data URL，卡片内预览；新划词/新截图时旧图自动释放 */
-  image: string | null;
 }
 
 /** 把 "n. 错误，差错" 拆成词性和释义两部分 */
@@ -535,9 +533,6 @@ function Popup() {
         <div className="word-head">
           <div className="word">截图识别结果</div>
         </div>
-        {shotResult.image && (
-          <img className="shot-preview" src={shotResult.image} alt="截图预览" />
-        )}
         {shotResult.text && (
           <>
             <textarea
