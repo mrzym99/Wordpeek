@@ -70,7 +70,7 @@ pub fn recognize(png: &[u8], lang: &str) -> Result<Vec<OcrLine>, String> {
     use windows::Storage::Streams::{DataWriter, InMemoryRandomAccessStream};
 
     // 按语言挑引擎："zh"/"en" 显式挑语言包，"auto" 跟随用户语言
-    let engine = unsafe {
+    let engine = {
         match lang {
             "zh" | "en" => {
                 let view = OcrEngine::AvailableRecognizerLanguages()
@@ -94,8 +94,8 @@ pub fn recognize(png: &[u8], lang: &str) -> Result<Vec<OcrLine>, String> {
         }
     };
 
-    unsafe {
-        // PNG 字节写入内存流供解码器读取
+    // PNG 字节写入内存流供解码器读取
+    {
         let stream = InMemoryRandomAccessStream::new().map_err(|e| e.to_string())?;
         let writer = DataWriter::CreateDataWriter(&stream).map_err(|e| e.to_string())?;
         writer.WriteBytes(png).map_err(|e| e.to_string())?;
