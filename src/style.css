@@ -162,6 +162,9 @@ html, body, #root {
   cursor: pointer;
   padding: 2px 4px;
 }
+/* 图标按钮内 SVG 对齐；复制成功反馈为绿色对勾 */
+.icon-btn { display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+.icon-btn.ok { color: #22a06b; }
 .icon-btn:hover { color: var(--text); }
 .icon-btn.gear {
   position: absolute;
