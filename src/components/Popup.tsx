@@ -93,20 +93,18 @@ export default function Popup() {
       unlistenShot = await listen<ShotResult>("screenshot-result", async (e) => {
         setShotResult(e.payload);
         setDraft(e.payload.text ?? ""); // 新一轮结果重置编辑副本
-        const { sel, virtual } = e.payload;
+        const { virtual, mouse } = e.payload;
         try {
           const size = await win.outerSize();
-          const gap = 8 * (window.devicePixelRatio || 1);
-          // 水平：选区中心对齐窗口中心，錨制在虚拟屏内
+          // 卡片左上角贴在鼠标右下 4px 处（同划词），錨制在虚拟屏内（真实窗口尺寸）
           const px = Math.max(
             virtual.x + 4,
-            Math.min(sel.x + sel.w / 2 - size.width / 2, virtual.x + virtual.width - size.width - 4)
+            Math.min(mouse.x + 4, virtual.x + virtual.width - size.width - 4)
           );
-          let py = sel.y + sel.h + gap;
-          if (py + size.height > virtual.y + virtual.height) {
-            py = sel.y - size.height - gap; // 下方放不下，弹到选区上方
-          }
-          py = Math.max(virtual.y + 4, py);
+          const py = Math.max(
+            virtual.y + 4,
+            Math.min(mouse.y + 4, virtual.y + virtual.height - size.height - 4)
+          );
           await win.setPosition(new PhysicalPosition(Math.round(px), Math.round(py)));
         } catch (err) {
           // 定位失败（权限/取尺寸异常）也要把卡片弹出来，沿用上次位置

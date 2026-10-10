@@ -53,8 +53,10 @@ export interface ShotResult {
   text: string | null;
   info: WordInfo | null;
   error: string | null;
-  /** 框选区物理坐标（虚拟屏坐标系），用于卡片定位 */
+  /** 框选区物理坐标（虚拟屏坐标系） */
   sel: { x: number; y: number; w: number; h: number };
   /** 虚拟屏物理边界，用于卡片位置錨制 */
   virtual: { x: number; y: number; width: number; height: number };
+  /** 松手瞬间鼠标位置（物理像素），卡片弹到鼠标旁边 */
+  mouse: { x: number; y: number };
 }

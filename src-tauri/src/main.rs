@@ -333,6 +333,8 @@ fn screenshot_finish(app: AppHandle, x: i32, y: i32, w: i32, h: i32) -> Result<(
     let was_visible = session.settings_was_visible;
     let win = app.get_webview_window("screenshot").ok_or("截图窗口不存在")?;
     let _ = win.hide();
+    // 松手瞬间的光标位置（物理像素），结果卡片弹到鼠标旁边；OCR 完再取会被用户摌走
+    let (mx, my) = cursor_pos();
 
     // 钳制到快照范围内，避免越界尺寸与裁剪像素长度不符
     let cx = x.max(0).min(screen.width - 1);
@@ -348,6 +350,7 @@ fn screenshot_finish(app: AppHandle, x: i32, y: i32, w: i32, h: i32) -> Result<(
     // 选区与虚拟屏边界（物理像素）随结果发前端，用于把卡片弹到框选位置附近
     let sel = serde_json::json!({ "x": cx, "y": cy, "w": cw, "h": ch });
     let virt = serde_json::json!({ "x": vx, "y": vy, "width": vw, "height": vh });
+    let mouse = serde_json::json!({ "x": mx, "y": my });
     let png = crate::capture::encode_png(&cropped, rect.w, rect.h)?;
     drop(session); // 后续流程不再需要会话锁
 
@@ -370,7 +373,7 @@ fn screenshot_finish(app: AppHandle, x: i32, y: i32, w: i32, h: i32) -> Result<(
                     serde_json::json!({
                         "ok": false, "text": null, "info": null,
                         "error": "未识别到文字，请框选包含文字的区域",
-                        "sel": sel, "virtual": virt
+                        "sel": sel, "virtual": virt, "mouse": mouse
                     })
                 } else {
                     // 翻译（主源→降级；整句需百度 key，错误信息会引导）
@@ -380,12 +383,12 @@ fn screenshot_finish(app: AppHandle, x: i32, y: i32, w: i32, h: i32) -> Result<(
                         .unwrap()
                         .clone();
                     match tauri::async_runtime::block_on(crate::translate::translate_text(&cfg, &text)) {
-                        Ok(info) => serde_json::json!({ "ok": true, "text": text, "info": info, "error": null, "sel": sel, "virtual": virt }),
-                        Err(e) => serde_json::json!({ "ok": true, "text": text, "info": null, "error": e, "sel": sel, "virtual": virt }),
+                        Ok(info) => serde_json::json!({ "ok": true, "text": text, "info": info, "error": null, "sel": sel, "virtual": virt, "mouse": mouse }),
+                        Err(e) => serde_json::json!({ "ok": true, "text": text, "info": null, "error": e, "sel": sel, "virtual": virt, "mouse": mouse }),
                     }
                 }
             }
-            Err(e) => serde_json::json!({ "ok": false, "text": null, "info": null, "error": e, "sel": sel, "virtual": virt }),
+            Err(e) => serde_json::json!({ "ok": false, "text": null, "info": null, "error": e, "sel": sel, "virtual": virt, "mouse": mouse }),
         };
         let _ = app.emit_to("main", "screenshot-result", payload);
 
