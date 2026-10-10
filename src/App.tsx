@@ -382,6 +382,16 @@ function Popup() {
       })
       .catch(() => {});
   };
+  // 原文可编辑副本：用户修掉 OCR 错误换行后可重新翻译
+  const [draft, setDraft] = useState("");
+  // 用编辑后的文本重新翻译，结果回填卡片（不清空 draft）
+  const retranslate = (text: string) => {
+    if (!text.trim()) return;
+    setShotResult((r) => (r ? { ...r, info: null, error: null } : r));
+    invoke<WordInfo>("translate", { text })
+      .then((info) => setShotResult((r) => (r ? { ...r, info, error: null } : r)))
+      .catch((e) => setShotResult((r) => (r ? { ...r, error: String(e) } : r)));
+  };
 
   useEffect(() => {
     const win = getCurrentWindow();
@@ -438,6 +448,7 @@ function Popup() {
       // 截图结果回来时主窗口多半隐藏着，show+focus 弹卡片（位置沿用上次划词位置）
       unlistenShot = await listen<ShotResult>("screenshot-result", (e) => {
         setShotResult(e.payload);
+        setDraft(e.payload.text ?? ""); // 新一轮结果重置编辑副本
         win.show();
         win.setFocus();
       });
@@ -499,13 +510,27 @@ function Popup() {
         )}
         {shotResult.text && (
           <>
-            <div className="shot-text">{shotResult.text}</div>
-            <button className="shot-copy" onClick={() => doCopy("text", shotResult.text ?? "")}>
-              {copied === "text" ? "已复制 ✓" : "复制原文"}
-            </button>
+            <textarea
+              className="shot-text"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              rows={3}
+              spellCheck={false}
+            />
+            <div className="shot-actions">
+              <button className="shot-copy" onClick={() => doCopy("text", draft)}>
+                {copied === "text" ? "已复制 ✓" : "复制原文"}
+              </button>
+              <button className="shot-copy ghost" onClick={() => retranslate(draft)}>
+                重新翻译
+              </button>
+            </div>
           </>
         )}
         {shotResult.error && <div className="error">{shotResult.error}</div>}
+        {!shotResult.info && !shotResult.error && shotResult.text && (
+          <div className="shot-loading">翻译中…</div>
+        )}
         {shotResult.info && (
           <>
             <ul className="senses">
