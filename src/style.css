@@ -404,6 +404,15 @@ textarea.shot-text:focus {
   color: #888;
   margin-bottom: 8px;
 }
+/* 截图卡片译文容器：与原文区同款浅灰圆角 */
+.shot-senses {
+  margin: 0 0 8px;
+  background: #f5f7fa;
+  border-radius: 6px;
+  padding: 8px 10px;
+  max-height: 220px;
+  overflow-y: auto;
+}
 
 /* ===== 截图卡片内的选区预览 ===== */
 .shot-preview {

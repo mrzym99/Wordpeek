@@ -533,7 +533,7 @@ function Popup() {
         )}
         {shotResult.info && (
           <>
-            <ul className="senses">
+            <ul className="senses shot-senses">
               {shotResult.info.senses.map((s, i) => {
                 const { pos, text } = splitSense(s);
                 return (
