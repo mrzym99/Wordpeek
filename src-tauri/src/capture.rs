@@ -49,7 +49,13 @@ pub fn encode_png(rgba: &[u8], width: i32, height: i32) -> Result<Vec<u8>, Strin
     }
     let mut out = Vec::new();
     use image::ImageEncoder;
-    image::codecs::png::PngEncoder::new(std::io::Cursor::new(&mut out))
+    // Fast + NoFilter：截图场景优先编码速度而非压缩率，本地 IPC 传输体积影响可忽略
+    use image::codecs::png::{CompressionType, FilterType};
+    image::codecs::png::PngEncoder::new_with_quality(
+        std::io::Cursor::new(&mut out),
+        CompressionType::Fast,
+        FilterType::NoFilter,
+    )
         .write_image(rgba, width as u32, height as u32, image::ExtendedColorType::Rgba8)
         .map_err(|e| format!("PNG 编码失败: {e}"))?;
     Ok(out)

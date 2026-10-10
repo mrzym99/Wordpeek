@@ -372,6 +372,16 @@ function Popup() {
   const [error, setError] = useState("");
   // 截图翻译结果卡片（screenshot-result 事件）；非空时优先展示
   const [shotResult, setShotResult] = useState<ShotResult | null>(null);
+  // 复制反馈："text" | "translation" | ""，1.5s 后自动复位
+  const [copied, setCopied] = useState("");
+  const doCopy = (label: "text" | "translation", text: string) => {
+    invoke("copy_text", { text })
+      .then(() => {
+        setCopied(label);
+        setTimeout(() => setCopied(""), 1500);
+      })
+      .catch(() => {});
+  };
 
   useEffect(() => {
     const win = getCurrentWindow();
@@ -490,8 +500,8 @@ function Popup() {
         {shotResult.text && (
           <>
             <div className="shot-text">{shotResult.text}</div>
-            <button className="shot-copy" onClick={() => invoke("copy_text", { text: shotResult.text ?? "" })}>
-              复制原文
+            <button className="shot-copy" onClick={() => doCopy("text", shotResult.text ?? "")}>
+              {copied === "text" ? "已复制 ✓" : "复制原文"}
             </button>
           </>
         )}
@@ -511,9 +521,9 @@ function Popup() {
             </ul>
             <button
               className="shot-copy"
-              onClick={() => invoke("copy_text", { text: shotResult.info!.senses.join("\n") })}
+              onClick={() => doCopy("translation", shotResult.info!.senses.join("\n"))}
             >
-              复制译文
+              {copied === "translation" ? "已复制 ✓" : "复制译文"}
             </button>
           </>
         )}

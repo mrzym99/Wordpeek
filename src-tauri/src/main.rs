@@ -291,9 +291,17 @@ fn handle_screenshot_trigger(app: &AppHandle) {
         let Some(win) = app.get_webview_window("screenshot") else {
             return;
         };
-        // 遮罩窗口物理尺寸 = 虚拟屏尺寸，原点 = 虚拟屏原点
-        let _ = win.set_position(tauri::PhysicalPosition::new(sx, sy));
-        let _ = win.set_size(tauri::PhysicalSize::new(sw, sh));
+        // 遮罩窗口常驻铺满虚拟屏：位置/尺寸没变就不重设，避免 resize 引起闪动
+        if let Ok(pos) = win.outer_position() {
+            if pos.x != sx || pos.y != sy {
+                let _ = win.set_position(tauri::PhysicalPosition::new(sx, sy));
+            }
+        }
+        if let Ok(cur) = win.outer_size() {
+            if cur.width != sw as u32 || cur.height != sh as u32 {
+                let _ = win.set_size(tauri::PhysicalSize::new(sw, sh));
+            }
+        }
 
         // 记录设置窗口可见性并存快照，finish/cancel 时清理
         let was_visible = app
@@ -481,6 +489,23 @@ fn main() {
             app.manage(std::sync::Mutex::new(translate::load_config(&handle)));
             app.manage(UpdateState::default());
             app.manage(ScreenshotState::default());
+
+            // 启动后后台把截图遮罩窗口预铺到虚拟屏尺寸（常驻隐藏），
+            // 首次截图时窗口无需 resize，避免闪动
+            let shot_handle = handle.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(800));
+                if let (Ok(screen), Some(win)) = (
+                    crate::capture::capture_virtual_screen(),
+                    shot_handle.get_webview_window("screenshot"),
+                ) {
+                    let _ = win.set_position(tauri::PhysicalPosition::new(
+                        screen.origin_x,
+                        screen.origin_y,
+                    ));
+                    let _ = win.set_size(tauri::PhysicalSize::new(screen.width, screen.height));
+                }
+            });
 
             // 启动后延迟几秒静默检查一次更新，结果缓存供设置页查询
             let updater_handle = handle.clone();

@@ -357,16 +357,20 @@ input.recording {
   margin-bottom: 8px;
 }
 .shot-copy {
-  display: inline-block;
   border: none;
-  background: #4f8cff;
-  color: #fff;
   border-radius: 6px;
-  padding: 4px 12px;
-  font-size: 12px;
+  background: var(--accent);
+  color: #ffffff;
+  font: inherit;
+  font-weight: 600;
   cursor: pointer;
+  padding: 5px 14px;
   margin-bottom: 8px;
+  margin-right: 8px;
+  transition: background 0.15s ease;
 }
+.shot-copy:hover { background: #1b74ca; }
+.shot-copy:active { background: #1668b8; }
 
 /* ===== 截图卡片内的选区预览 ===== */
 .shot-preview {
