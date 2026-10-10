@@ -5336,6 +5336,7 @@ name = "wordpeek"
 version = "0.1.5"
 dependencies = [
  "arboard",
+ "base64 0.22.1",
  "enigo",
  "image",
  "md-5",

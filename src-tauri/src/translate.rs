@@ -125,14 +125,11 @@ pub fn save_config(
     }
     let json = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
     std::fs::write(&path, json).map_err(|e| format!("写入配置文件失败: {e}"))?;
-    let hotkey = config.hotkey.clone();
-    *state.lock().unwrap() = config;
+    *state.lock().unwrap() = config.clone();
     println!("[config] saved");
 
-    // 快捷键可能被修改：按新配置重新注册
-    if let Err(e) = crate::register_hotkey(&app, &hotkey) {
-        return Err(format!("配置已保存，但快捷键注册失败：{e}"));
-    }
+    // 快捷键可能被修改：按新配置重新注册全部快捷键（失败仅日志，不阻断保存）
+    crate::register_hotkeys(&app, &config);
     Ok(())
 }
 

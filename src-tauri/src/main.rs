@@ -255,17 +255,143 @@ fn handle_hotkey_trigger(app: &AppHandle) {
     });
 }
 
-/// 按配置字符串注册全局快捷键（会先注销所有旧的）
-pub(crate) fn register_hotkey(app: &AppHandle, hotkey: &str) -> Result<(), String> {
-    let shortcut = parse_hotkey(hotkey)?;
-    app.global_shortcut().unregister_all().map_err(|e| e.to_string())?;
-    app.global_shortcut()
-        .on_shortcut(shortcut, |app, _shortcut, event| {
+/// 截图会话状态：触发时保存全屏快照与设置窗口可见性，finish 时再裁剪
+#[derive(Default)]
+struct ScreenshotState(std::sync::Mutex<ScreenshotSession>);
+
+#[derive(Default)]
+struct ScreenshotSession {
+    screen: Option<crate::capture::CapturedScreen>,
+    settings_was_visible: bool,
+}
+
+/// 截图翻译触发：抓全屏 → 铺满遮罩窗口 → 发快照给前端做背景
+fn handle_screenshot_trigger(app: &AppHandle) {
+    println!("[screenshot] triggered");
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let screen = match crate::capture::capture_virtual_screen() {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[screenshot] 抓屏失败: {e}");
+                return;
+            }
+        };
+        let png = match crate::capture::encode_png(&screen.rgba, screen.width, screen.height) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("[screenshot] PNG 编码失败: {e}");
+                return;
+            }
+        };
+        let (sw, sh, sx, sy) =
+            (screen.width, screen.height, screen.origin_x, screen.origin_y);
+
+        let Some(win) = app.get_webview_window("screenshot") else {
+            return;
+        };
+        // 遮罩窗口物理尺寸 = 虚拟屏尺寸，原点 = 虚拟屏原点
+        let _ = win.set_position(tauri::PhysicalPosition::new(sx, sy));
+        let _ = win.set_size(tauri::PhysicalSize::new(sw, sh));
+
+        // 记录设置窗口可见性并存快照，finish/cancel 时清理
+        let was_visible = app
+            .get_webview_window("settings")
+            .map(|w| w.is_visible().unwrap_or(false))
+            .unwrap_or(false);
+        let state = app.state::<ScreenshotState>();
+        {
+            let mut session = state.0.lock().unwrap();
+            session.screen = Some(screen);
+            session.settings_was_visible = was_visible;
+        }
+        if was_visible {
+            if let Some(s) = app.get_webview_window("settings") {
+                let _ = s.hide();
+            }
+        }
+
+        let _ = win.show();
+        let _ = win.set_focus();
+
+        // 快照以 data URL 发给前端做背景（几 MB 可接受，仅触发时传输）
+        let data_url = format!("data:image/png;base64,{}", STANDARD.encode(&png));
+        let _ = app.emit_to(
+            "screenshot",
+            "screenshot-start",
+            serde_json::json!({ "dataUrl": data_url, "width": sw, "height": sh }),
+        );
+    });
+}
+
+/// 前端框选完成：裁剪出选区。M1 阶段写临时文件验证，Task 7 接 OCR 管线
+#[tauri::command]
+fn screenshot_finish(app: AppHandle, x: i32, y: i32, w: i32, h: i32) -> Result<(), String> {
+    let state = app.state::<ScreenshotState>();
+    let mut session = state.0.lock().unwrap();
+    let screen = session.screen.take().ok_or("没有进行中的截图会话")?;
+    let win = app.get_webview_window("screenshot").ok_or("截图窗口不存在")?;
+    let _ = win.hide();
+
+    // 钳制到快照范围内，避免越界尺寸与裁剪像素长度不符
+    let cx = x.max(0).min(screen.width - 1);
+    let cy = y.max(0).min(screen.height - 1);
+    let cw = w.min(screen.width - cx).max(1);
+    let ch = h.min(screen.height - cy).max(1);
+    let rect = crate::capture::Rect { x: cx, y: cy, w: cw, h: ch };
+
+    let cropped = crate::capture::crop(&screen.rgba, screen.width, screen.height, rect)?;
+    let png = crate::capture::encode_png(&cropped, rect.w, rect.h)?;
+
+    let path = std::env::temp_dir().join("wordpeek-crop.png");
+    std::fs::write(&path, &png).map_err(|e| format!("写入临时文件失败: {e}"))?;
+    println!("[screenshot] 裁剪已写入: {}", path.display());
+    Ok(())
+}
+
+/// 前端按 ESC 或窗口失焦取消：丢弃会话并隐藏遮罩
+#[tauri::command]
+fn screenshot_cancel(app: AppHandle) {
+    let state = app.state::<ScreenshotState>();
+    state.0.lock().unwrap().screen = None;
+    if let Some(win) = app.get_webview_window("screenshot") {
+        let _ = win.hide();
+    }
+    println!("[screenshot] cancelled");
+}
+
+/// 复制文本到剪贴板（结果卡片复制按钮）
+#[tauri::command]
+fn copy_text(text: String) -> Result<(), String> {
+    arboard::Clipboard::new()
+        .and_then(|mut c| c.set_text(text))
+        .map_err(|e| format!("复制失败: {e}"))
+}
+
+/// 注册全部全局快捷键（先注销旧的全部再注册）；单侧失败只打日志不阻断
+pub(crate) fn register_hotkeys(app: &AppHandle, cfg: &translate::AppConfig) {
+    if let Err(e) = app.global_shortcut().unregister_all() {
+        eprintln!("[shortcut] 注销旧快捷键失败: {e}");
+    }
+    if let Ok(sc) = parse_hotkey(&cfg.hotkey) {
+        if let Err(e) = app.global_shortcut().on_shortcut(sc, |app, _s, event| {
             if event.state == ShortcutState::Pressed {
                 handle_hotkey_trigger(app);
             }
-        })
-        .map_err(|e| format!("{e}"))
+        }) {
+            eprintln!("[shortcut] {} 注册失败: {e}", cfg.hotkey);
+        }
+    }
+    if let Ok(sc) = parse_hotkey(&cfg.screenshot_hotkey) {
+        if let Err(e) = app.global_shortcut().on_shortcut(sc, |app, _s, event| {
+            if event.state == ShortcutState::Pressed {
+                handle_screenshot_trigger(app);
+            }
+        }) {
+            eprintln!("[shortcut] {} 注册失败: {e}", cfg.screenshot_hotkey);
+        }
+    }
 }
 
 fn main() {
@@ -277,6 +403,7 @@ fn main() {
             let handle = app.handle().clone();
             app.manage(std::sync::Mutex::new(translate::load_config(&handle)));
             app.manage(UpdateState::default());
+            app.manage(ScreenshotState::default());
 
             // 启动后延迟几秒静默检查一次更新，结果缓存供设置页查询
             let updater_handle = handle.clone();
@@ -320,17 +447,13 @@ fn main() {
                 })
                 .build(app)?;
 
-            // 按配置注册全局快捷键（可在设置窗口修改）。
-            // 注册失败（如快捷键被其他程序占用）时不 panic，应用仍能启动。
-            let hotkey_str = app
+            // 按配置注册全部全局快捷键（划词+截图；失败仅打日志，不阻断启动）
+            let cfg = app
                 .state::<std::sync::Mutex<translate::AppConfig>>()
                 .lock()
                 .unwrap()
-                .hotkey
                 .clone();
-            if let Err(e) = register_hotkey(&handle, &hotkey_str) {
-                eprintln!("[shortcut] {hotkey_str} 注册失败: {e}");
-            }
+            register_hotkeys(&handle, &cfg);
 
             Ok(())
         })
@@ -339,6 +462,9 @@ fn main() {
             get_update_status,
             check_update_now,
             install_update,
+            screenshot_finish,
+            screenshot_cancel,
+            copy_text,
             translate::translate,
             translate::get_config,
             translate::save_config
