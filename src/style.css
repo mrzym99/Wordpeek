@@ -335,6 +335,11 @@ input.recording {
   box-shadow: 0 0 0 100000px rgba(0, 0, 0, 0.35);
   pointer-events: none;
 }
+/* 未拖拽时的全屏占位：整屏变暗提示截图模式，无选区边框 */
+.shot-idle {
+  inset: 0;
+  border: none;
+}
 
 /* ===== 截图翻译结果卡片 ===== */
 .shot-text {

@@ -63,7 +63,7 @@ export default function ScreenshotPage() {
 
   return (
     <div className="shot-mask" onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp}>
-      {sel && (
+      {sel ? (
         <div
           className="shot-selection"
           style={{
@@ -73,6 +73,9 @@ export default function ScreenshotPage() {
             height: Math.abs(sel.y1 - sel.y0),
           }}
         />
+      ) : (
+        // 未开始拖拽时整屏变暗，提示已进入截图模式（选区内亮、外暗由 box-shadow 实现）
+        <div className="shot-selection shot-idle" />
       )}
     </div>
   );
