@@ -178,10 +178,9 @@ html, body, #root {
 .icon-btn.ok { color: #22a06b; }
 .icon-btn:hover { color: var(--text); }
 .icon-btn.gear {
-  position: absolute;
-  top: 14px;
-  right: 14px;
-  z-index: 1; /* 盖过顶部拖拽热区，保证可点击 */
+  z-index: 1; /* 盖过顶部拖拽热区，保证可点击（定位由 .word-head 内规则控制） */
+  font-size: 18px; /* 比其他图标按钮大一号，更好点按 */
+  padding: 2px;
 }
 
 /* 独立设置窗口：左侧菜单 + 右侧内容，保存按钮贴底 */
