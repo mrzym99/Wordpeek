@@ -35,19 +35,23 @@ html, body, #root {
 }
 
 /* 标题区：单词 + 音标 + 考试标签（拖动窗口请用顶部边缘） */
-/* 标题行：内容靠左、设置齿轮靠右（两端对齐），整行垂直居中，与内容留 gap */
+/* 标题行：内容靠左（长词自动换行），齿轮绝对定位右上角，与第一行垂直居中，与内容留 gap */
 .word-head {
+  position: relative;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 10px;
+  padding-right: 32px; /* 给右上角齿轮留位 */
 }
-/* 齿轮推到行最右侧；relative 保住 z-index 以盖过顶部拖拽热区 */
+/* 齿轮固定右上：top 与 word 首行（19px×1.35≈26px 高）垂直居中；
+   多行换行时也不掉行；relative 时代的 z-index 保住，盖过顶部拖拽热区 */
 .word-head .icon-btn.gear {
-  position: relative;
+  position: absolute;
+  right: 0;
+  top: 2px;
   z-index: 2;
-  margin-left: auto;
 }
 
 /* 顶部拖拽热区：覆盖卡片上 padding（16px），隐形但鼠标移入变移动光标。
