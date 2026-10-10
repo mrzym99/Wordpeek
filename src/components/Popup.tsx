@@ -95,6 +95,10 @@ export default function Popup() {
         setDraft(e.payload.text ?? ""); // 新一轮结果重置编辑副本
         const { virtual, mouse } = e.payload;
         try {
+          // 两步定位：先粗移到鼠标旁——窗口落到目标屏后，Windows 会按该屏缩放
+          // 重新解释窗口尺寸，此时再量真实尺寸（outerSize）做钳制，
+          // 避免跨屏 DPI 尺寸漂移导致卡片超出边界
+          await win.setPosition(new PhysicalPosition(mouse.x + 4, mouse.y + 4));
           const size = await win.outerSize();
           // 卡片左上角贴在鼠标右下 4px 处（同划词），錨制在虚拟屏内（真实窗口尺寸）
           const px = Math.max(
