@@ -88,26 +88,25 @@ export default function Popup() {
       });
 
       // 截图结果回来时主窗口多半隐藏着：先定位到框选区附近再 show+focus。
-      // 卡片弹在选区下方，空间不足放上方，并錨制在虚拟屏内（卡片尺寸为估算值）
-      unlistenShot = await listen<ShotResult>("screenshot-result", (e) => {
+      // 卡片弹在选区下方，空间不足放上方，并錨制在虚拟屏内。
+      // 用真实窗口尺寸（outerSize，物理像素）錨制，避免估算偏差导致位置漂移
+      unlistenShot = await listen<ShotResult>("screenshot-result", async (e) => {
         setShotResult(e.payload);
         setDraft(e.payload.text ?? ""); // 新一轮结果重置编辑副本
         const { sel, virtual } = e.payload;
-        const dpr = window.devicePixelRatio || 1;
-        const cardW = 340 * dpr;
-        const cardH = 440 * dpr;
-        const gap = 8 * dpr;
-        // 水平：选区中心对齐卡片中心，錨制在虚拟屏内
+        const size = await win.outerSize();
+        const gap = 8 * (window.devicePixelRatio || 1);
+        // 水平：选区中心对齐窗口中心，錨制在虚拟屏内
         const px = Math.max(
           virtual.x + 4,
-          Math.min(sel.x + sel.w / 2 - cardW / 2, virtual.x + virtual.width - cardW - 4)
+          Math.min(sel.x + sel.w / 2 - size.width / 2, virtual.x + virtual.width - size.width - 4)
         );
         let py = sel.y + sel.h + gap;
-        if (py + cardH > virtual.y + virtual.height) {
-          py = sel.y - cardH - gap; // 下方放不下，弹到选区上方
+        if (py + size.height > virtual.y + virtual.height) {
+          py = sel.y - size.height - gap; // 下方放不下，弹到选区上方
         }
         py = Math.max(virtual.y + 4, py);
-        win.setPosition(new PhysicalPosition(Math.round(px), Math.round(py)));
+        await win.setPosition(new PhysicalPosition(Math.round(px), Math.round(py)));
         win.show();
         win.setFocus();
       });
