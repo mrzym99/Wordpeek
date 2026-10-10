@@ -321,3 +321,25 @@ input.recording {
   cursor: pointer;
 }
 .save-btn:hover { background: #1b74ca; }
+
+/* ===== 截图翻译遮罩 ===== */
+.shot-mask {
+  position: fixed;
+  inset: 0;
+  cursor: crosshair;
+  overflow: hidden;
+}
+.shot-frame {
+  width: 100vw;
+  height: 100vh;
+  object-fit: fill;
+  user-select: none;
+  pointer-events: none;
+  display: block;
+}
+.shot-selection {
+  position: absolute;
+  border: 1px solid #4f8cff;
+  box-shadow: 0 0 0 100000px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}

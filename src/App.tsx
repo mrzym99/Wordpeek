@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { PhysicalPosition } from "@tauri-apps/api/dpi";
+import ScreenshotPage from "./ScreenshotPage";
 
 interface Selection {
   text: string;
@@ -502,7 +503,9 @@ function Popup() {
 }
 
 export default function App() {
-  // 设置窗口加载同一前端页面，用 URL 参数区分
-  const isSettingsPage = window.location.search.includes("page=settings");
-  return isSettingsPage ? <SettingsPage /> : <Popup />;
+  // 设置/截图窗口加载同一前端页面，用 URL 参数区分
+  const page = new URLSearchParams(window.location.search).get("page");
+  if (page === "settings") return <SettingsPage />;
+  if (page === "screenshot") return <ScreenshotPage />;
+  return <Popup />;
 }
