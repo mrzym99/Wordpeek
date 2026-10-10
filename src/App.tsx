@@ -527,11 +527,11 @@ function Popup() {
     return (
       <div className="card">
         <div className="drag-strip" data-tauri-drag-region />
-        <button className="icon-btn gear" title="设置" onClick={() => invoke("open_settings")}>
-          ⚙
-        </button>
         <div className="word-head">
           <div className="word">截图识别结果</div>
+          <button className="icon-btn gear" title="设置" onClick={() => invoke("open_settings")}>
+            ⚙
+          </button>
         </div>
         {shotResult.text && (
           <>
@@ -594,10 +594,6 @@ function Popup() {
     <div className="card">
       {/* 顶部 padding 区是隐形拖拽热区：按住可移动窗口；窗口边缘仍可拉伸 */}
       <div className="drag-strip" data-tauri-drag-region />
-      <button className="icon-btn gear" title="设置" onClick={() => invoke("open_settings")}>
-        ⚙
-      </button>
-
       <div className="word-head">
         <div className="word">{word}</div>
         {(info?.usphone || info?.ukphone) && (
@@ -632,6 +628,9 @@ function Popup() {
             ))}
           </div>
         )}
+        <button className="icon-btn gear" title="设置" onClick={() => invoke("open_settings")}>
+          ⚙
+        </button>
       </div>
 
       {error && <div className="error">{error}</div>}
