@@ -342,6 +342,12 @@ fn screenshot_finish(app: AppHandle, x: i32, y: i32, w: i32, h: i32) -> Result<(
     let rect = crate::capture::Rect { x: cx, y: cy, w: cw, h: ch };
 
     let cropped = crate::capture::crop(&screen.rgba, screen.width, screen.height, rect)?;
+    // 定位信息先提取，随后释放全屏像素（OCR 期间不再需要 ~23MB RGBA）
+    let (vx, vy, vw, vh) = (screen.origin_x, screen.origin_y, screen.width, screen.height);
+    drop(screen.rgba);
+    // 选区与虚拟屏边界（物理像素）随结果发前端，用于把卡片弹到框选位置附近
+    let sel = serde_json::json!({ "x": cx, "y": cy, "w": cw, "h": ch });
+    let virt = serde_json::json!({ "x": vx, "y": vy, "width": vw, "height": vh });
     let png = crate::capture::encode_png(&cropped, rect.w, rect.h)?;
     drop(session); // 后续流程不再需要会话锁
 
@@ -363,7 +369,8 @@ fn screenshot_finish(app: AppHandle, x: i32, y: i32, w: i32, h: i32) -> Result<(
                 if text.trim().is_empty() {
                     serde_json::json!({
                         "ok": false, "text": null, "info": null,
-                        "error": "未识别到文字，请框选包含文字的区域"
+                        "error": "未识别到文字，请框选包含文字的区域",
+                        "sel": sel, "virtual": virt
                     })
                 } else {
                     // 翻译（主源→降级；整句需百度 key，错误信息会引导）
@@ -373,12 +380,12 @@ fn screenshot_finish(app: AppHandle, x: i32, y: i32, w: i32, h: i32) -> Result<(
                         .unwrap()
                         .clone();
                     match tauri::async_runtime::block_on(crate::translate::translate_text(&cfg, &text)) {
-                        Ok(info) => serde_json::json!({ "ok": true, "text": text, "info": info, "error": null }),
-                        Err(e) => serde_json::json!({ "ok": true, "text": text, "info": null, "error": e }),
+                        Ok(info) => serde_json::json!({ "ok": true, "text": text, "info": info, "error": null, "sel": sel, "virtual": virt }),
+                        Err(e) => serde_json::json!({ "ok": true, "text": text, "info": null, "error": e, "sel": sel, "virtual": virt }),
                     }
                 }
             }
-            Err(e) => serde_json::json!({ "ok": false, "text": null, "info": null, "error": e }),
+            Err(e) => serde_json::json!({ "ok": false, "text": null, "info": null, "error": e, "sel": sel, "virtual": virt }),
         };
         let _ = app.emit_to("main", "screenshot-result", payload);
 
