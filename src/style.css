@@ -234,6 +234,34 @@ html, body, #root {
   margin-bottom: 12px;
 }
 
+/* 百度翻译可选分组标题 */
+.group-heading {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 14px 0 8px;
+}
+
+/* 百度分组：保存密钥 / 启用开关行 */
+.source-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* 启用为主源 开关 */
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.switch input { accent-color: #2383e2; cursor: pointer; }
+.switch input:disabled { cursor: not-allowed; }
+
 .settings-footer {
   margin-top: auto;
   padding-top: 10px;
@@ -267,14 +295,23 @@ html, body, #root {
 .about-text p { margin: 0 0 8px; color: var(--text-secondary); }
 .about-text p:first-child { color: var(--text); font-weight: 600; }
 
-/* 更新检查：提示文字 + 操作按钮 */
+/* 更新检查：提示文字占满一行，操作按钮独立一行，避免换行时文字与按钮互相挤压 */
 .update-tip {
-  display: flex;
-  align-items: center;
-  gap: 10px;
   margin-top: 4px;
+}
+.update-tip .tip-text {
+  display: block;
+  margin-bottom: 8px;
   color: var(--text-secondary);
-  font-size: 12.5px;
+  line-height: 1.6;
+}
+.update-tip .tip-actions {
+  display: flex;
+  gap: 8px;
+}
+/* 相邻提示块（如推荐语行与跳转行）之间留出间距 */
+.update-tip + .update-tip {
+  margin-top: 12px;
 }
 .update-btn {
   border: 1px solid var(--border);
@@ -338,6 +375,10 @@ input.recording {
   cursor: pointer;
 }
 .save-btn:hover { background: #1b74ca; }
+.save-btn:disabled {
+  background: #b9c6d4;
+  cursor: not-allowed;
+}
 
 /* ===== 截图翻译遮罩 ===== */
 .shot-mask {

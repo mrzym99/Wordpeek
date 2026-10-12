@@ -144,7 +144,7 @@ fn open_settings(app: AppHandle) {
 }
 
 /// 已缓存的可用更新（启动 / 手动检查后写入）
-type UpdateState = std::sync::Mutex<Option<Update>>;
+type UpdateState = parking_lot::Mutex<Option<Update>>;
 
 #[derive(serde::Serialize, Debug)]
 struct UpdateStatus {
@@ -171,14 +171,14 @@ fn check_update(app: &AppHandle) -> Result<UpdateStatus, String> {
     .map_err(|e| e.to_string())?;
     let status = status_of(app, update.as_ref());
     println!("[updater] check: {status:?}");
-    *app.state::<UpdateState>().lock().unwrap() = update;
+    *app.state::<UpdateState>().lock() = update;
     Ok(status)
 }
 
 /// 设置页打开时查询缓存的检查结果（不发网络请求）
 #[tauri::command]
 fn get_update_status(app: AppHandle) -> UpdateStatus {
-    let cached = app.state::<UpdateState>().lock().unwrap().as_ref().cloned();
+    let cached = app.state::<UpdateState>().lock().as_ref().cloned();
     status_of(&app, cached.as_ref())
 }
 
@@ -194,7 +194,6 @@ fn install_update(app: AppHandle) -> Result<(), String> {
     let update = app
         .state::<UpdateState>()
         .lock()
-        .unwrap()
         .take()
         .ok_or_else(|| "没有已缓存的更新".to_string())?;
     std::thread::spawn(move || {
@@ -281,7 +280,7 @@ fn handle_hotkey_trigger(app: &AppHandle) {
 
 /// 截图会话状态：触发时保存全屏快照与设置窗口可见性，finish 时再裁剪
 #[derive(Default)]
-struct ScreenshotState(std::sync::Mutex<ScreenshotSession>);
+struct ScreenshotState(parking_lot::Mutex<ScreenshotSession>);
 
 #[derive(Default)]
 struct ScreenshotSession {
@@ -326,7 +325,7 @@ fn handle_screenshot_trigger(app: &AppHandle) {
             .unwrap_or(false);
         let state = app.state::<ScreenshotState>();
         {
-            let mut session = state.0.lock().unwrap();
+            let mut session = state.0.lock();
             session.screen = Some(screen);
             session.settings_was_visible = was_visible;
         }
@@ -352,7 +351,7 @@ fn handle_screenshot_trigger(app: &AppHandle) {
 #[tauri::command]
 fn screenshot_finish(app: AppHandle, x: i32, y: i32, w: i32, h: i32) -> Result<(), String> {
     let state = app.state::<ScreenshotState>();
-    let mut session = state.0.lock().unwrap();
+    let mut session = state.0.lock();
     let screen = session.screen.take().ok_or("没有进行中的截图会话")?;
     let was_visible = session.settings_was_visible;
     let win = app.get_webview_window("screenshot").ok_or("截图窗口不存在")?;
@@ -384,9 +383,8 @@ fn screenshot_finish(app: AppHandle, x: i32, y: i32, w: i32, h: i32) -> Result<(
     // OCR/翻译耗时且走网络，放后台线程避免阻塞命令；结果发主窗口弹卡片
     std::thread::spawn(move || {
         let ocr_lang = app
-            .state::<std::sync::Mutex<translate::AppConfig>>()
+            .state::<parking_lot::Mutex<translate::AppConfig>>()
             .lock()
-            .unwrap()
             .ocr_lang
             .clone();
         let payload = match crate::ocr::recognize(&png, &ocr_lang) {
@@ -405,9 +403,8 @@ fn screenshot_finish(app: AppHandle, x: i32, y: i32, w: i32, h: i32) -> Result<(
                 } else {
                     // 翻译（主源→降级；整句需百度 key，错误信息会引导）
                     let cfg = app
-                        .state::<std::sync::Mutex<translate::AppConfig>>()
+                        .state::<parking_lot::Mutex<translate::AppConfig>>()
                         .lock()
-                        .unwrap()
                         .clone();
                     match tauri::async_runtime::block_on(crate::translate::translate_text(&cfg, &text)) {
                         Ok(info) => serde_json::json!({ "ok": true, "text": text, "info": info, "error": null, "sel": sel, "virtual": virt, "mouse": mouse, "work": work }),
@@ -435,7 +432,7 @@ fn screenshot_cancel(app: AppHandle) {
     let was_visible;
     {
         let state = app.state::<ScreenshotState>();
-        let mut session = state.0.lock().unwrap();
+        let mut session = state.0.lock();
         was_visible = session.settings_was_visible;
         session.screen = None;
     }
@@ -492,10 +489,11 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             // 启动时加载翻译配置（有默认值，配置文件不存在也能跑）
             let handle = app.handle().clone();
-            app.manage(std::sync::Mutex::new(translate::load_config(&handle)));
+            app.manage(parking_lot::Mutex::new(translate::load_config(&handle)));
             app.manage(UpdateState::default());
             app.manage(ScreenshotState::default());
 
@@ -560,9 +558,8 @@ fn main() {
 
             // 按配置注册全部全局快捷键（划词+截图；失败仅打日志，不阻断启动）
             let cfg = app
-                .state::<std::sync::Mutex<translate::AppConfig>>()
+                .state::<parking_lot::Mutex<translate::AppConfig>>()
                 .lock()
-                .unwrap()
                 .clone();
             register_hotkeys(&handle, &cfg);
 
