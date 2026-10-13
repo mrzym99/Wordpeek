@@ -101,43 +101,117 @@ fn work_area_at(_x: i32, _y: i32) -> (i32, i32, i32, i32) {
     (0, 0, 0, 0)
 }
 
-/// 把弹窗位置钳制在光标所在屏幕内，避免边缘选词时弹窗伸出屏幕外。
-/// 任一步骤拿不到信息（找不到窗口/显示器）就原样返回，不钳制。
-fn clamp_to_screen(app: &AppHandle, x: i32, y: i32) -> (i32, i32) {
-    let Some(win) = app.get_webview_window("main") else {
-        return (x, y);
+/// 内容高度 → 窗口客户区（inner）逻辑高度：下限 60px，上限为工作区高度的 70% 再扣掉标题栏
+/// （拿不到工作区信息时退回 800px；工作区极小时仍保证不低于下限）
+fn fit_height(content_h: f64, work_h: i32, chrome_h: f64) -> f64 {
+    let max = if work_h > 0 {
+        work_h as f64 * 0.7 - chrome_h
+    } else {
+        800.0
     };
-    let Ok(monitors) = win.available_monitors() else {
-        return (x, y);
-    };
-    // 找到光标落在哪块屏幕上
-    let Some(m) = monitors.into_iter().find(|m| {
+    content_h.clamp(60.0, max.max(60.0))
+}
+
+/// 把「左上角在 (x, y)、尺寸 win_w×win_h」的窗口钳进显示器矩形内。
+/// 窗口比屏还大时贴左上角（不弹到屏外）。
+fn clamp_rect_to_monitor(
+    monitor: (i32, i32, i32, i32),
+    win_w: i32,
+    win_h: i32,
+    x: i32,
+    y: i32,
+) -> (i32, i32) {
+    let (mx, my, mw, mh) = monitor;
+    let cx = x.clamp(mx, (mx + mw - win_w).max(mx));
+    let cy = y.clamp(my, (my + mh - win_h).max(my));
+    (cx, cy)
+}
+
+/// 找到包含点 (x, y) 的显示器矩形（物理像素）。查不到显示器信息时返回 None。
+fn monitor_rect_at(win: &tauri::WebviewWindow, x: i32, y: i32) -> Option<(i32, i32, i32, i32)> {
+    let monitors = win.available_monitors().ok()?;
+    let m = monitors.into_iter().find(|m| {
         let p = m.position();
         let s = m.size();
         x >= p.x && x < p.x + s.width as i32 && y >= p.y && y < p.y + s.height as i32
-    }) else {
+    })?;
+    let p = m.position();
+    let s = m.size();
+    Some((p.x, p.y, s.width as i32, s.height as i32))
+}
+
+/// 把弹窗位置钳制在光标所在屏幕内，避免边缘选词时弹窗伸出屏幕外。
+/// 任一步骤拿不到信息（找不到窗口/显示器）就原样返回，不钳制。
+fn clamp_to_screen(app: &AppHandle, label: &str, x: i32, y: i32) -> (i32, i32) {
+    let Some(win) = app.get_webview_window(label) else {
+        return (x, y);
+    };
+    let Some(rect) = monitor_rect_at(&win, x, y) else {
         return (x, y);
     };
     let Ok(win_size) = win.outer_size() else {
         return (x, y);
     };
-    let p = m.position();
-    let s = m.size();
-    let max_x = p.x + s.width as i32 - win_size.width as i32;
-    let max_y = p.y + s.height as i32 - win_size.height as i32;
-    let cx = x.clamp(p.x, max_x.max(p.x));
-    let cy = y.clamp(p.y, max_y.max(p.y));
+    let (cx, cy) = clamp_rect_to_monitor(
+        rect,
+        win_size.width as i32,
+        win_size.height as i32,
+        x,
+        y,
+    );
     println!(
-        "[pos] cursor ({x}, {y}) -> clamped ({cx}, {cy}); monitor {:?} {:?}, window {win_size:?}",
-        p, s
+        "[pos] cursor ({x}, {y}) -> clamped ({cx}, {cy}); monitor {rect:?}, window {win_size:?}"
     );
     (cx, cy)
+}
+
+/// 前端量好卡片内容高度后调用：把窗口调整到刚好包住卡片，并重新钳制位置。
+/// 只改高度——宽度保持用户当前宽度（长文本可手动拉宽）。
+/// 位置钳制用「自己算出的新外框尺寸」，不依赖 set_size 之后立刻回读（那是异步消息）。
+#[tauri::command]
+fn fit_window(app: AppHandle, label: String, height: f64) -> Result<(), String> {
+    let win = app
+        .get_webview_window(&label)
+        .ok_or_else(|| format!("窗口不存在: {label}"))?;
+    let scale = win.scale_factor().map_err(|e| e.to_string())?;
+    let inner = win.inner_size().map_err(|e| e.to_string())?;
+    let outer = win.outer_size().map_err(|e| e.to_string())?;
+    let pos = win.outer_position().map_err(|e| e.to_string())?;
+    // 标题栏/边框占掉的逻辑像素：无边框弹窗为 0，带标题栏的窗口约 31
+    let chrome_w = outer.width.saturating_sub(inner.width) as f64 / scale;
+    let chrome_h = outer.height.saturating_sub(inner.height) as f64 / scale;
+    // 高度上限用窗口所在屏的工作区（排除任务栏）
+    let (_, _, _, work_h) = work_area_at(pos.x + 8, pos.y + 8);
+    let inner_w = inner.width as f64 / scale;
+    let inner_h = fit_height(height, work_h, chrome_h);
+    win.set_size(tauri::LogicalSize::new(inner_w, inner_h))
+        .map_err(|e| e.to_string())?;
+
+    // 新外框尺寸 = 客户区 + 边框/标题栏，用它重新钳一次位置
+    let new_w = (inner_w + chrome_w).round().max(1.0) as i32;
+    let new_h = (inner_h + chrome_h).round().max(1.0) as i32;
+    let (nx, ny) = match monitor_rect_at(&win, pos.x + 8, pos.y + 8) {
+        Some(rect) => clamp_rect_to_monitor(rect, new_w, new_h, pos.x, pos.y),
+        None => (pos.x, pos.y),
+    };
+    win.set_position(tauri::PhysicalPosition::new(nx, ny))
+        .map_err(|e| e.to_string())?;
+    println!("[fit] {label} content {height} -> inner {inner_w}x{inner_h}, pos ({nx}, {ny})");
+    Ok(())
 }
 
 /// 显示独立的设置窗口（弹窗齿轮按钮 / 托盘菜单共用）
 #[tauri::command]
 fn open_settings(app: AppHandle) {
     if let Some(win) = app.get_webview_window("settings") {
+        let _ = win.show();
+        let _ = win.set_focus();
+    }
+}
+
+/// 显示输入翻译窗口（托盘菜单 / 输入翻译快捷键共用）
+fn open_input_window(app: &AppHandle) {
+    if let Some(win) = app.get_webview_window("input") {
         let _ = win.show();
         let _ = win.set_focus();
     }
@@ -270,7 +344,7 @@ fn handle_hotkey_trigger(app: &AppHandle) {
                 let (cx, cy) = cursor_pos();
                 println!("[grab] got text: {:?} at ({}, {})", text, cx, cy);
                 // 在 Rust 端钳制到屏幕内后再发事件，前端直接使用
-                let (x, y) = clamp_to_screen(&app, cx + 12, cy + 16);
+                let (x, y) = clamp_to_screen(&app, "main", cx + 12, cy + 16);
                 let _ = app.emit("selection", Selection { text, x, y });
             }
             None => println!("[grab] no text captured"),
@@ -406,7 +480,9 @@ fn screenshot_finish(app: AppHandle, x: i32, y: i32, w: i32, h: i32) -> Result<(
                         .state::<parking_lot::Mutex<translate::AppConfig>>()
                         .lock()
                         .clone();
-                    match tauri::async_runtime::block_on(crate::translate::translate_text(&cfg, &text)) {
+                    match tauri::async_runtime::block_on(crate::translate::translate_text(
+                        &cfg, &text, "zh"
+                    )) {
                         Ok(info) => serde_json::json!({ "ok": true, "text": text, "info": info, "error": null, "sel": sel, "virtual": virt, "mouse": mouse, "work": work }),
                         Err(e) => serde_json::json!({ "ok": true, "text": text, "info": null, "error": e, "sel": sel, "virtual": virt, "mouse": mouse, "work": work }),
                     }
@@ -455,14 +531,27 @@ fn copy_text(text: String) -> Result<(), String> {
         .map_err(|e| format!("复制失败: {e}"))
 }
 
-/// 注册全部全局快捷键（先注销旧的全部再注册）；单侧失败只打日志不阻断
+/// 快捷键两两不能重复（重复会导致行为歧义）；大小写与首尾空白不同视为同一个键
+pub(crate) fn validate_hotkeys(hotkeys: &[&str]) -> Result<(), String> {
+    let mut seen: Vec<String> = Vec::new();
+    for h in hotkeys {
+        let key = h.trim().to_lowercase();
+        if seen.contains(&key) {
+            return Err(format!("快捷键重复：{h}"));
+        }
+        seen.push(key);
+    }
+    Ok(())
+}
+
+/// 注册全部全局快捷键（先注销旧的全部再注册）；单个失败只打日志不阻断
 pub(crate) fn register_hotkeys(app: &AppHandle, cfg: &translate::AppConfig) {
     if let Err(e) = app.global_shortcut().unregister_all() {
         eprintln!("[shortcut] 注销旧快捷键失败: {e}");
     }
-    // 两个快捷键相同会导致行为歧义，直接都不注册
-    if cfg.hotkey.eq_ignore_ascii_case(&cfg.screenshot_hotkey) {
-        eprintln!("[shortcut] 划词与截图快捷键不能相同");
+    // 任意两个快捷键相同都会导致行为歧义，直接都不注册
+    if let Err(e) = validate_hotkeys(&[&cfg.hotkey, &cfg.screenshot_hotkey, &cfg.input_hotkey]) {
+        eprintln!("[shortcut] {e}");
         return;
     }
     if let Ok(sc) = parse_hotkey(&cfg.hotkey) {
@@ -481,6 +570,15 @@ pub(crate) fn register_hotkeys(app: &AppHandle, cfg: &translate::AppConfig) {
             }
         }) {
             eprintln!("[shortcut] {} 注册失败: {e}", cfg.screenshot_hotkey);
+        }
+    }
+    if let Ok(sc) = parse_hotkey(&cfg.input_hotkey) {
+        if let Err(e) = app.global_shortcut().on_shortcut(sc, |app, _s, event| {
+            if event.state == ShortcutState::Pressed {
+                open_input_window(app);
+            }
+        }) {
+            eprintln!("[shortcut] {} 注册失败: {e}", cfg.input_hotkey);
         }
     }
 }
@@ -523,24 +621,27 @@ fn main() {
                 }
             });
 
-            // 设置窗口点 ✕ 时只隐藏不销毁，否则窗口一旦关闭
+            // 设置/输入窗口点 ✕ 时只隐藏不销毁，否则窗口一旦关闭
             // 就无法再次打开（get_webview_window 返回 None）
-            if let Some(win) = app.get_webview_window("settings") {
-                let w = win.clone();
-                win.on_window_event(move |event| {
-                    if let WindowEvent::CloseRequested { api, .. } = event {
-                        api.prevent_close();
-                        let _ = w.hide();
-                    }
-                });
+            for label in ["settings", "input"] {
+                if let Some(win) = app.get_webview_window(label) {
+                    let w = win.clone();
+                    win.on_window_event(move |event| {
+                        if let WindowEvent::CloseRequested { api, .. } = event {
+                            api.prevent_close();
+                            let _ = w.hide();
+                        }
+                    });
+                }
             }
 
             // 系统托盘：应用常驻后台的唯一可见入口，
             // 左键/右键弹出菜单，可打开设置或退出
+            let input = MenuItem::with_id(app, "input", "输入翻译", true, None::<&str>)?;
             let settings =
                 MenuItem::with_id(app, "settings", "设置", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-            let tray_menu = Menu::with_items(app, &[&settings, &quit])?;
+            let tray_menu = Menu::with_items(app, &[&input, &settings, &quit])?;
             TrayIconBuilder::with_id("main")
                 .tooltip("Wordpeek 划词翻译")
                 .icon(
@@ -550,6 +651,7 @@ fn main() {
                 )
                 .menu(&tray_menu)
                 .on_menu_event(|app, event| match event.id().as_ref() {
+                    "input" => open_input_window(app),
                     "settings" => open_settings(app.clone()),
                     "quit" => app.exit(0),
                     _ => {}
@@ -572,8 +674,10 @@ fn main() {
             install_update,
             screenshot_finish,
             screenshot_cancel,
+            fit_window,
             copy_text,
             translate::translate,
+            translate::translate_all,
             translate::get_config,
             translate::save_config
         ])
@@ -593,5 +697,38 @@ mod tests {
         assert!(parse_hotkey("Ctrl+1").is_ok());
         assert!(parse_hotkey("D").is_err()); // 缺修饰键
         assert!(parse_hotkey("Ctrl+").is_err());
+    }
+
+    #[test]
+    fn validate_hotkeys_rejects_duplicates() {
+        assert!(validate_hotkeys(&["Ctrl+Alt+T", "Ctrl+Alt+S", "Ctrl+Alt+I"]).is_ok());
+        // 大小写/空白不同视为同一个键
+        assert!(validate_hotkeys(&["Ctrl+Alt+T", "ctrl+alt+t", "Ctrl+Alt+I"]).is_err());
+        assert!(validate_hotkeys(&["Ctrl+Alt+T", "Ctrl+Alt+S", "Ctrl+Alt+S"]).is_err());
+        let err = validate_hotkeys(&["Ctrl+Alt+T", "Ctrl+Alt+T", "Ctrl+Alt+I"]).unwrap_err();
+        assert!(err.contains("重复"), "错误信息应说明原因: {err}");
+    }
+
+    #[test]
+    fn fit_height_clamps_between_floor_and_work_area() {
+        // 工作区 1040px 高：上限 = 728px（70%）
+        assert_eq!(fit_height(120.0, 1040, 0.0), 120.0); // 常见短卡片：原样
+        assert_eq!(fit_height(10.0, 1040, 0.0), 60.0); // 下限，别只剩一条缝
+        assert_eq!(fit_height(900.0, 1040, 0.0), 728.0); // 超出上限 → 内部滚动
+        assert_eq!(fit_height(900.0, 1040, 31.0), 697.0); // 有标题栏：上限再扣掉标题栏
+        assert_eq!(fit_height(900.0, 0, 0.0), 800.0); // 拿不到工作区 → 退回 800
+        assert_eq!(fit_height(9000.0, 50, 31.0), 60.0); // 工作区极小时不低于下限
+    }
+
+    #[test]
+    fn clamp_rect_to_monitor_keeps_window_inside() {
+        // 主屏 1920×1080，窗口 400×300
+        assert_eq!(clamp_rect_to_monitor((0, 0, 1920, 1080), 400, 300, -50, -20), (0, 0));
+        assert_eq!(clamp_rect_to_monitor((0, 0, 1920, 1080), 400, 300, 1900, 1070), (1520, 780));
+        assert_eq!(clamp_rect_to_monitor((0, 0, 1920, 1080), 400, 300, 500, 500), (500, 500));
+        // 副屏在左侧（负坐标）
+        assert_eq!(clamp_rect_to_monitor((-1920, 0, 1920, 1080), 400, 300, -1900, 10), (-1900, 10));
+        // 窗口比屏还宽时贴左上角而不是弹出去
+        assert_eq!(clamp_rect_to_monitor((-1920, 0, 1920, 1080), 2400, 300, -1900, 10), (-1920, 10));
     }
 }

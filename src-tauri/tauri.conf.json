@@ -34,6 +34,16 @@
         "transparent": false
       },
       {
+        "label": "input",
+        "title": "Wordpeek 输入翻译",
+        "url": "/?page=input",
+        "width": 460,
+        "height": 240,
+        "visible": false,
+        "resizable": true,
+        "decorations": true
+      },
+      {
         "label": "screenshot",
         "url": "/?page=screenshot",
         "width": 100,

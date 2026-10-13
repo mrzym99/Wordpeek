@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { AppConfig, UpdateStatus } from "../types";
+import { patchConfig } from "../lib/config";
 import HotkeyRecorder from "./HotkeyRecorder";
 
 type SettingsSection = "translate" | "hotkey" | "shot" | "about" | "other";
@@ -17,17 +18,27 @@ const SECTIONS: { id: SettingsSection; label: string }[] = [
 /** 项目仓库地址，推荐/反馈共用 */
 const REPO_URL = "https://github.com/mrzym99/Wordpeek";
 
+/** 可选翻译源（列表顺序由用户拖拽决定 = 优先级） */
+const SOURCE_ITEMS: { id: string; label: string }[] = [
+  { id: "youdao", label: "有道词典（免 Key，单词）" },
+  { id: "bing", label: "必应翻译（免 Key，整句）" },
+  { id: "baidu", label: "百度翻译（需密钥）" },
+];
+
 /** 复制反馈标记："text" 推荐语 | "link" 链接 | "" 无 */
 type CopiedKind = "" | "text" | "link";
 
 /** 独立设置窗口：左侧菜单切换分组，用户手动关闭，不会被 blur 隐藏 */
 export default function SettingsPage() {
   const [section, setSection] = useState<SettingsSection>("translate");
-  const [source, setSource] = useState("youdao");
+  // 勾选的源，顺序即优先级（拖拽调整）
+  const [sources, setSources] = useState<string[]>(["youdao", "bing"]);
+  const [dragId, setDragId] = useState("");
   const [appid, setAppid] = useState("");
   const [secret, setSecret] = useState("");
   const [hotkey, setHotkey] = useState("Ctrl+Alt+T");
   const [screenshotHotkey, setScreenshotHotkey] = useState("Ctrl+Alt+S");
+  const [inputHotkey, setInputHotkey] = useState("Ctrl+Alt+I");
   const [ocrLang, setOcrLang] = useState("auto");
   const [saveError, setSaveError] = useState("");
   const [saved, setSaved] = useState(false);
@@ -87,9 +98,10 @@ export default function SettingsPage() {
   useEffect(() => {
     invoke<AppConfig>("get_config")
       .then((cfg) => {
-        setSource(cfg.source);
+        setSources(cfg.sources?.length ? cfg.sources : ["youdao", "bing"]);
         setHotkey(cfg.hotkey || "Ctrl+Alt+T");
         setScreenshotHotkey(cfg.screenshot_hotkey || "Ctrl+Alt+S");
+        setInputHotkey(cfg.input_hotkey || "Ctrl+Alt+I");
         setOcrLang(cfg.ocr_lang || "auto");
         setAppid(cfg.baidu.appid);
         setSecret(cfg.baidu.secret);
@@ -111,55 +123,38 @@ export default function SettingsPage() {
     }
   };
 
-  // 以后端当前配置为基底，只改指定字段后整体写回——避免把表单里未保存的编辑一并落盘
-  const patchConfig = async (patch: Partial<AppConfig>) => {
-    const cfg = await invoke<AppConfig>("get_config");
-    await invoke("save_config", { config: { ...cfg, ...patch } });
+  // 勾选/取消：即时落盘；至少保留一个源（全不勾会导致翻译没有可用源）
+  const toggleSource = (id: string) => {
+    const next = sources.includes(id)
+      ? sources.filter((s) => s !== id)
+      : [...sources, id];
+    if (next.length === 0) return;
+    setSources(next);
+    patchConfig({ sources: next }).catch((e) => setSaveError(String(e)));
   };
 
-  // 免 Key 源是默认行为，百度是否作主源由 baiduEnabled 表达（source 字段仅后端路由用）
-  const baiduEnabled = source === "baidu";
-
-  // 启用百度：保存密钥并设为主源（需密钥非空）
-  const enableBaidu = async () => {
-    setSaveError("");
-    try {
-      await patchConfig({
-        source: "baidu",
-        baidu: { appid: appid.trim(), secret: secret.trim() },
-      });
-      setSaved(true);
-      setTimeout(() => setSaved(false), 1500);
-    } catch (err) {
-      setSaveError(String(err));
-    }
-  };
-
-  // 关闭百度：仅切回默认免 Key 源，密钥保留作兜底
-  const disableBaidu = async () => {
-    setSaveError("");
-    try {
-      await patchConfig({ source: "youdao" });
-      setSaved(true);
-      setTimeout(() => setSaved(false), 1500);
-    } catch (err) {
-      setSaveError(String(err));
-    }
+  // 拖拽排序：把 from 插到 to 之前
+  const moveSource = (from: string, to: string) => {
+    if (!from || from === to) return;
+    const next = sources.filter((s) => s !== from);
+    const at = next.indexOf(to);
+    next.splice(at < 0 ? next.length : at, 0, from);
+    setSources(next);
+    patchConfig({ sources: next }).catch((e) => setSaveError(String(e)));
   };
 
   const save = async () => {
     setSaved(false);
     setSaveError("");
     try {
-      if (hotkey.trim().toLowerCase() === screenshotHotkey.trim().toLowerCase()) {
-        setSaveError("划词与截图快捷键不能相同");
-        return;
-      }
+      // 读回后端当前配置再覆盖本页字段：输入翻译目标语言、百度密钥之外的项不该被表单覆写
+      const current = await invoke<AppConfig>("get_config");
       await invoke("save_config", {
         config: {
-          source,
+          ...current,
           hotkey,
           screenshot_hotkey: screenshotHotkey,
+          input_hotkey: inputHotkey,
           ocr_lang: ocrLang,
           baidu: { appid: appid.trim(), secret: secret.trim() },
         },
@@ -189,10 +184,47 @@ export default function SettingsPage() {
         {section === "translate" && (
           <>
             <div className="section-heading">翻译</div>
-            <div className="field-hint">
-              默认源：有道词典（单词）+ 必应翻译（整句），免 Key 开箱即用。百度翻译为可选项：启用后全部走百度；仅配置未启用时作为兜底源；未配置则不使用。
+            <div className="group-heading">翻译源（勾选参与翻译的源，拖拽调整优先级）</div>
+            <div className="source-list">
+              {sources.map((id) => {
+                const item = SOURCE_ITEMS.find((s) => s.id === id);
+                if (!item) return null;
+                return (
+                  <div
+                    key={id}
+                    className="source-item"
+                    draggable
+                    onDragStart={() => setDragId(id)}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={() => {
+                      moveSource(dragId, id);
+                      setDragId("");
+                    }}
+                  >
+                    <span className="drag-handle" title="拖拽调整顺序">
+                      ⠿
+                    </span>
+                    <label className="switch">
+                      <input type="checkbox" checked onChange={() => toggleSource(id)} />
+                      {item.label}
+                    </label>
+                  </div>
+                );
+              })}
+              {SOURCE_ITEMS.filter((s) => !sources.includes(s.id)).map((s) => (
+                <div key={s.id} className="source-item off">
+                  <span className="drag-handle" />
+                  <label className="switch">
+                    <input type="checkbox" checked={false} onChange={() => toggleSource(s.id)} />
+                    {s.label}
+                  </label>
+                </div>
+              ))}
             </div>
-            <div className="group-heading">百度翻译（可选）</div>
+            <div className="field-hint">
+              顺序即优先级：第一个源也是单源快速翻译的首选，对比页按同一顺序展示；勾选百度需先填下面的密钥。未勾选的源不参与翻译，也不作失败兜底。
+            </div>
+            <div className="group-heading">百度翻译密钥（可选）</div>
             <label className="field">
               APP ID
               <input
@@ -214,22 +246,11 @@ export default function SettingsPage() {
               <button className="save-btn" onClick={saveBaiduKeys}>
                 保存密钥
               </button>
-              <label className={"switch" + (baiduEnabled ? " on" : "")}>
-                <input
-                  type="checkbox"
-                  checked={baiduEnabled}
-                  disabled={!appid.trim() || !secret.trim()}
-                  onChange={(e) =>
-                    e.target.checked ? enableBaidu() : disableBaidu()
-                  }
-                />
-                启用为主源
-              </label>
             </div>
             <div className="field-hint">
               {appid.trim() && secret.trim()
-                ? "已配置：即使不作主源，也会作为免 Key 源失败后的降级"
-                : "密钥可留空；留空时仅使用免 Key 源"}
+                ? "已配置：勾选「百度翻译」后即参与翻译与对比"
+                : "密钥可留空；留空时百度翻译不可用"}
             </div>
           </>
         )}
@@ -241,7 +262,11 @@ export default function SettingsPage() {
               划词快捷键
               <HotkeyRecorder value={hotkey} onChange={setHotkey} />
             </label>
-            <div className="field-hint">点击输入框后按下组合键即可更换，需包含 Ctrl / Alt / Shift 之一</div>
+            <label className="field">
+              输入翻译快捷键
+              <HotkeyRecorder value={inputHotkey} onChange={setInputHotkey} />
+            </label>
+            <div className="field-hint">点击输入框后按下组合键即可更换，需包含 Ctrl / Alt / Shift 之一；划词、截图、输入翻译三个快捷键不能相同</div>
           </>
         )}
 

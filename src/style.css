@@ -457,3 +457,94 @@ textarea.shot-text:focus {
 }
 .shot-senses li::before { display: none; }
 
+
+/* ===== 输入翻译窗口 ===== */
+.input-layout {
+  padding: 14px 16px;
+  box-sizing: border-box;
+  background: #ffffff;
+  color: var(--text);
+  font: 13.5px/1.65 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+
+textarea.input-text {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-subtle);
+  color: var(--text);
+  font: inherit;
+  resize: vertical;
+}
+textarea.input-text:focus {
+  outline: none;
+  box-shadow: inset 0 0 0 1.5px #4f8cff;
+}
+
+.input-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+  gap: 10px;
+}
+
+/* ===== 多源对比 ===== */
+.compare { margin-top: 10px; }
+.compare-row + .compare-row {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.compare-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.compare-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.compare-row .senses { margin-top: 2px; }
+.compare-error {
+  margin-top: 4px;
+  color: var(--error);
+  font-size: 12.5px;
+  white-space: pre-wrap;
+}
+
+/* ===== 设置页：翻译源勾选 + 拖拽排序 ===== */
+.source-list { margin-bottom: 6px; }
+.source-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px;
+  border-radius: 4px;
+  user-select: none; /* 拖拽时别选中文本 */
+}
+.source-item:hover { background: var(--bg-subtle); }
+.source-item.off { color: var(--text-faint); }
+.drag-handle {
+  width: 14px;
+  color: var(--text-faint);
+  cursor: grab;
+}
+
+/* 文字按钮：卡片里的小动作（对比各源 / 返回词典） */
+.text-btn {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #ffffff;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  padding: 1px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.text-btn:hover { border-color: var(--accent); color: var(--accent); }

@@ -21,7 +21,7 @@
 | 对比页位置 | 输入翻译窗口 + 划词卡片；截图卡片不做 | 截图卡片已有 OCR 原文编辑区，再塞多源结果太挤；原文可复制到输入翻译窗口对比 |
 | 老配置迁移 | 旧 `source == "baidu"`（启用为主源）→ 迁移为 `sources` 首位是 baidu | 旧顺序等价于 `[baidu, youdao, bing]`；不迁移会让这些用户升级后百度突然不再参与翻译 |
 | 并发方式 | 每源一个 `tauri::async_runtime::spawn` 任务，按固定顺序收集 | 不引 `futures` 依赖；`tokio::join!` 在源数量可变（1~3 个）时写起来很别扭 |
-| 后端模型 | 新命令 `translate_all` 返回 `Vec<SourceResult>`，逐行 `ok/error` | 复用 `translate` 无法表达「部分失败」（如「有道这句没词条」） |
+| 后端模型 | 新命令 `translate_all` 返回逐源结果（`Result<Vec<SourceResult>, String>`，恒 `Ok`），逐行 `ok/error` | 复用 `translate` 无法表达「部分失败」（如「有道这句没词条」）；单个源失败不该让整次对比失败 |
 
 ## Global Constraints
 
@@ -255,7 +255,7 @@ git commit -m "feat: 翻译源改为有序勾选列表（sources），老配置�
   - `pub(crate) fn source_label(source: &str) -> &'static str`
   - `pub(crate) fn compare_sources(cfg: &AppConfig, to: &str) -> Vec<String>`
   - `pub async fn translate_all_sources(cfg: &AppConfig, text: &str, to: &str) -> Vec<SourceResult>`
-  - 命令 `translate_all(state, text: String, to: Option<String>) -> Vec<SourceResult>`
+  - 命令 `translate_all(state, text: String, to: Option<String>) -> Result<Vec<SourceResult>, String>`（恒 `Ok`；带 `State` 引用的 async 命令必须返回 `Result`）
 
 - [ ] **Step 1: 写失败测试**
 
@@ -401,15 +401,17 @@ pub async fn translate_all_sources(cfg: &AppConfig, text: &str, to: &str) -> Vec
     out
 }
 
-/// 对比命令：一次列出各勾选源译文（输入翻译窗口 / 划词卡片「对比各源」按钮）
+/// 对比命令：一次列出各勾选源译文（输入翻译窗口 / 划词卡片「对比各源」按钮）。
+/// Tauri 要求带引用参数（State）的 async 命令必须返回 Result，这里恒为 Ok：
+/// 单个源的失败已经在各自行里呈现，不该让整次对比失败。
 #[tauri::command]
 pub async fn translate_all(
     state: State<'_, SharedConfig>,
     text: String,
     to: Option<String>,
-) -> Vec<SourceResult> {
+) -> Result<Vec<SourceResult>, String> {
     let cfg = state.lock().clone();
-    translate_all_sources(&cfg, &text, to.as_deref().unwrap_or("zh")).await
+    Ok(translate_all_sources(&cfg, &text, to.as_deref().unwrap_or("zh")).await)
 }
 ```
 

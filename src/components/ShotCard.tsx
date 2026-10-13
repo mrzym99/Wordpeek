@@ -1,7 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { ShotResult } from "../types";
-import { splitSense } from "../lib/senses";
+import SenseList from "./SenseList";
 import { CheckIcon, CopyIcon, RefreshIcon } from "./icons";
+import { useAutoFitWindow } from "../lib/autofit";
 
 interface ShotCardProps {
   shotResult: ShotResult;
@@ -17,12 +18,15 @@ interface ShotCardProps {
 
 /** 截图翻译结果卡片：标题行 + 可编辑原文 + 图标按钮 + 译文 */
 export default function ShotCard({ shotResult, draft, onDraftChange, copied, onCopy, onRetranslate }: ShotCardProps) {
+  // 与划词卡片共用 main 窗口，同样按内容高度收缩
+  const bodyRef = useAutoFitWindow("main");
   // 重新翻译进行中：info/error 均空且原文存在
   const loading = !!shotResult.text && !shotResult.info && !shotResult.error;
 
   return (
     <div className="card">
       <div className="drag-strip" data-tauri-drag-region />
+      <div className="card-body" ref={bodyRef}>
       <div className="word-head">
         <div className="word">截图识别结果</div>
         <button className="icon-btn gear" title="设置" onClick={() => invoke("open_settings")}>
@@ -60,17 +64,7 @@ export default function ShotCard({ shotResult, draft, onDraftChange, copied, onC
       {loading && <div className="shot-loading">翻译中…</div>}
       {shotResult.info && (
         <>
-          <ul className="senses shot-senses">
-            {shotResult.info.senses.map((s, i) => {
-              const { pos, text } = splitSense(s);
-              return (
-                <li key={i}>
-                  {pos && <b className="pos">{pos}</b>}
-                  {text}
-                </li>
-              );
-            })}
-          </ul>
+          <SenseList senses={shotResult.info.senses} className="shot-senses" />
           <button
             className={"icon-btn" + (copied === "translation" ? " ok" : "")}
             title="复制译文"
@@ -80,6 +74,7 @@ export default function ShotCard({ shotResult, draft, onDraftChange, copied, onC
           </button>
         </>
       )}
+      </div>
     </div>
   );
 }

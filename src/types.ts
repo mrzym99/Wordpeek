@@ -13,9 +13,11 @@ export interface BaiduConfig {
 /** 配置文件结构（与后端 AppConfig 对应，snake_case） */
 export interface AppConfig {
   source: string;
+  sources: string[];
   hotkey: string;
   screenshot_hotkey: string;
   ocr_lang: string;
+  input_hotkey: string;
   baidu: BaiduConfig;
 }
 
@@ -61,4 +63,13 @@ export interface ShotResult {
   mouse: { x: number; y: number };
   /** 光标所在屏的工作区（排除任务栏，物理像素）；width/height 为 0 时表示未获取到 */
   work: { x: number; y: number; width: number; height: number };
+}
+
+/** 逐源对比结果（translate_all 命令） */
+export interface SourceResult {
+  source: string;
+  label: string;
+  ok: boolean;
+  senses: string[];
+  error: string | null;
 }

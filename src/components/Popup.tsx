@@ -3,20 +3,27 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { PhysicalPosition } from "@tauri-apps/api/dpi";
-import type { Selection, ShotResult, WordInfo } from "../types";
-import { splitSense } from "../lib/senses";
+import type { Selection, ShotResult, SourceResult, WordInfo } from "../types";
+import SenseList from "./SenseList";
 import ShotCard from "./ShotCard";
+import { useAutoFitWindow } from "../lib/autofit";
+import SourceCompare from "./SourceCompare";
 
 /** 划词翻译弹窗：主窗口复用，划词结果与截图结果都在这里展示 */
 export default function Popup() {
+  // 卡片内容高度上报给 Rust，窗口按内容收缩（防止透明区域吞掉下层窗口的点击）
+  const bodyRef = useAutoFitWindow("main");
   const [word, setWord] = useState("");
   const [info, setInfo] = useState<WordInfo | null>(null);
   const [error, setError] = useState("");
+  // 对比模式：非空时用各勾选源的译文替换词典卡片
+  const [rows, setRows] = useState<SourceResult[] | null>(null);
+  const [compareLoading, setCompareLoading] = useState(false);
   // 截图翻译结果卡片（screenshot-result 事件）；非空时优先展示
   const [shotResult, setShotResult] = useState<ShotResult | null>(null);
   // 复制反馈："text" | "translation" | ""，1.5s 后自动复位
   const [copied, setCopied] = useState("");
-  const doCopy = (label: "text" | "translation", text: string) => {
+  const doCopy = (label: string, text: string) => {
     invoke("copy_text", { text })
       .then(() => {
         setCopied(label);
@@ -46,6 +53,7 @@ export default function Popup() {
       setWord(w);
       setInfo(null);
       setError("");
+      setRows(null); // 新查词退出对比视图
       try {
         // 翻译请求由 Rust 端发出（避免 CORS，且 API 密钥不进前端）
         setInfo(await invoke<WordInfo>("translate", { text: w }));
@@ -142,6 +150,7 @@ export default function Popup() {
     setWord(w);
     setInfo(null);
     setError("");
+    setRows(null); // 同义词跳查也退出对比视图
     try {
       setInfo(await invoke<WordInfo>("translate", { text: w }));
     } catch (err) {
@@ -164,6 +173,20 @@ export default function Popup() {
     audio.play();
   };
 
+  // 一次列出各勾选源的译文（顺序与设置页一致）
+  const runCompare = async (w: string) => {
+    setCompareLoading(true);
+    setRows(null);
+    setError("");
+    try {
+      setRows(await invoke<SourceResult[]>("translate_all", { text: w, to: "zh" }));
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setCompareLoading(false);
+    }
+  };
+
   // 截图翻译结果优先展示
   if (shotResult) {
     return (
@@ -182,6 +205,7 @@ export default function Popup() {
     <div className="card">
       {/* 顶部 padding 区是隐形拖拽热区：按住可移动窗口；窗口边缘仍可拉伸 */}
       <div className="drag-strip" data-tauri-drag-region />
+      <div className="card-body" ref={bodyRef}>
       <div className="word-head">
         <div className="word">{word}</div>
         {(info?.usphone || info?.ukphone) && (
@@ -216,27 +240,31 @@ export default function Popup() {
             ))}
           </div>
         )}
+        {word && (
+          <button
+            className="text-btn"
+            title={rows ? "返回词典卡片" : "同时查看各已勾选源的译文"}
+            onClick={() => (rows ? setRows(null) : runCompare(word))}
+          >
+            {rows ? "返回词典" : "对比各源"}
+          </button>
+        )}
         <button className="icon-btn gear" title="设置" onClick={() => invoke("open_settings")}>
           ⚙
         </button>
       </div>
 
       {error && <div className="error">{error}</div>}
-      {!info && !error && <div className="loading">翻译中...</div>}
+      {!info && !error && !rows && !compareLoading && <div className="loading">翻译中...</div>}
+      {compareLoading && <div className="loading">对比中…</div>}
 
-      {info && (
+      {rows && rows.length > 0 && (
+        <SourceCompare rows={rows} copied={copied} onCopy={doCopy} />
+      )}
+
+      {!rows && info && (
         <>
-          <ul className="senses">
-            {info.senses.map((s, i) => {
-              const { pos, text } = splitSense(s);
-              return (
-                <li key={i}>
-                  {pos && <b className="pos">{pos}</b>}
-                  {text}
-                </li>
-              );
-            })}
-          </ul>
+          <SenseList senses={info.senses} />
 
           {info.word_forms.length > 0 && (
             <div className="section">
@@ -267,6 +295,7 @@ export default function Popup() {
           ))}
         </>
       )}
+      </div>
     </div>
   );
 }
