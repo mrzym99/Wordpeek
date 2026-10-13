@@ -4,7 +4,7 @@
 
 **Goal:** 增加「输入翻译」——一个可随时唤出的窗口，打字/粘贴文本后按快捷键或按钮翻译，不再只能依赖「选中文字 + 抓剪贴板」。
 
-**Architecture:** 新增第四个常驻窗口 `input`（`?page=input`，普通带标题栏窗口，点 ✕ 只隐藏），托盘菜单「输入翻译」与新增全局快捷键 `Ctrl+Alt+I` 唤出；翻译仍走 Rust 端 `translate` 命令，只新增一个可选参数 `to`（`"zh"` / `"en"`）来支持译为英文。卡片/结果渲染抽成共享组件 `SenseList`，避免第四处复制释义渲染。
+**Architecture:** 新增第四个常驻窗口 `input`（`?page=input`，普通带标题栏窗口，点 ✕ 只隐藏），托盘菜单「输入翻译」与新增全局快捷键 `Ctrl+Alt+I` 唤出；翻译仍走 Rust 端 `translate` 命令，只新增一个可选参数 `to`（`"zh"` / `"en"`），输入翻译窗口**固定传 `"en"`**（目标语言只用英文，不做选择器、不加配置项）。卡片/结果渲染抽成共享组件 `SenseList`，避免第四处复制释义渲染。
 
 **Tech Stack:** Tauri 2（多窗口 `tauri.conf.json`、托盘菜单、global-shortcut）、React 18 + TypeScript、现有 `translate.rs` 管线。
 
@@ -16,7 +16,7 @@
 |---|---|---|
 | 交互载体 | 独立窗口（`label: "input"`，普通窗口，可 Alt+Tab 回来） | 主弹窗的语义是「就地结果卡片」：失焦即隐藏、无输入焦点保持能力，做输入框必然与自动隐藏打架 |
 | 唤出方式 | 托盘菜单 + 全局快捷键 `Ctrl+Alt+I`（可在设置里改） | 托盘是现有唯一的常驻入口；快捷键才配得上"更自由地使用"。`HotkeyRecorder` 已可复用，成本低 |
-| 目标语言 | 窗口内「译为中文 / 译为英文」分段控件，落盘 `input_target` | 只说「输入翻译」不定义方向时，中文用户最常见的两个方向都要覆盖；现有管线（有道/必应/百度）都支持这两个方向，无需新源 |
+| 目标语言 | **固定译为英文**（`to: "en"` 写死），不做选择器、不加配置项 | 用户确认「目前只需要英语就好」。少一个控件、少一个配置字段；后端 `to` 参数照样保留（划词/截图路径传 `"zh"`，多源对比复用同一参数）。输入本身就是英文时必应会原样返回，属可接受（不加语言检测） |
 | 有道在 `to="en"` 时 | 跳过并计入降级链错误，由必应接手 | 有道 `jsonapi` 只能英→中（词典 + 已下线的整句节点），不支持中→英 |
 | 参数传递 | `translate` 命令加可选参 `to`，缺省 `"zh"` | 现有前端调用 `{ text }` 全部无需改动（`Option<String>` 可省略）；不新增命令 |
 | 渲染复用 | 抽 `SenseList` 组件，Popup / ShotCard / InputPage 三处共用 | 释义列表渲染此前已经复制两份，本计划会引入第三份，顺手收敛，避免三套样式漂移 |
@@ -25,7 +25,7 @@
 ## Global Constraints
 
 - 不新增依赖（Cargo 与 npm 均无新增）
-- 新配置字段必须 `#[serde(default = ...)]`，旧 `config.json` 能直接读起来（默认 `input_hotkey = "Ctrl+Alt+I"`、`input_target = "zh"`）
+- 新配置字段必须 `#[serde(default = ...)]`，旧 `config.json` 能直接读起来（本计划只新增 `input_hotkey`，默认 `"Ctrl+Alt+I"`）
 - 现有行为不变：`selection` 事件、`screenshot-result` 事件、`translate`/`get_config`/`save_config` 签名（`to` 为可选参，向后兼容）、主弹窗与截图窗口配置都不动
 - 三个快捷键两两不同；校验放在后端 `save_config`，前端不再重复实现一套
 - `input` 窗口不调用任何 core 窗口 API（只用自定义命令 `fit_window`），因此 `capabilities/default.json` 不需要改动
@@ -45,7 +45,7 @@
 
 **Interfaces:**
 - Produces:
-  - `AppConfig.input_hotkey: String`（默认 `"Ctrl+Alt+I"`）、`AppConfig.input_target: String`（默认 `"zh"`）
+  - `AppConfig.input_hotkey: String`（默认 `"Ctrl+Alt+I"`）
   - `fn bing_target(to: &str) -> &'static str`、`fn baidu_target(to: &str) -> &'static str`
   - `async fn try_translate(source: &str, text: &str, baidu: &BaiduConfig, to: &str) -> Result<WordInfo, String>`
   - `pub async fn translate_text(cfg: &AppConfig, text: &str, to: &str) -> Result<WordInfo, String>`（**签名变更**：加 `to`）
@@ -58,10 +58,9 @@
 ```rust
     #[test]
     fn config_defaults_fill_input_fields() {
-        // 旧配置文件没有这两个字段，serde 默认值必须兜底
+        // 旧配置文件没有这个字段，serde 默认值必须兜底
         let cfg: AppConfig = serde_json::from_str("{}").unwrap();
         assert_eq!(cfg.input_hotkey, "Ctrl+Alt+I");
-        assert_eq!(cfg.input_target, "zh");
     }
 
     #[test]
@@ -122,9 +121,6 @@ Expected: 编译失败（`input_hotkey` 字段不存在 / `translate_text` 参�
     /// 输入翻译窗口的唤出快捷键，如 "Ctrl+Alt+I"
     #[serde(default = "default_input_hotkey")]
     pub input_hotkey: String,
-    /// 输入翻译的目标语言："zh" | "en"
-    #[serde(default = "default_input_target")]
-    pub input_target: String,
 ```
 
 默认值函数与 `impl Default for AppConfig` 同步补齐：
@@ -132,10 +128,6 @@ Expected: 编译失败（`input_hotkey` 字段不存在 / `translate_text` 参�
 ```rust
 fn default_input_hotkey() -> String {
     "Ctrl+Alt+I".into()
-}
-
-fn default_input_target() -> String {
-    "zh".into()
 }
 ```
 
@@ -145,7 +137,6 @@ fn default_input_target() -> String {
             hotkey: default_hotkey(),
             screenshot_hotkey: default_screenshot_hotkey(),
             input_hotkey: default_input_hotkey(),
-            input_target: default_input_target(),
             ocr_lang: default_ocr_lang(),
             baidu: BaiduConfig::default(),
         }
@@ -159,7 +150,6 @@ export interface AppConfig {
   hotkey: string;
   screenshot_hotkey: string;
   input_hotkey: string;
-  input_target: string;
   ocr_lang: string;
   baidu: BaiduConfig;
 }
@@ -458,16 +448,17 @@ export default function App() {
 ```tsx
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { AppConfig, WordInfo } from "../types";
+import type { WordInfo } from "../types";
 import { useAutoFitWindow } from "../lib/autofit";
-import { patchConfig } from "../lib/config";
 import SenseList from "./SenseList";
 import { CheckIcon, CopyIcon } from "./icons";
 
-/** 输入翻译窗口（?page=input）：打字/粘贴 → 译为中文或英文 */
+/** 目标语言：目前固定译为英文（issue #2 第 1 条确认），不做选择器 */
+const TARGET = "en";
+
+/** 输入翻译窗口（?page=input）：打字/粘贴 → 译为英文 */
 export default function InputPage() {
   const [text, setText] = useState("");
-  const [target, setTarget] = useState<"zh" | "en">("zh");
   const [info, setInfo] = useState<WordInfo | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -477,9 +468,6 @@ export default function InputPage() {
   const taRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
-    invoke<AppConfig>("get_config")
-      .then((cfg) => setTarget(cfg.input_target === "en" ? "en" : "zh"))
-      .catch(() => {});
     // 窗口每次被唤到前台都聚焦输入框，省一次点击
     const focus = () => taRef.current?.focus();
     focus();
@@ -495,17 +483,12 @@ export default function InputPage() {
     setInfo(null);
     try {
       // 翻译请求由 Rust 端发出（避免 CORS，且 API 密钥不进前端）
-      setInfo(await invoke<WordInfo>("translate", { text: q, to: target }));
+      setInfo(await invoke<WordInfo>("translate", { text: q, to: TARGET }));
     } catch (err) {
       setError(String(err));
     } finally {
       setLoading(false);
     }
-  };
-
-  const changeTarget = (t: "zh" | "en") => {
-    setTarget(t);
-    patchConfig({ input_target: t }).catch(() => {});
   };
 
   const copyResult = () => {
@@ -527,7 +510,7 @@ export default function InputPage() {
           value={text}
           rows={4}
           spellCheck={false}
-          placeholder="输入或粘贴要翻译的文本，Ctrl+Enter 翻译"
+          placeholder="输入或粘贴要翻译的文本，Ctrl+Enter 翻译（译为英文）"
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
@@ -537,20 +520,7 @@ export default function InputPage() {
           }}
         />
         <div className="input-actions">
-          <div className="segmented">
-            <button
-              className={target === "zh" ? "on" : ""}
-              onClick={() => changeTarget("zh")}
-            >
-              译为中文
-            </button>
-            <button
-              className={target === "en" ? "on" : ""}
-              onClick={() => changeTarget("en")}
-            >
-              译为英文
-            </button>
-          </div>
+          <span className="field-hint">译为英文（免 Key：必应；配置并勾选百度则一并可用）</span>
           <button className="save-btn" onClick={run} disabled={loading || !text.trim()}>
             {loading ? "翻译中…" : "翻译"}
           </button>
@@ -612,27 +582,6 @@ textarea.input-text:focus {
   margin-top: 10px;
   gap: 10px;
 }
-
-.segmented {
-  display: inline-flex;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  overflow: hidden;
-}
-.segmented button {
-  border: none;
-  background: #ffffff;
-  color: var(--text-secondary);
-  font: inherit;
-  padding: 4px 10px;
-  cursor: pointer;
-}
-.segmented button + button { border-left: 1px solid var(--border); }
-.segmented button.on {
-  background: var(--bg-subtle);
-  color: var(--text);
-  font-weight: 600;
-}
 ```
 
 - [ ] **Step 6: 类型检查 + 实机验证**
@@ -644,8 +593,8 @@ Expected: 无输出
 Run: `npm run tauri dev`，逐条验证：
 
 1. 托盘菜单 → 「输入翻译」→ 窗口出现，输入框已聚焦
-2. 粘贴 `The quick brown fox jumps over the lazy dog` → 点「翻译」→ 中文译文；`Ctrl+Enter` 同样触发
-3. 切到「译为英文」，粘贴 `今天天气很好` → 英文译文（必应）
+2. 粘贴 `今天天气很好` → 点「翻译」→ 英文译文（必应）；`Ctrl+Enter` 同样触发
+3. 粘贴已经是英文的句子 → 返回基本相同的英文（固定译为英文，不做语言检测，符合预期）
 4. 关掉输入窗口（点 ✕）→ 再点托盘「输入翻译」→ 窗口重新出现，之前输入仍在
 5. 空文本时「翻译」按钮禁用；翻译失败（拔网线）→ 显示可读错误
 6. 窗口高度：内容变化时贴合内容，不超出屏幕工作区 70%；手动拉宽后宽度保持
@@ -657,7 +606,7 @@ Run: `npm run tauri dev`，逐条验证：
 git add src-tauri/tauri.conf.json src-tauri/src/main.rs src/App.tsx \
   src/components/InputPage.tsx src/components/SenseList.tsx src/lib/config.ts \
   src/components/Popup.tsx src/components/ShotCard.tsx src/components/SettingsPage.tsx src/style.css
-git commit -m "feat: 新增输入翻译窗口（托盘菜单唤出，支持译中/译英）"
+git commit -m "feat: 新增输入翻译窗口（托盘菜单唤出，译为英文）"
 ```
 
 ---
@@ -785,21 +734,7 @@ Expected: 全部 PASS
       }
 ```
 
-4. `save()` 提交的 config 里补两个字段：
-
-```tsx
-        config: {
-          source,
-          hotkey,
-          screenshot_hotkey: screenshotHotkey,
-          input_hotkey: inputHotkey,
-          input_target: target,
-          ocr_lang: ocrLang,
-          baidu: { appid: appid.trim(), secret: secret.trim() },
-        },
-```
-
-其中 `target` 取当前输入翻译目标语言——设置页不展示该字段（枚举值由输入窗口内的分段控件维护），因此改为从后端读回后原样带回：在 `save()` 里改为
+4. `save()` 提交的 config 改为「读回后端当前配置 + 覆盖本页字段」——输入翻译的目标语言不在本页（固定英文，无配置项），多源勾选列表也已即时落盘，都不能被这页的表单覆盖：
 
 ```tsx
       const current = await invoke<AppConfig>("get_config");
@@ -828,7 +763,7 @@ Expected: 全部 PASS
 
 - [ ] **Step 6: README 更新**
 
-`README.md`：功能列表加「**输入翻译**：`Ctrl+Alt+I`（或托盘菜单）唤出窗口，打字/粘贴即译，支持译为中文或英文」；「使用说明」加一条「托盘菜单 → 输入翻译，或按 `Ctrl+Alt+I`，输入文本后 `Ctrl+Enter` 翻译」；快捷键表加一行 `| 输入翻译 | Ctrl+Alt+I |`；目录结构里把 `src/components/InputPage.tsx` 一并列上。
+`README.md`：功能列表加「**输入翻译**：`Ctrl+Alt+I`（或托盘菜单）唤出窗口，打字/粘贴即译，固定译为英文」；「使用说明」加一条「托盘菜单 → 输入翻译，或按 `Ctrl+Alt+I`，输入中文后 `Ctrl+Enter` 得到英文译文」；快捷键表加一行 `| 输入翻译 | Ctrl+Alt+I |`；目录结构里把 `src/components/InputPage.tsx` 一并列上。
 
 - [ ] **Step 7: 类型检查 + 实机验证**
 
@@ -839,7 +774,7 @@ Run: `npm run tauri dev`：
 1. 按 `Ctrl+Alt+I` → 输入窗口出现并聚焦
 2. 设置里把「输入翻译快捷键」改成 `Ctrl+Alt+U` 保存 → 旧键失效、新键生效
 3. 把「输入翻译快捷键」与「划词快捷键」录成同一个键保存 → 设置页报「快捷键重复：…」，配置未写入（重启后旧值仍在）
-4. 输入翻译窗口切「译为英文」后重启应用 → 目标语言记忆为英文
+4. 输入翻译窗口关闭再唤出 → 输入内容仍在；窗口标题栏/按钮文案显示“译为英文”，无语言切换控件
 
 - [ ] **Step 8: 提交**
 
@@ -853,9 +788,9 @@ git commit -m "feat: 输入翻译快捷键 Ctrl+Alt+I 与三键重复校验"
 ## 验收清单（对应 issue #2 第 1 条）
 
 - [ ] 托盘菜单「输入翻译」与 `Ctrl+Alt+I` 都能唤出窗口
-- [ ] 输入/粘贴文本 → 译为中文；切「译为英文」→ 中译英走必应
+- [ ] 输入/粘贴中文 → 得到英文译文（必应；配了百度密钥并勾选则一起参与）
+- [ ] 输入翻译快捷键可改、可持久化；三个快捷键重复时保存被拒
 - [ ] 空文本不触发请求；失败有可读错误
-- [ ] 目标语言、快捷键都持久化在 `config.json`；三个快捷键重复时保存被拒
 - [ ] 划词弹窗、截图卡片行为与外观不变（`SenseList` 重构零变化）
 - [ ] `cargo test`、`npx tsc --noEmit` 通过
 
