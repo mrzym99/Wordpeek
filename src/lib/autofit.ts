@@ -26,7 +26,17 @@ export function useAutoFitWindow(label: string, chrome: number = CARD_CHROME) {
     const ro = new ResizeObserver(apply);
     ro.observe(body);
     apply(); // 首次测量（ResizeObserver 只保证后续变化）
-    return () => ro.disconnect();
+    // 窗口从隐藏态被 show 出来时，隐藏期间的 set_size 可能没落地：
+    // 拿到焦点即强制重报一次，保证显示出来的尺寸就是内容尺寸
+    const refit = () => {
+      last = 0;
+      apply();
+    };
+    window.addEventListener("focus", refit);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("focus", refit);
+    };
   }, [body, label, chrome]);
   return setBody;
 }
