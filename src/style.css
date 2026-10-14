@@ -43,15 +43,17 @@ html, body, #root {
   flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 10px;
-  padding-right: 32px; /* 给右上角齿轮留位 */
+  padding-right: 110px; /* 给右上角「对比各源 + 齿轮」按钮组留位 */
 }
-/* 齿轮固定右上：top 与 word 首行（19px×1.35≈26px 高）垂直居中；
-   多行换行时也不掉行；relative 时代的 z-index 保住，盖过顶部拖拽热区 */
-.word-head .icon-btn.gear {
+/* 右上角按钮组：对比各源 + 设置，两种模式都固定在标题行右上 */
+.head-actions {
   position: absolute;
   right: 0;
   top: 2px;
-  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  z-index: 2; /* 盖过顶部拖拽热区，保证可点击 */
 }
 
 /* 顶部拖拽热区：覆盖卡片上 padding（16px），隐形但鼠标移入变移动光标。
@@ -71,6 +73,25 @@ html, body, #root {
   letter-spacing: 0.2px;
   color: var(--text);
   line-height: 1.35;
+}
+
+/* 单词可编辑框：外观与 .word 一致，无边框透明，聚焦才有输入感 */
+.word-input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  color: var(--text);
+  line-height: 1.35;
+  background: transparent;
+  border: none;
+  outline: none;
+  padding: 0;
+}
+.word-input:focus {
+  box-shadow: inset 0 -1.5px 0 var(--accent);
 }
 
 .phonetics {
@@ -548,3 +569,28 @@ textarea.input-text:focus {
   white-space: nowrap;
 }
 .text-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+/* 翻译源子页横向 tab：源配置 / 排序 */
+.sub-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.sub-tab {
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-secondary);
+  padding: 4px 12px;
+  cursor: pointer;
+  border-radius: 6px 6px 0 0;
+  border-bottom: 2px solid transparent;
+}
+.sub-tab:hover { color: var(--text); }
+.sub-tab.active {
+  color: var(--accent);
+  font-weight: 600;
+  border-bottom-color: var(--accent);
+}

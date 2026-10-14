@@ -31,7 +31,8 @@
         "visible": false,
         "resizable": false,
         "decorations": true,
-        "transparent": false
+        "transparent": false,
+        "dragDropEnabled": false
       },
       {
         "label": "input",

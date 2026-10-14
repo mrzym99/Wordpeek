@@ -276,35 +276,76 @@ pub fn get_config(state: State<SharedConfig>) -> AppConfig {
     state.lock().clone()
 }
 
-#[tauri::command]
-pub fn save_config(
+/// 模块化落盘：以后端当前配置为基底，只改调用方负责的字段后整体写回。
+/// 设置页每个区域只调自己的命令，互不可见对方的字段，
+/// 从结构上杜绝「一处保存覆盖另一处配置」的问题。
+fn persist<F: FnOnce(&mut AppConfig)>(
     app: AppHandle,
     state: State<SharedConfig>,
-    config: AppConfig,
+    mutate: F,
 ) -> Result<(), String> {
+    let mut cfg = state.lock().clone();
+    mutate(&mut cfg);
     // 快捷键重复会被后端拦下，设置页直接显示这条错误
-    crate::validate_hotkeys(&[
-        &config.hotkey,
-        &config.screenshot_hotkey,
-        &config.input_hotkey,
-    ])?;
-    // 勾选列表去重并剔除非法项，避免前端传来空列表导致没有可用源
-    let config = AppConfig {
-        sources: enabled_sources(&config),
-        ..config
-    };
+    crate::validate_hotkeys(&[&cfg.hotkey, &cfg.screenshot_hotkey, &cfg.input_hotkey])?;
+    // 勾选列表去重并剔除非法项，避免空列表导致没有可用源
+    cfg.sources = enabled_sources(&cfg);
     let path = config_path(&app).ok_or("无法定位配置目录")?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("创建配置目录失败: {e}"))?;
     }
-    let json = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
+    let json = serde_json::to_string_pretty(&cfg).map_err(|e| e.to_string())?;
     std::fs::write(&path, json).map_err(|e| format!("写入配置文件失败: {e}"))?;
-    *state.lock() = config.clone();
+    *state.lock() = cfg.clone();
     println!("[config] saved");
 
     // 快捷键可能被修改：按新配置重新注册全部快捷键（失败仅日志，不阻断保存）
-    crate::register_hotkeys(&app, &config);
+    crate::register_hotkeys(&app, &cfg);
     Ok(())
+}
+
+/// 翻译源：勾选/排序（源列表 tab）
+#[tauri::command]
+pub fn save_sources(
+    app: AppHandle,
+    state: State<SharedConfig>,
+    sources: Vec<String>,
+) -> Result<(), String> {
+    persist(app, state, |c| c.sources = sources)
+}
+
+/// 百度密钥（源配置 tab）
+#[tauri::command]
+pub fn save_baidu(
+    app: AppHandle,
+    state: State<SharedConfig>,
+    appid: String,
+    secret: String,
+) -> Result<(), String> {
+    persist(app, state, |c| {
+        c.baidu = BaiduConfig {
+            appid: appid.trim().into(),
+            secret: secret.trim().into(),
+        }
+    })
+}
+
+/// 快捷键 + OCR 语言（快捷键/截图翻译 tab 的「保存」按钮）
+#[tauri::command]
+pub fn save_settings(
+    app: AppHandle,
+    state: State<SharedConfig>,
+    hotkey: String,
+    screenshot_hotkey: String,
+    input_hotkey: String,
+    ocr_lang: String,
+) -> Result<(), String> {
+    persist(app, state, |c| {
+        c.hotkey = hotkey;
+        c.screenshot_hotkey = screenshot_hotkey;
+        c.input_hotkey = input_hotkey;
+        c.ocr_lang = ocr_lang;
+    })
 }
 
 /// tr 节点里的 "l.i" 可能是字符串，也可能是字符串数组

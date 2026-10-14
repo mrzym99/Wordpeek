@@ -1,41 +1,76 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { PhysicalPosition } from "@tauri-apps/api/dpi";
 import type { Selection, ShotResult, SourceResult, WordInfo } from "../types";
 import SenseList from "./SenseList";
-import ShotCard from "./ShotCard";
-import { useAutoFitWindow } from "../lib/autofit";
 import SourceCompare from "./SourceCompare";
+import { CheckIcon, CopyIcon, RefreshIcon } from "./icons";
+import { useAutoFitWindow } from "../lib/autofit";
 
-/** 划词翻译弹窗：主窗口复用，划词结果与截图结果都在这里展示 */
+/** 划词/截图统一弹窗：同一张卡片，标题行 = 可编辑原文 + 「对比各源」/设置按钮 */
 export default function Popup() {
   // 卡片内容高度上报给 Rust，窗口按内容收缩（防止透明区域吞掉下层窗口的点击）
   const bodyRef = useAutoFitWindow("main");
   const [word, setWord] = useState("");
+  // 最近一次实际发起查词的词：改词框失焦时只在真正变化后才重查，避免回车+失焦查两次
+  const lastLooked = useRef("");
   const [info, setInfo] = useState<WordInfo | null>(null);
   const [error, setError] = useState("");
-  // 对比模式：非空时用各勾选源的译文替换词典卡片
+  // 多源对比：开启时在卡片底部追加各源译文（不隐藏原有内容）
+  const [compareOpen, setCompareOpen] = useState(false);
   const [rows, setRows] = useState<SourceResult[] | null>(null);
   const [compareLoading, setCompareLoading] = useState(false);
-  // 截图翻译结果卡片（screenshot-result 事件）；非空时优先展示
+  const [compareError, setCompareError] = useState("");
+  // 截图翻译结果（screenshot-result 事件）；非空时卡片切到截图模式
   const [shotResult, setShotResult] = useState<ShotResult | null>(null);
-  // 复制反馈："text" | "translation" | ""，1.5s 后自动复位
+  // 截图原文可编辑副本：用户修掉 OCR 错误换行后可重新翻译
+  const [draft, setDraft] = useState("");
+  // 复制反馈 key：可能是 "text"/"translation" 或某个翻译源名，1.5s 后自动复位
   const [copied, setCopied] = useState("");
-  const doCopy = (label: string, text: string) => {
+  const doCopy = (key: string, text: string) => {
     invoke("copy_text", { text })
       .then(() => {
-        setCopied(label);
+        setCopied(key);
         setTimeout(() => setCopied(""), 1500);
       })
       .catch(() => {});
   };
-  // 原文可编辑副本：用户修掉 OCR 错误换行后可重新翻译
-  const [draft, setDraft] = useState("");
-  // 用编辑后的文本重新翻译，结果回填卡片（不清空 draft）
+
+  // 划词/截图模式的对比原文：截图用编辑后的 draft，划词用单词
+  const inShot = !!shotResult;
+  const activeText = (inShot ? draft : word).trim();
+
+  // 一次列出各勾选源的译文（顺序与设置页一致）；不影响卡片原有内容
+  const runCompare = async (text: string) => {
+    if (!text.trim()) return;
+    setCompareLoading(true);
+    setRows(null);
+    setCompareError("");
+    try {
+      setRows(await invoke<SourceResult[]>("translate_all", { text, to: "zh" }));
+    } catch (err) {
+      setCompareError(String(err));
+    } finally {
+      setCompareLoading(false);
+    }
+  };
+
+  // 对比各源：展开/收起卡片底部的多源对比区
+  const toggleCompare = () => {
+    if (compareOpen) {
+      setCompareOpen(false);
+      return;
+    }
+    setCompareOpen(true);
+    runCompare(activeText);
+  };
+
+  // 用编辑后的截图原文重新翻译，结果回填卡片（不清空 draft）
   const retranslate = (text: string) => {
     if (!text.trim()) return;
+    setCompareOpen(false); // 原文变了，旧对比结果作废
     setShotResult((r) => (r ? { ...r, info: null, error: null } : r));
     invoke<WordInfo>("translate", { text })
       .then((info) => setShotResult((r) => (r ? { ...r, info, error: null } : r)))
@@ -50,10 +85,11 @@ export default function Popup() {
     let unlistenShot: (() => void) | undefined;
 
     const lookup = async (w: string) => {
+      lastLooked.current = w;
       setWord(w);
       setInfo(null);
       setError("");
-      setRows(null); // 新查词退出对比视图
+      setCompareOpen(false); // 新查词收起旧对比
       try {
         // 翻译请求由 Rust 端发出（避免 CORS，且 API 密钥不进前端）
         setInfo(await invoke<WordInfo>("translate", { text: w }));
@@ -88,7 +124,8 @@ export default function Popup() {
       // x/y 已在 Rust 端钳制到光标所在屏幕内
       unlistenSelection = await listen<Selection>("selection", async (e) => {
         const { text, x, y } = e.payload;
-        setShotResult(null); // 新的划词到达，退出截图卡片视图
+        setShotResult(null); // 新的划词到达，退出截图模式
+        setCompareOpen(false);
         await win.setPosition(new PhysicalPosition(x, y));
         await win.show();
         await win.setFocus();
@@ -100,6 +137,7 @@ export default function Popup() {
       // 用真实窗口尺寸（outerSize，物理像素）錨制，避免估算偏差导致位置漂移
       unlistenShot = await listen<ShotResult>("screenshot-result", async (e) => {
         setShotResult(e.payload);
+        setCompareOpen(false); // 新一轮结果收起旧对比
         setDraft(e.payload.text ?? ""); // 新一轮结果重置编辑副本
         const { virtual, mouse, work } = e.payload;
         try {
@@ -147,10 +185,11 @@ export default function Popup() {
 
   // 点击同义词 / 词形变化：在弹窗内继续查词，不重新定位窗口
   const lookup = async (w: string) => {
+    lastLooked.current = w;
     setWord(w);
     setInfo(null);
     setError("");
-    setRows(null); // 同义词跳查也退出对比视图
+    setCompareOpen(false); // 同义词跳查收起旧对比
     try {
       setInfo(await invoke<WordInfo>("translate", { text: w }));
     } catch (err) {
@@ -173,33 +212,8 @@ export default function Popup() {
     audio.play();
   };
 
-  // 一次列出各勾选源的译文（顺序与设置页一致）
-  const runCompare = async (w: string) => {
-    setCompareLoading(true);
-    setRows(null);
-    setError("");
-    try {
-      setRows(await invoke<SourceResult[]>("translate_all", { text: w, to: "zh" }));
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setCompareLoading(false);
-    }
-  };
-
-  // 截图翻译结果优先展示
-  if (shotResult) {
-    return (
-      <ShotCard
-        shotResult={shotResult}
-        draft={draft}
-        onDraftChange={setDraft}
-        copied={copied}
-        onCopy={doCopy}
-        onRetranslate={retranslate}
-      />
-    );
-  }
+  // 截图重新翻译进行中：info/error 均空且原文存在
+  const shotLoading = inShot && !!shotResult!.text && !shotResult!.info && !shotResult!.error;
 
   return (
     <div className="card">
@@ -207,8 +221,41 @@ export default function Popup() {
       <div className="drag-strip" data-tauri-drag-region />
       <div className="card-body" ref={bodyRef}>
       <div className="word-head">
-        <div className="word">{word}</div>
-        {(info?.usphone || info?.ukphone) && (
+        {inShot ? (
+          <div className="word">截图识别结果</div>
+        ) : (
+          /* 单词可直接编辑：回车或失焦且内容变化时重查 */
+          <input
+            className="word-input"
+            value={word}
+            spellCheck={false}
+            title="点击可修改单词，回车重新查词"
+            onChange={(e) => setWord(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            }}
+            onBlur={() => {
+              const w = word.trim();
+              if (w && w !== lastLooked.current) lookup(w);
+            }}
+          />
+        )}
+        {/* 对比各源 + 设置：固定标题行右上角，两种模式都有 */}
+        <div className="head-actions">
+          {activeText && (
+            <button
+              className="text-btn"
+              title={compareOpen ? "收起各源译文对比" : "在卡片底部追加各已勾选源的译文"}
+              onClick={toggleCompare}
+            >
+              {compareOpen ? "收起对比" : "对比各源"}
+            </button>
+          )}
+          <button className="icon-btn gear" title="设置" onClick={() => invoke("open_settings")}>
+            ⚙
+          </button>
+        </div>
+        {!inShot && (info?.usphone || info?.ukphone) && (
           <div className="phonetics">
             {/* 点击播放有道词典发音（type=2 美音 / type=1 英音），与翻译源无关 */}
             {info?.usphone && (
@@ -231,7 +278,7 @@ export default function Popup() {
             )}
           </div>
         )}
-        {info && info.exam_types.length > 0 && (
+        {!inShot && info && info.exam_types.length > 0 && (
           <div className="badges">
             {info.exam_types.map((t) => (
               <span key={t} className="badge">
@@ -240,29 +287,73 @@ export default function Popup() {
             ))}
           </div>
         )}
-        {word && (
-          <button
-            className="text-btn"
-            title={rows ? "返回词典卡片" : "同时查看各已勾选源的译文"}
-            onClick={() => (rows ? setRows(null) : runCompare(word))}
-          >
-            {rows ? "返回词典" : "对比各源"}
-          </button>
-        )}
-        <button className="icon-btn gear" title="设置" onClick={() => invoke("open_settings")}>
-          ⚙
-        </button>
       </div>
 
       {error && <div className="error">{error}</div>}
-      {!info && !error && !rows && !compareLoading && <div className="loading">翻译中...</div>}
-      {compareLoading && <div className="loading">对比中…</div>}
+      {!inShot && !info && !error && <div className="loading">翻译中...</div>}
 
-      {rows && rows.length > 0 && (
-        <SourceCompare rows={rows} copied={copied} onCopy={doCopy} />
+      {/* 多源对比区：追加在原有内容下方，不遮盖原文/译文 */}
+      {compareOpen && (
+        <>
+          {compareLoading && <div className="loading">对比中…</div>}
+          {compareError && <div className="error">{compareError}</div>}
+          {rows && rows.length > 0 && (
+            <SourceCompare rows={rows} copied={copied} onCopy={doCopy} />
+          )}
+          {rows && rows.length === 0 && !compareLoading && (
+            <div className="error">没有可用的翻译源，请在设置 → 翻译里勾选</div>
+          )}
+        </>
       )}
 
-      {!rows && info && (
+      {/* 截图模式：可编辑原文 + 复制/重译 + 译文 */}
+      {inShot && shotResult && (
+        <>
+          {shotResult.text && (
+            <>
+              <textarea
+                className="shot-text"
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                rows={3}
+                spellCheck={false}
+              />
+              <div className="shot-actions">
+                <button
+                  className={"icon-btn" + (copied === "text" ? " ok" : "")}
+                  title="复制原文"
+                  onClick={() => doCopy("text", draft)}
+                >
+                  {copied === "text" ? <CheckIcon /> : <CopyIcon />}
+                </button>
+                <button
+                  className={"icon-btn" + (shotLoading ? " spinning" : "")}
+                  title="重新翻译"
+                  onClick={() => retranslate(draft)}
+                >
+                  <RefreshIcon />
+                </button>
+              </div>
+            </>
+          )}
+          {shotLoading && <div className="shot-loading">翻译中…</div>}
+          {shotResult.info && (
+            <>
+              <SenseList senses={shotResult.info.senses} className="shot-senses" />
+              <button
+                className={"icon-btn" + (copied === "translation" ? " ok" : "")}
+                title="复制译文"
+                onClick={() => doCopy("translation", shotResult.info!.senses.join("\n"))}
+              >
+                {copied === "translation" ? <CheckIcon /> : <CopyIcon />}
+              </button>
+            </>
+          )}
+        </>
+      )}
+
+      {/* 划词模式：词典卡片 */}
+      {!inShot && info && (
         <>
           <SenseList senses={info.senses} />
 

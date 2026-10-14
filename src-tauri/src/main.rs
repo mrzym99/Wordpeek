@@ -679,7 +679,9 @@ fn main() {
             translate::translate,
             translate::translate_all,
             translate::get_config,
-            translate::save_config
+            translate::save_sources,
+            translate::save_baidu,
+            translate::save_settings
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

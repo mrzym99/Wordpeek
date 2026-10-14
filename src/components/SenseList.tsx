@@ -1,6 +1,6 @@
 import { splitSense } from "../lib/senses";
 
-/** 释义列表：Popup / ShotCard / InputPage 共用，避免样式各写一套 */
+/** 释义列表：Popup / InputPage 共用，避免样式各写一套 */
 export default function SenseList({
   senses,
   className = "",

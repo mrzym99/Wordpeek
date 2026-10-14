@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { AppConfig, UpdateStatus } from "../types";
-import { patchConfig } from "../lib/config";
+import { saveSources, saveBaidu, saveSettings } from "../lib/config";
 import HotkeyRecorder from "./HotkeyRecorder";
 
 type SettingsSection = "translate" | "hotkey" | "shot" | "about" | "other";
@@ -31,8 +31,10 @@ type CopiedKind = "" | "text" | "link";
 /** 独立设置窗口：左侧菜单切换分组，用户手动关闭，不会被 blur 隐藏 */
 export default function SettingsPage() {
   const [section, setSection] = useState<SettingsSection>("translate");
-  // 勾选的源，顺序即优先级（拖拽调整）
+  // 勾选的源，顺序即优先级（排序 tab 里拖拽调整）
   const [sources, setSources] = useState<string[]>(["youdao", "bing"]);
+  // 翻译源区域子 tab：「list」勾选+排序列表 /「config」源配置（密钥）
+  const [srcTab, setSrcTab] = useState<"list" | "config">("list");
   const [dragId, setDragId] = useState("");
   const [appid, setAppid] = useState("");
   const [secret, setSecret] = useState("");
@@ -96,26 +98,37 @@ export default function SettingsPage() {
   };
 
   useEffect(() => {
-    invoke<AppConfig>("get_config")
-      .then((cfg) => {
-        setSources(cfg.sources?.length ? cfg.sources : ["youdao", "bing"]);
-        setHotkey(cfg.hotkey || "Ctrl+Alt+T");
-        setScreenshotHotkey(cfg.screenshot_hotkey || "Ctrl+Alt+S");
-        setInputHotkey(cfg.input_hotkey || "Ctrl+Alt+I");
-        setOcrLang(cfg.ocr_lang || "auto");
-        setAppid(cfg.baidu.appid);
-        setSecret(cfg.baidu.secret);
-      })
-      .catch(() => {
-        // 读失败就用默认值，不至于打不开设置
-      });
+    // 设置窗口页面在应用启动时就会加载，可能早于后端状态就绪：
+    // get_config 失败不能静默放弃，否则表单停在默认值，
+    // 之后任何一次保存都会把真配置（密钥/快捷键）覆盖掉
+    let cancelled = false;
+    const load = (tries: number) => {
+      invoke<AppConfig>("get_config")
+        .then((cfg) => {
+          if (cancelled) return;
+          setSources(cfg.sources?.length ? cfg.sources : ["youdao", "bing"]);
+          setHotkey(cfg.hotkey || "Ctrl+Alt+T");
+          setScreenshotHotkey(cfg.screenshot_hotkey || "Ctrl+Alt+S");
+          setInputHotkey(cfg.input_hotkey || "Ctrl+Alt+I");
+          setOcrLang(cfg.ocr_lang || "auto");
+          setAppid(cfg.baidu.appid);
+          setSecret(cfg.baidu.secret);
+        })
+        .catch(() => {
+          if (!cancelled && tries > 0) setTimeout(() => load(tries - 1), 300);
+        });
+    };
+    load(10);
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  // 保存密钥（不切换主源，配置后仍作为兜底源生效）
+  // 保存密钥（独立落盘，只写 baidu 字段）
   const saveBaiduKeys = async () => {
     setSaveError("");
     try {
-      await patchConfig({ baidu: { appid: appid.trim(), secret: secret.trim() } });
+      await saveBaidu(appid, secret);
       setSaved(true);
       setTimeout(() => setSaved(false), 1500);
     } catch (err) {
@@ -123,14 +136,14 @@ export default function SettingsPage() {
     }
   };
 
-  // 勾选/取消：即时落盘；至少保留一个源（全不勾会导致翻译没有可用源）
+  // 勾选/取消：即时落盘（只写 sources 字段）；至少保留一个源（全不勾会导致翻译没有可用源）
   const toggleSource = (id: string) => {
     const next = sources.includes(id)
       ? sources.filter((s) => s !== id)
       : [...sources, id];
     if (next.length === 0) return;
     setSources(next);
-    patchConfig({ sources: next }).catch((e) => setSaveError(String(e)));
+    saveSources(next).catch((e) => setSaveError(String(e)));
   };
 
   // 拖拽排序：把 from 插到 to 之前
@@ -140,24 +153,19 @@ export default function SettingsPage() {
     const at = next.indexOf(to);
     next.splice(at < 0 ? next.length : at, 0, from);
     setSources(next);
-    patchConfig({ sources: next }).catch((e) => setSaveError(String(e)));
+    saveSources(next).catch((e) => setSaveError(String(e)));
   };
 
   const save = async () => {
     setSaved(false);
     setSaveError("");
     try {
-      // 读回后端当前配置再覆盖本页字段：输入翻译目标语言、百度密钥之外的项不该被表单覆写
-      const current = await invoke<AppConfig>("get_config");
-      await invoke("save_config", {
-        config: {
-          ...current,
-          hotkey,
-          screenshot_hotkey: screenshotHotkey,
-          input_hotkey: inputHotkey,
-          ocr_lang: ocrLang,
-          baidu: { appid: appid.trim(), secret: secret.trim() },
-        },
+      // 只写快捷键 + OCR 语言；密钥/翻译源各由自己的模块命令落盘
+      await saveSettings({
+        hotkey,
+        screenshot_hotkey: screenshotHotkey,
+        input_hotkey: inputHotkey,
+        ocr_lang: ocrLang,
       });
       setSaved(true);
       setTimeout(() => setSaved(false), 1500);
@@ -183,75 +191,99 @@ export default function SettingsPage() {
       <div className="settings-content">
         {section === "translate" && (
           <>
-            <div className="section-heading">翻译</div>
-            <div className="group-heading">翻译源（勾选参与翻译的源，拖拽调整优先级）</div>
-            <div className="source-list">
-              {sources.map((id) => {
-                const item = SOURCE_ITEMS.find((s) => s.id === id);
-                if (!item) return null;
-                return (
-                  <div
-                    key={id}
-                    className="source-item"
-                    draggable
-                    onDragStart={() => setDragId(id)}
-                    onDragOver={(e) => e.preventDefault()}
-                    onDrop={() => {
-                      moveSource(dragId, id);
-                      setDragId("");
-                    }}
-                  >
-                    <span className="drag-handle" title="拖拽调整顺序">
-                      ⠿
-                    </span>
-                    <label className="switch">
-                      <input type="checkbox" checked onChange={() => toggleSource(id)} />
-                      {item.label}
-                    </label>
-                  </div>
-                );
-              })}
-              {SOURCE_ITEMS.filter((s) => !sources.includes(s.id)).map((s) => (
-                <div key={s.id} className="source-item off">
-                  <span className="drag-handle" />
-                  <label className="switch">
-                    <input type="checkbox" checked={false} onChange={() => toggleSource(s.id)} />
-                    {s.label}
-                  </label>
-                </div>
-              ))}
-            </div>
-            <div className="field-hint">
-              顺序即优先级：第一个源也是单源快速翻译的首选，对比页按同一顺序展示；勾选百度需先填下面的密钥。未勾选的源不参与翻译，也不作失败兜底。
-            </div>
-            <div className="group-heading">百度翻译密钥（可选）</div>
-            <label className="field">
-              APP ID
-              <input
-                value={appid}
-                placeholder="百度翻译开放平台 appid"
-                onChange={(e) => setAppid(e.target.value)}
-              />
-            </label>
-            <label className="field">
-              密钥
-              <input
-                type="password"
-                value={secret}
-                placeholder="百度翻译开放平台密钥"
-                onChange={(e) => setSecret(e.target.value)}
-              />
-            </label>
-            <div className="source-actions">
-              <button className="save-btn" onClick={saveBaiduKeys}>
-                保存密钥
+            {/* 翻译源两个子页：列表（勾选+拖拽排序）/ 源配置，横向 tab 切换 */}
+            <div className="sub-tabs">
+              <button className={"sub-tab" + (srcTab === "list" ? " active" : "")} onClick={() => setSrcTab("list")}>
+                勾选与排序
+              </button>
+              <button className={"sub-tab" + (srcTab === "config" ? " active" : "")} onClick={() => setSrcTab("config")}>
+                源配置
               </button>
             </div>
-            <div className="field-hint">
-              {appid.trim() && secret.trim()
-                ? "已配置：勾选「百度翻译」后即参与翻译与对比"
-                : "密钥可留空；留空时百度翻译不可用"}
-            </div>
+            {srcTab === "list" ? (
+              <>
+                <div className="group-heading">翻译源（勾选参与翻译的源，拖拽调整优先级）</div>
+                <div className="source-list">
+                  {sources.map((id) => {
+                    const item = SOURCE_ITEMS.find((s) => s.id === id);
+                    if (!item) return null;
+                    return (
+                      <div
+                        key={id}
+                        className="source-item"
+                        draggable
+                        onDragStart={(e) => {
+                          // 拖拽失效两个根因：① 窗口 dragDropEnabled 默认开启会吞掉
+                          // HTML5 拖拽（已在 tauri.conf.json 关掉）；② setData 必须调，
+                          // 否则 WebView2 里 drop 不触发
+                          e.dataTransfer.setData("text/plain", id);
+                          e.dataTransfer.effectAllowed = "move";
+                          setDragId(id);
+                        }}
+                        onDragOver={(e) => e.preventDefault()}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          moveSource(dragId, id);
+                          setDragId("");
+                        }}
+                        onDragEnd={() => setDragId("")}
+                      >
+                        <span className="drag-handle" title="拖拽调整顺序">
+                          ⠿
+                        </span>
+                        <label className="switch">
+                          <input type="checkbox" checked onChange={() => toggleSource(id)} />
+                          {item.label}
+                        </label>
+                      </div>
+                    );
+                  })}
+                  {SOURCE_ITEMS.filter((s) => !sources.includes(s.id)).map((s) => (
+                    <div key={s.id} className="source-item off">
+                      <span className="drag-handle" />
+                      <label className="switch">
+                        <input type="checkbox" checked={false} onChange={() => toggleSource(s.id)} />
+                        {s.label}
+                      </label>
+                    </div>
+                  ))}
+                </div>
+                <div className="field-hint">
+                  顺序即优先级：第一个源也是单源快速翻译的首选，对比页按同一顺序展示；至少保留一个源。勾选百度需先在「源配置」里填密钥。
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="group-heading">百度翻译密钥（可选）</div>
+                <label className="field">
+                  APP ID
+                  <input
+                    value={appid}
+                    placeholder="百度翻译开放平台 appid"
+                    onChange={(e) => setAppid(e.target.value)}
+                  />
+                </label>
+                <label className="field">
+                  密钥
+                  <input
+                    type="password"
+                    value={secret}
+                    placeholder="百度翻译开放平台密钥"
+                    onChange={(e) => setSecret(e.target.value)}
+                  />
+                </label>
+                <div className="source-actions">
+                  <button className="save-btn" onClick={saveBaiduKeys}>
+                    保存密钥
+                  </button>
+                </div>
+                <div className="field-hint">
+                  {appid.trim() && secret.trim()
+                    ? "已配置：在「勾选与排序」里勾选「百度翻译」后即参与翻译与对比"
+                    : "密钥可留空；留空时百度翻译不可用"}
+                </div>
+              </>
+            )}
           </>
         )}
 
