@@ -480,8 +480,10 @@ fn screenshot_finish(app: AppHandle, x: i32, y: i32, w: i32, h: i32) -> Result<(
                         .state::<parking_lot::Mutex<translate::AppConfig>>()
                         .lock()
                         .clone();
+                    // OCR 文本中英不定：按内容自动检测目标语言
+                    let to = translate::detect_to(&text);
                     match tauri::async_runtime::block_on(crate::translate::translate_text(
-                        &cfg, &text, "zh"
+                        &cfg, &text, to
                     )) {
                         Ok(info) => serde_json::json!({ "ok": true, "text": text, "info": info, "error": null, "sel": sel, "virtual": virt, "mouse": mouse, "work": work }),
                         Err(e) => serde_json::json!({ "ok": true, "text": text, "info": null, "error": e, "sel": sel, "virtual": virt, "mouse": mouse, "work": work }),

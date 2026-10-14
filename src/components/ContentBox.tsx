@@ -9,7 +9,6 @@ export default function ContentBox({
   label,
   copied = false,
   onCopy,
-  actions,
   className = "",
   children,
 }: {
@@ -17,21 +16,18 @@ export default function ContentBox({
   label?: string;
   copied?: boolean;
   onCopy?: () => void;
-  /** 框头右侧的其它按钮（如重新翻译），排在复制按钮前 */
-  actions?: ReactNode;
   className?: string;
   children: ReactNode;
 }) {
   return (
     <div className={"content-box " + className}>
-      {(label || onCopy || actions) && (
+      {(label || onCopy) && (
         <div className="content-box-head">
           {label && <span className="content-box-label">{label}</span>}
           <span className="content-box-actions">
-            {actions}
             {onCopy && (
               <button
-                className={"icon-btn" + (copied ? " ok" : "")}
+                className={"icon-btn copy-btn" + (copied ? " ok" : "")}
                 title="复制"
                 onClick={onCopy}
               >

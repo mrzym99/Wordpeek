@@ -20,6 +20,8 @@ html, body, #root {
   position: relative;
   height: 100%;
   box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
   padding: 16px 18px;
   border-radius: 10px;
   background: #ffffff;
@@ -36,14 +38,15 @@ html, body, #root {
 
 /* 标题区：单词 + 音标 + 考试标签（拖动窗口请用顶部边缘） */
 /* 标题行：内容靠左（长词自动换行），齿轮绝对定位右上角，与第一行垂直居中，与内容留 gap */
+/* header：固定不随 body 滚动（card 用 flex 纵向布局） */
 .word-head {
   position: relative;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
   gap: 8px;
-  margin-bottom: 10px;
-  padding-right: 110px; /* 给右上角「对比各源 + 齿轮」按钮组留位 */
+  height: 24px;
+  margin-bottom: 8px;
 }
 /* 右上角按钮组：对比各源 + 设置，两种模式都固定在标题行右上 */
 .head-actions {
@@ -67,24 +70,55 @@ html, body, #root {
   cursor: move;
 }
 
-.word {
-  font-size: 19px;
+/* 左上角应用名 */
+.app-title {
+  font-size: 15px;
   font-weight: 700;
-  letter-spacing: 0.2px;
-  color: var(--text);
-  line-height: 1.35;
+  color: var(--text); /* 与单词同色，保持一致 */
+  letter-spacing: 0.3px;
+}
+.app-version {
+  margin-left: 5px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-faint);
 }
 
-/* 单词可编辑框：外观与 .word 一致，无边框透明，聚焦才有输入感 */
-.word-input {
-  flex: 1;
-  min-width: 0;
+/* 有道单词卡：单词 + 音标/发音 一行排列 */
+.word-line {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+/* 单词大字：可编辑，宽度随内容收缩（field-sizing 需要 WebView2 较新内核） */
+.word-big {
   font: inherit;
-  font-size: 19px;
+  font-size: 17px;
   font-weight: 700;
   letter-spacing: 0.2px;
   color: var(--text);
   line-height: 1.35;
+  background: transparent;
+  border: none;
+  outline: none;
+  padding: 0;
+  max-width: 100%;
+  field-sizing: content;
+}
+.word-big:focus {
+  box-shadow: inset 0 -1.5px 0 var(--accent);
+}
+
+.word-input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--text);
+  line-height: 1.5;
   background: transparent;
   border: none;
   outline: none;
@@ -94,12 +128,6 @@ html, body, #root {
   box-shadow: inset 0 -1.5px 0 var(--accent);
 }
 
-.phonetics {
-  margin-top: 2px;
-  color: var(--text-faint);
-  font-size: 12.5px;
-}
-.phonetics span { margin-right: 12px; }
 .phonetic { cursor: pointer; }
 .phonetic:hover { color: var(--accent); }
 
@@ -427,8 +455,12 @@ input.recording {
 .content-box {
   background: #f5f7fa;
   border-radius: 6px;
-  padding: 4px 10px 8px;
+  padding: 5px 10px 10px;
   margin-bottom: 8px;
+}
+/* 框内纯内容（译文）：与标签对齐，去掉列表自带缩进 */
+.content-box > .senses {
+  padding: 0;
 }
 .content-box-head {
   display: flex;
@@ -448,11 +480,44 @@ input.recording {
   gap: 8px;
   margin-left: auto; /* 无标签时按钮也要贴右 */
 }
-/* 框内可编辑 textarea：底色/边距交给外框，避免双重底色 */
-.content-box textarea.shot-text {
-  background: transparent;
-  padding: 0;
-  margin-bottom: 0;
+/* 对比行复制按钮：hover 行时才浮现 */
+.compare-row .icon-btn {
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.compare-row:hover .icon-btn,
+.compare-row .icon-btn.ok {
+  opacity: 1;
+}
+
+/* 内容框下方的操作行（如截图原文的「重新翻译」） */
+.box-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin: -3px 0 8px;
+}
+
+/* 译文框复制按钮：hover 内容框时才浮现（复制过的对勾状态恒显） */
+.content-box .icon-btn.copy-btn {
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.content-box:hover .icon-btn.copy-btn,
+.content-box .icon-btn.copy-btn.ok {
+  opacity: 1;
+}
+
+/* 多行原文输入框（SourceBox）：标签在灰框外，框内文字不贴边 */
+.source-box {
+  margin-bottom: 8px;
+}
+.source-box-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
 }
 /* 框内释义列表：去掉自带外边距与底色 */
 .content-box .senses {
@@ -558,6 +623,27 @@ textarea.shot-text:focus {
   gap: 10px;
 }
 
+/* 内容区滚动条：细条浅色，避免破坏弹窗观感 */
+.card-body::-webkit-scrollbar {
+  width: 6px;
+}
+.card-body::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 3px;
+}
+
+/* ===== 卡片内容区高度钳制（与 useAutoFitWindow 的 min/max 对应） ===== */
+/* 超过上限时框内滚动，窗口高度封顶不再拉高；header 固定在上方不参与滚动 */
+.card-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: 455px; /* 520 - chrome 63（35 + header 28） */
+  overflow-y: auto;
+}
+.input-layout .card-body {
+  max-height: 451px; /* 480 - chrome 29 */
+}
+
 /* ===== 多源对比 ===== */
 .compare {
   margin-top: 10px;
@@ -582,7 +668,9 @@ textarea.shot-text:focus {
   font-weight: 600;
   color: var(--text-secondary);
 }
+/* 对比行译文一行一句，不显示释义序号 */
 .compare-row .senses { margin-top: 2px; }
+.compare-row .senses li::before { display: none; }
 .compare-error {
   margin-top: 4px;
   color: var(--error);

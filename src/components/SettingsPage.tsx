@@ -20,8 +20,8 @@ const REPO_URL = "https://github.com/mrzym99/Wordpeek";
 
 /** 可配置的额外翻译源：主翻译内置（单词→有道、句子→必应），这里只列额外源 */
 const SOURCE_ITEMS: { id: string; label: string; needKey: boolean }[] = [
-  { id: "tencent", label: "腾讯翻译（需密钥）", needKey: true },
   { id: "baidu", label: "百度翻译（需密钥）", needKey: true },
+  { id: "tencent", label: "腾讯翻译（需密钥）", needKey: true },
 ];
 
 /** 密钥字段是否都已填写（勾选需密钥源的前提） */
@@ -344,7 +344,7 @@ export default function SettingsPage() {
                   ))}
                 </div>
                 <div className="field-hint">
-                  默认源开启：单词用有道词典、句子用必应翻译，且排在「对比各源」的第一位。关闭后仅用勾选的额外源翻译；至少保留一个源，不能全部取消。需密钥的源（百度 / 腾讯）要先在「源配置」里填好密钥才能勾选；保存时删掉密钥会自动取消勾选。
+                  默认源：单词用有道、句子用必应。其他源配置后可选择。
                 </div>
               </>
             ) : (

@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::OnceLock;
 use parking_lot::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -148,6 +149,13 @@ struct BingToken {
     expires_at: u64,
 }
 
+/// 全局共享的 HTTP 客户端：连接池 + TLS 配置只建一次。
+/// 之前每次请求都 Client::new()，翻译/对比高频调用时池子来不及回收，内存缓慢上涨
+fn http() -> &'static reqwest::Client {
+    static HTTP: OnceLock<reqwest::Client> = OnceLock::new();
+    HTTP.get_or_init(reqwest::Client::new)
+}
+
 static BING_TOKEN: parking_lot::Mutex<Option<BingToken>> = parking_lot::Mutex::new(None);
 
 /// 拉取/复用必应翻译凭证；过期前 5 分钟刷新，失败时丢弃旧缓存强制重取
@@ -168,7 +176,7 @@ async fn bing_token() -> Result<BingToken, String> {
     }
 
     // 首页 HTML 里包含 IG 与 AbusePrevention 参数，无需正则，直接字符串切片
-    let html = reqwest::Client::new()
+    let html = http()
         .get("https://cn.bing.com/translator")
         .header("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
         .send()
@@ -217,7 +225,7 @@ async fn translate_bing(text: &str, to: &str) -> Result<WordInfo, String> {
         "https://cn.bing.com/ttranslatev3?IG={}&IID=translator.5023",
         t.ig
     );
-    let resp: serde_json::Value = reqwest::Client::new()
+    let resp: serde_json::Value = http()
         .post(url)
         .header("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
         .header("referer", "https://cn.bing.com/translator")
@@ -416,7 +424,7 @@ fn tr_texts(l: &serde_json::Value) -> Vec<String> {
 }
 
 async fn translate_youdao(text: &str) -> Result<WordInfo, String> {
-    let resp: serde_json::Value = reqwest::Client::new()
+    let resp: serde_json::Value = http()
         .get("https://dict.youdao.com/jsonapi")
         .query(&[("client", "deskdict"), ("jsonversion", "2"), ("q", text)])
         .send()
@@ -525,7 +533,7 @@ async fn translate_baidu(
     hasher.update(format!("{appid}{text}{salt}{secret}"));
     let sign = format!("{:x}", hasher.finalize());
 
-    let resp: serde_json::Value = reqwest::Client::new()
+    let resp: serde_json::Value = http()
         .get("https://fanyi-api.baidu.com/api/trans/vip/translate")
         .query(&[
             ("q", text),
@@ -625,7 +633,7 @@ async fn translate_tencent(text: &str, to: &str, tc: &TencentConfig) -> Result<W
     let k_signing = mac(&k_service, b"tc3_request");
     let signature = hex_str(&mac(&k_signing, string_to_sign.as_bytes()));
 
-    let resp: serde_json::Value = reqwest::Client::new()
+    let resp: serde_json::Value = http()
         .post(format!("https://{host}/"))
         .header("content-type", "application/json; charset=utf-8")
         .header("host", host)

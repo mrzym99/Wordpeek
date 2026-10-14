@@ -2,18 +2,24 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getVersion } from "@tauri-apps/api/app";
 import { PhysicalPosition } from "@tauri-apps/api/dpi";
 import type { AppConfig, Selection, ShotResult, SourceResult, WordInfo } from "../types";
 import SenseList from "./SenseList";
 import SourceCompare from "./SourceCompare";
 import ContentBox from "./ContentBox";
-import { CheckIcon, CopyIcon, RefreshIcon } from "./icons";
+import SourceBox from "./SourceBox";
+import { CheckIcon, CopyIcon } from "./icons";
 import { useAutoFitWindow } from "../lib/autofit";
 
 /** 划词/截图统一弹窗：同一张卡片，标题行 = 可编辑原文 + 「对比各源」/设置按钮 */
 export default function Popup() {
   // 卡片内容高度上报给 Rust，窗口按内容收缩（防止透明区域吞掉下层窗口的点击）
-  const bodyRef = useAutoFitWindow("main");
+  const bodyRef = useAutoFitWindow("main", 63, 190, 520); // chrome 35 + header 28；最小/最大高度：查词过程不再跳变，超长内容框内滚动
+  const [appVersion, setAppVersion] = useState("");
+  useEffect(() => {
+    getVersion().then(setAppVersion).catch(() => {});
+  }, []);
   const [word, setWord] = useState("");
   // 最近一次实际发起查词的词：改词框失焦时只在真正变化后才重查，避免回车+失焦查两次
   const lastLooked = useRef("");
@@ -81,27 +87,42 @@ export default function Popup() {
     if (rows === null || compareText !== activeText) runCompare(activeText);
   };
 
+  // 用 ref 持有最新状态：监听器只注册一次，避免每次查词都重建；
+  // listen() 是异步的，若 cleanup 先于 resolve 执行，旧监听器会泄漏
+  // （泄漏的监听器还持有旧 runCompare 闭包，配置一变就触发僵尸请求）
+  const compareState = useRef({ open: compareOpen, text: activeText });
+  compareState.current = { open: compareOpen, text: activeText };
+
   // 设置里改了配置（勾选/排序/密钥）：旧对比结果作废、额外源个数刷新；
   // 对比区正开着就立刻按新配置重拉，收着就只清缓存（下次展开再拉）
   useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    listen("config-changed", () => {
+    let disposed = false;
+    const refreshExtras = () => {
       invoke<AppConfig>("get_config")
         .then((cfg) => setExtrasCount((cfg.sources ?? []).length))
         .catch(() => {});
-      if (compareOpen) runCompare(activeText);
+    };
+    let unlisten: (() => void) | undefined;
+    listen("config-changed", () => {
+      refreshExtras();
+      const { open, text } = compareState.current;
+      if (open) runCompare(text);
       else {
         setRows(null);
         setCompareText("");
       }
-    }).then((f) => (unlisten = f));
+    }).then((f) => {
+      if (disposed) f(); // 晚到的订阅：立刻退订，不留泄漏
+      else unlisten = f;
+    });
     // 初始加载一次：决定「对比各源」按钮显示与否
-    invoke<AppConfig>("get_config")
-      .then((cfg) => setExtrasCount((cfg.sources ?? []).length))
-      .catch(() => {});
-    return () => unlisten?.();
+    refreshExtras();
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [compareOpen, activeText]);
+  }, []);
 
   // 用编辑后的截图原文重新翻译，结果回填卡片（不清空 draft）
   const retranslate = (text: string) => {
@@ -233,12 +254,16 @@ export default function Popup() {
     }
   };
 
-  // 播放有道词典发音，只按单词字符串取音，与当前翻译源无关
+  // 播放有道词典发音，只按单词字符串取音，与当前翻译源无关。
+  // 复用同一个 Audio：每次 new 会各留一份解码器等 GC，高频点发音会堆内存
   // type=2 美音 / type=1 英音 / type=0 通用 TTS 兜底
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const playVoice = (w: string, type: 1 | 2) => {
     const url = (t: number) =>
       `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(w)}&type=${t}`;
-    const audio = new Audio(url(type));
+    const audio = audioRef.current ?? new Audio();
+    audioRef.current = audio;
+    audio.src = url(type);
     // 个别词条缺指定音色录音（接口返回 500），退回通用发音
     audio.onerror = () => {
       audio.onerror = null;
@@ -262,27 +287,11 @@ export default function Popup() {
     <div className="card">
       {/* 顶部 padding 区是隐形拖拽热区：按住可移动窗口；窗口边缘仍可拉伸 */}
       <div className="drag-strip" data-tauri-drag-region />
-      <div className="card-body" ref={bodyRef}>
+      {/* header 固定不随内容滚动；body 才是滚动区 */}
       <div className="word-head">
-        {inShot ? (
-          <div className="word">截图识别结果</div>
-        ) : (
-          /* 单词可直接编辑：回车或失焦且内容变化时重查 */
-          <input
-            className="word-input"
-            value={word}
-            spellCheck={false}
-            title="点击可修改单词，回车重新查词"
-            onChange={(e) => setWord(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-            }}
-            onBlur={() => {
-              const w = word.trim();
-              if (w && w !== lastLooked.current) lookup(w);
-            }}
-          />
-        )}
+        <div className="app-title">
+          Wordpeek{appVersion && <span className="app-version">v{appVersion}</span>}
+        </div>
         {/* 对比各源 + 设置：固定标题行右上角，两种模式都有 */}
         <div className="head-actions">
           {activeText && extrasCount !== 0 && (
@@ -305,69 +314,85 @@ export default function Popup() {
             ⚙
           </button>
         </div>
-        {!inShot && (info?.usphone || info?.ukphone) && (
-          <div className="phonetics">
-            {/* 点击播放有道词典发音（type=2 美音 / type=1 英音），与翻译源无关 */}
-            {info?.usphone && (
-              <span
-                className="phonetic"
-                title="播放美音"
-                onClick={() => playVoice(info.word, 2)}
-              >
-                🔊 美 {info.usphone}
-              </span>
-            )}
-            {info?.ukphone && (
-              <span
-                className="phonetic"
-                title="播放英音"
-                onClick={() => playVoice(info.word, 1)}
-              >
-                🔊 英 {info.ukphone}
-              </span>
-            )}
-          </div>
-        )}
-        {!inShot && info && info.exam_types.length > 0 && (
-          <div className="badges">
-            {info.exam_types.map((t) => (
-              <span key={t} className="badge">
-                {t}
-              </span>
-            ))}
-          </div>
-        )}
       </div>
 
+      <div className="card-body" ref={bodyRef}>
       {error && <div className="error">{error}</div>}
       {!inShot && !info && !error && <div className="loading">翻译中...</div>}
+
+      {/* 划词模式：有道词典 → 经典排版「单词 + 音标/发音」一行，无原文框；
+          其它源（整句翻译降级）→ 保留原文框 */}
+      {!inShot && info && info.source === "youdao" && (
+        <div className="word-line">
+          <input
+            className="word-big"
+            value={word}
+            spellCheck={false}
+            title="点击可修改单词，回车重新查词"
+            onChange={(e) => setWord(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            }}
+            onBlur={() => {
+              const w = word.trim();
+              if (w && w !== lastLooked.current) lookup(w);
+            }}
+          />
+          {/* 点击播放有道词典发音（type=2 美音 / type=1 英音），与翻译源无关 */}
+          {info.usphone && (
+            <span className="phonetic" title="播放美音" onClick={() => playVoice(info.word, 2)}>
+              🔊 美 {info.usphone}
+            </span>
+          )}
+          {info.ukphone && (
+            <span className="phonetic" title="播放英音" onClick={() => playVoice(info.word, 1)}>
+              🔊 英 {info.ukphone}
+            </span>
+          )}
+        </div>
+      )}
+      {!inShot && info && info.source !== "youdao" && (
+        <SourceBox
+          label="原文"
+          value={word}
+          onChange={setWord}
+          rows={2}
+          onEnter={() => (document.activeElement as HTMLElement | null)?.blur()}
+          onBlur={() => {
+            const w = word.trim();
+            if (w && w !== lastLooked.current) lookup(w);
+          }}
+        />
+      )}
+
+      {!inShot && info && info.exam_types.length > 0 && (
+        <div className="badges">
+          {info.exam_types.map((t) => (
+            <span key={t} className="badge">
+              {t}
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* 截图模式：可编辑原文 + 复制/重译 + 译文 */}
       {inShot && shotResult && (
         <>
           {shotResult.text && (
-            <ContentBox
+            <SourceBox
               label="原文"
-              copied={copied === "text"}
-              onCopy={() => doCopy("text", draft)}
-              actions={
-                <button
-                  className={"icon-btn" + (shotLoading ? " spinning" : "")}
-                  title="重新翻译"
-                  onClick={() => retranslate(draft)}
-                >
-                  <RefreshIcon />
-                </button>
-              }
-            >
-              <textarea
-                className="shot-text"
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                rows={3}
-                spellCheck={false}
-              />
-            </ContentBox>
+              value={draft}
+              onChange={setDraft}
+              rows={3}
+              onEnter={() => retranslate(draft)}
+            />
+          )}
+          {shotResult.text && (
+            <div className="box-actions">
+              <button className="text-btn" disabled={shotLoading} onClick={() => retranslate(draft)}>
+                {shotLoading ? "翻译中…" : "重新翻译"}
+              </button>
+            </div>
           )}
           {shotLoading && <div className="shot-loading">翻译中…</div>}
           {shotResult.info && (
@@ -383,14 +408,11 @@ export default function Popup() {
       )}
 
       {/* 划词模式：词典卡片 */}
+      {/* 划词模式是完整词典卡片（音标/词形/同义词），译文平铺不套灰底框，
+          套框反而显得孤立（截图模式只有裸译文才用框） */}
       {!inShot && info && (
         <>
-          <ContentBox
-            copied={copied === "translation"}
-            onCopy={() => doCopy("translation", info.senses.join("\n"))}
-          >
-            <SenseList senses={info.senses} />
-          </ContentBox>
+          <SenseList senses={info.senses} />
 
           {info.word_forms.length > 0 && (
             <div className="section">

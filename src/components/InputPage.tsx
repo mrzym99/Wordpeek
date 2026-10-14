@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { SourceResult, WordInfo } from "../types";
 import { useAutoFitWindow } from "../lib/autofit";
 import SourceCompare from "./SourceCompare";
-import ContentBox from "./ContentBox";
+import SourceBox from "./SourceBox";
 
 /** 输入翻译窗口（?page=input）：打字/粘贴 → 默认翻译 + 勾选的额外源逐源给出译文，目标语言可智能/手动切换 */
 export default function InputPage() {
@@ -17,7 +17,7 @@ export default function InputPage() {
   const [loading, setLoading] = useState(false);
   const [copiedKey, setCopiedKey] = useState("");
   // .input-layout 上下 padding 14×2 + 1px 余量
-  const bodyRef = useAutoFitWindow("input", 29);
+  const bodyRef = useAutoFitWindow("input", 29, 260, 480);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
@@ -71,29 +71,15 @@ export default function InputPage() {
   return (
     <div className="input-layout">
       <div className="card-body" ref={bodyRef}>
-        <ContentBox
-          label="原文"
-          copied={copiedKey === "source"}
-          onCopy={() => copyRow("source", text)}
-        >
-          <textarea
-            ref={taRef}
-            className="shot-text"
-            value={text}
-            rows={4}
-            spellCheck={false}
-            placeholder="输入或粘贴要翻译的文本，Ctrl+Enter 翻译（右上角可切换目标语言）"
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-                e.preventDefault();
-                run();
-              }
-            }}
-          />
-        </ContentBox>
+        <SourceBox
+          value={text}
+          onChange={setText}
+          rows={4}
+          textareaRef={taRef}
+          onEnter={run}
+          placeholder="输入或粘贴要翻译的文本（Enter 翻译，Shift+Enter 换行，右上角可切换目标语言）"
+        />
         <div className="input-actions">
-          <span className="field-hint">逐个展示设置里勾选的翻译源结果</span>
           <span className="lang-toggle" role="group" aria-label="目标语言">
             <button
               className={mode === "auto" ? "active" : ""}
