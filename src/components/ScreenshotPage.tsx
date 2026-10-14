@@ -11,12 +11,19 @@ export default function ScreenshotPage() {
 
   // screenshot-start 仅作轻量信号：重置上一轮选区（遮罩内容常驻就绪，无需加载）
   useEffect(() => {
+    let disposed = false;
     let unlisten: (() => void) | undefined;
     listen("screenshot-start", () => {
       setSel(null);
       dragging.current = false;
-    }).then((fn) => (unlisten = fn));
-    return () => unlisten?.();
+    }).then((fn) => {
+      if (disposed) fn(); // 晚到的订阅：立刻退订，不留泄漏
+      else unlisten = fn;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
   }, []);
 
   // ESC / 窗口失焦 → 取消本次截图会话（窗口隐藏后事件不会再触发）

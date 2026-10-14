@@ -176,10 +176,14 @@ export default function Popup() {
       }, 150);
     };
 
+    // 异步订阅竞态防护：StrictMode 会 挂载→清理→再挂载，
+    // listen 的 Promise 若在清理后才 resolve，不判 disposed 的话监听器永远退不掉
+    let disposed = false;
+
     const setup = async () => {
       // Rust 端抓取到选中文本后通过 "selection" 事件发过来；
       // x/y 已在 Rust 端钳制到光标所在屏幕内
-      unlistenSelection = await listen<Selection>("selection", async (e) => {
+      const sel = await listen<Selection>("selection", async (e) => {
         const { text, x, y } = e.payload;
         setShotResult(null); // 新的划词到达，退出截图模式
         setCompareOpen(false);
@@ -188,11 +192,13 @@ export default function Popup() {
         await win.setFocus();
         lookup(text.trim());
       });
+      if (disposed) sel();
+      else unlistenSelection = sel;
 
       // 截图结果回来时主窗口多半隐藏着：先定位到框选区附近再 show+focus。
       // 卡片弹在选区下方，空间不足放上方，并錨制在虚拟屏内。
       // 用真实窗口尺寸（outerSize，物理像素）錨制，避免估算偏差导致位置漂移
-      unlistenShot = await listen<ShotResult>("screenshot-result", async (e) => {
+      const shot = await listen<ShotResult>("screenshot-result", async (e) => {
         setShotResult(e.payload);
         setCompareOpen(false); // 新一轮结果收起旧对比
         setDraft(e.payload.text ?? ""); // 新一轮结果重置编辑副本
@@ -225,9 +231,15 @@ export default function Popup() {
         win.show();
         win.setFocus();
       });
+      if (disposed) shot();
+      else unlistenShot = shot;
 
-      unlistenBlur = await win.listen("tauri://blur", startHideCheck);
-      unlistenFocus = await win.listen("tauri://focus", stopHideCheck);
+      const blur = await win.listen("tauri://blur", startHideCheck);
+      if (disposed) blur();
+      else unlistenBlur = blur;
+      const focus = await win.listen("tauri://focus", stopHideCheck);
+      if (disposed) focus();
+      else unlistenFocus = focus;
     };
 
     setup();

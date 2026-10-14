@@ -57,6 +57,7 @@ export function useAutoFitWindow(
     // 用户拖拽窗口边缘：暂停自动适配，拖完 300ms 后补一次。
     // 自己 set_size 引发的 onResized 用 programmatic 标记跳过，
     // 不当作「用户在拖拽」——否则正常适配会被自己误伤
+    let disposed = false;
     let unlistenResize: (() => void) | undefined;
     getCurrentWindow()
       .onResized(() => {
@@ -67,7 +68,10 @@ export function useAutoFitWindow(
         userResizeAt = Date.now();
         schedule();
       })
-      .then((f) => (unlistenResize = f));
+      .then((f) => {
+        if (disposed) f(); // 晚到的订阅：立刻退订，不留泄漏
+        else unlistenResize = f;
+      });
 
     // 窗口从隐藏态被 show 出来时，隐藏期间的 set_size 可能没落地：
     // 拿到焦点即强制重报一次，保证显示出来的尺寸就是内容尺寸
@@ -78,6 +82,7 @@ export function useAutoFitWindow(
     };
     window.addEventListener("focus", refit);
     return () => {
+      disposed = true;
       ro.disconnect();
       unlistenResize?.();
       window.removeEventListener("focus", refit);
