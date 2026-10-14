@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { AppConfig, UpdateStatus } from "../types";
-import { saveSources, saveBaidu, saveSettings } from "../lib/config";
+import { saveBaidu, saveTencent, saveSources, saveSettings } from "../lib/config";
 import HotkeyRecorder from "./HotkeyRecorder";
 
 type SettingsSection = "translate" | "hotkey" | "shot" | "about" | "other";
@@ -18,12 +18,26 @@ const SECTIONS: { id: SettingsSection; label: string }[] = [
 /** 项目仓库地址，推荐/反馈共用 */
 const REPO_URL = "https://github.com/mrzym99/Wordpeek";
 
-/** 可选翻译源（列表顺序由用户拖拽决定 = 优先级） */
-const SOURCE_ITEMS: { id: string; label: string }[] = [
-  { id: "youdao", label: "有道词典（免 Key，单词）" },
-  { id: "bing", label: "必应翻译（免 Key，整句）" },
-  { id: "baidu", label: "百度翻译（需密钥）" },
+/** 可配置的额外翻译源：主翻译内置（单词→有道、句子→必应），这里只列额外源 */
+const SOURCE_ITEMS: { id: string; label: string; needKey: boolean }[] = [
+  { id: "tencent", label: "腾讯翻译（需密钥）", needKey: true },
+  { id: "baidu", label: "百度翻译（需密钥）", needKey: true },
 ];
+
+/** 密钥字段是否都已填写（勾选需密钥源的前提） */
+const keysReady = (a: string, b: string) => a.trim() !== "" && b.trim() !== "";
+
+/** 某个源的密钥是否就绪；不依赖组件状态的纯函数（加载时也用） */
+const sourceReady = (id: string, cfg: AppConfig) => {
+  switch (id) {
+    case "baidu":
+      return keysReady(cfg.baidu?.appid ?? "", cfg.baidu?.secret ?? "");
+    case "tencent":
+      return keysReady(cfg.tencent?.secret_id ?? "", cfg.tencent?.secret_key ?? "");
+    default:
+      return true;
+  }
+};
 
 /** 复制反馈标记："text" 推荐语 | "link" 链接 | "" 无 */
 type CopiedKind = "" | "text" | "link";
@@ -31,13 +45,19 @@ type CopiedKind = "" | "text" | "link";
 /** 独立设置窗口：左侧菜单切换分组，用户手动关闭，不会被 blur 隐藏 */
 export default function SettingsPage() {
   const [section, setSection] = useState<SettingsSection>("translate");
-  // 勾选的源，顺序即优先级（排序 tab 里拖拽调整）
-  const [sources, setSources] = useState<string[]>(["youdao", "bing"]);
+  // 内置默认源（有道/必应）开关；关闭后仅用勾选的额外源
+  const [builtin, setBuiltin] = useState(true);
+  // 勾选的额外源
+  const [sources, setSources] = useState<string[]>([]);
   // 翻译源区域子 tab：「list」勾选+排序列表 /「config」源配置（密钥）
   const [srcTab, setSrcTab] = useState<"list" | "config">("list");
   const [dragId, setDragId] = useState("");
   const [appid, setAppid] = useState("");
   const [secret, setSecret] = useState("");
+  const [tcId, setTcId] = useState("");
+  const [tcKey, setTcKey] = useState("");
+  // 源配置 tab 当前在编辑哪个源的密钥
+  const [cfgSrc, setCfgSrc] = useState<"baidu" | "tencent">("baidu");
   const [hotkey, setHotkey] = useState("Ctrl+Alt+T");
   const [screenshotHotkey, setScreenshotHotkey] = useState("Ctrl+Alt+S");
   const [inputHotkey, setInputHotkey] = useState("Ctrl+Alt+I");
@@ -106,13 +126,17 @@ export default function SettingsPage() {
       invoke<AppConfig>("get_config")
         .then((cfg) => {
           if (cancelled) return;
-          setSources(cfg.sources?.length ? cfg.sources : ["youdao", "bing"]);
+          setBuiltin(cfg.builtin_sources ?? true);
+          setAppid(cfg.baidu.appid);
+          setSecret(cfg.baidu.secret);
+          setTcId(cfg.tencent?.secret_id ?? "");
+          setTcKey(cfg.tencent?.secret_key ?? "");
+          // 配置里勾着需密钥的源但密钥为空：本地显示为未勾选（下次保存会真正剥掉）
+          setSources((cfg.sources ?? []).filter((s) => sourceReady(s, cfg)));
           setHotkey(cfg.hotkey || "Ctrl+Alt+T");
           setScreenshotHotkey(cfg.screenshot_hotkey || "Ctrl+Alt+S");
           setInputHotkey(cfg.input_hotkey || "Ctrl+Alt+I");
           setOcrLang(cfg.ocr_lang || "auto");
-          setAppid(cfg.baidu.appid);
-          setSecret(cfg.baidu.secret);
         })
         .catch(() => {
           if (!cancelled && tries > 0) setTimeout(() => load(tries - 1), 300);
@@ -124,11 +148,33 @@ export default function SettingsPage() {
     };
   }, []);
 
-  // 保存密钥（独立落盘，只写 baidu 字段）
+  // 用当前表单里的密钥判断某源是否就绪（配置加载后表单即真实值）
+  const ready = (id: string) =>
+    id === "baidu"
+      ? keysReady(appid, secret)
+      : id === "tencent"
+        ? keysReady(tcId, tcKey)
+        : true;
+
+  // 保存密钥后同步勾选：密钥被清空时后端会自动剥掉对应源，这里同步本地状态
+  const syncAfterKeySave = (
+    id: string,
+    isReady: boolean,
+    save: () => Promise<unknown>
+  ) => {
+    setSources((prev) => {
+      if (isReady || !prev.includes(id)) return prev;
+      const next = prev.filter((s) => s !== id);
+      saveSources(next, builtin).catch(() => {});
+      return next;
+    });
+    save();
+  };
+
   const saveBaiduKeys = async () => {
     setSaveError("");
     try {
-      await saveBaidu(appid, secret);
+      syncAfterKeySave("baidu", keysReady(appid, secret), () => saveBaidu(appid, secret));
       setSaved(true);
       setTimeout(() => setSaved(false), 1500);
     } catch (err) {
@@ -136,14 +182,45 @@ export default function SettingsPage() {
     }
   };
 
-  // 勾选/取消：即时落盘（只写 sources 字段）；至少保留一个源（全不勾会导致翻译没有可用源）
+  const saveTencentKeys = async () => {
+    setSaveError("");
+    try {
+      syncAfterKeySave("tencent", keysReady(tcId, tcKey), () => saveTencent(tcId, tcKey));
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
+    } catch (err) {
+      setSaveError(String(err));
+    }
+  };
+
+  // 约束提示：至少保留一个源；3s 后自动清除
+  const denyToggle = (msg: string) => {
+    setSaveError(msg);
+    setTimeout(() => setSaveError(""), 3000);
+  };
+
+  // 内置默认源开关：关掉它是唯一源时禁止
+  const toggleBuiltin = () => {
+    if (builtin && sources.length === 0) {
+      denyToggle("至少保留一个翻译源：请先勾选额外源，再关闭默认源");
+      return;
+    }
+    const next = !builtin;
+    setBuiltin(next);
+    saveSources(sources, next).catch((e) => setSaveError(String(e)));
+  };
+
+  // 额外源勾选/取消：默认源已关闭时，不能取消最后一个额外源
   const toggleSource = (id: string) => {
+    if (sources.includes(id) && !builtin && sources.length === 1) {
+      denyToggle("至少保留一个翻译源：默认源已关闭，不能取消最后一个源");
+      return;
+    }
     const next = sources.includes(id)
       ? sources.filter((s) => s !== id)
       : [...sources, id];
-    if (next.length === 0) return;
     setSources(next);
-    saveSources(next).catch((e) => setSaveError(String(e)));
+    saveSources(next, builtin).catch((e) => setSaveError(String(e)));
   };
 
   // 拖拽排序：把 from 插到 to 之前
@@ -153,7 +230,7 @@ export default function SettingsPage() {
     const at = next.indexOf(to);
     next.splice(at < 0 ? next.length : at, 0, from);
     setSources(next);
-    saveSources(next).catch((e) => setSaveError(String(e)));
+    saveSources(next, builtin).catch((e) => setSaveError(String(e)));
   };
 
   const save = async () => {
@@ -163,9 +240,9 @@ export default function SettingsPage() {
       // 只写快捷键 + OCR 语言；密钥/翻译源各由自己的模块命令落盘
       await saveSettings({
         hotkey,
-        screenshot_hotkey: screenshotHotkey,
-        input_hotkey: inputHotkey,
-        ocr_lang: ocrLang,
+        screenshotHotkey,
+        inputHotkey,
+        ocrLang,
       });
       setSaved(true);
       setTimeout(() => setSaved(false), 1500);
@@ -194,7 +271,7 @@ export default function SettingsPage() {
             {/* 翻译源两个子页：列表（勾选+拖拽排序）/ 源配置，横向 tab 切换 */}
             <div className="sub-tabs">
               <button className={"sub-tab" + (srcTab === "list" ? " active" : "")} onClick={() => setSrcTab("list")}>
-                勾选与排序
+                翻译源
               </button>
               <button className={"sub-tab" + (srcTab === "config" ? " active" : "")} onClick={() => setSrcTab("config")}>
                 源配置
@@ -202,8 +279,14 @@ export default function SettingsPage() {
             </div>
             {srcTab === "list" ? (
               <>
-                <div className="group-heading">翻译源（勾选参与翻译的源，拖拽调整优先级）</div>
+                <div className="group-heading">翻译源（至少保留一个）</div>
                 <div className="source-list">
+                  <div className={"source-item" + (builtin ? "" : " off")}>
+                    <label className="switch">
+                      <input type="checkbox" checked={builtin} onChange={toggleBuiltin} />
+                      默认源：有道词典 / 必应翻译（内置，免 Key）
+                    </label>
+                  </div>
                   {sources.map((id) => {
                     const item = SOURCE_ITEMS.find((s) => s.id === id);
                     if (!item) return null;
@@ -232,7 +315,13 @@ export default function SettingsPage() {
                           ⠿
                         </span>
                         <label className="switch">
-                          <input type="checkbox" checked onChange={() => toggleSource(id)} />
+                          <input
+                            type="checkbox"
+                            checked
+                            disabled={item.needKey && !ready(item.id)}
+                            title={item.needKey && !ready(item.id) ? "密钥未配置，请先在「源配置」里填写" : undefined}
+                            onChange={() => toggleSource(id)}
+                          />
                           {item.label}
                         </label>
                       </div>
@@ -242,47 +331,103 @@ export default function SettingsPage() {
                     <div key={s.id} className="source-item off">
                       <span className="drag-handle" />
                       <label className="switch">
-                        <input type="checkbox" checked={false} onChange={() => toggleSource(s.id)} />
+                        <input
+                          type="checkbox"
+                          checked={false}
+                          disabled={s.needKey && !ready(s.id)}
+                          title={s.needKey && !ready(s.id) ? "密钥未配置，请先在「源配置」里填写" : undefined}
+                          onChange={() => toggleSource(s.id)}
+                        />
                         {s.label}
                       </label>
                     </div>
                   ))}
                 </div>
                 <div className="field-hint">
-                  顺序即优先级：第一个源也是单源快速翻译的首选，对比页按同一顺序展示；至少保留一个源。勾选百度需先在「源配置」里填密钥。
+                  默认源开启：单词用有道词典、句子用必应翻译，且排在「对比各源」的第一位。关闭后仅用勾选的额外源翻译；至少保留一个源，不能全部取消。需密钥的源（百度 / 腾讯）要先在「源配置」里填好密钥才能勾选；保存时删掉密钥会自动取消勾选。
                 </div>
               </>
             ) : (
-              <>
-                <div className="group-heading">百度翻译密钥（可选）</div>
-                <label className="field">
-                  APP ID
-                  <input
-                    value={appid}
-                    placeholder="百度翻译开放平台 appid"
-                    onChange={(e) => setAppid(e.target.value)}
-                  />
-                </label>
-                <label className="field">
-                  密钥
-                  <input
-                    type="password"
-                    value={secret}
-                    placeholder="百度翻译开放平台密钥"
-                    onChange={(e) => setSecret(e.target.value)}
-                  />
-                </label>
-                <div className="source-actions">
-                  <button className="save-btn" onClick={saveBaiduKeys}>
-                    保存密钥
-                  </button>
+              // 源配置：左侧菜单选源，右侧编辑对应密钥
+              <div className="config-split">
+                <div className="config-menu">
+                  {SOURCE_ITEMS.map((s) => (
+                    <div
+                      key={s.id}
+                      className={"config-menu-item" + (cfgSrc === s.id ? " active" : "")}
+                      onClick={() => setCfgSrc(s.id as "baidu" | "tencent")}
+                    >
+                      {s.label.replace("（需密钥）", "")}
+                      {ready(s.id) && <span className="config-dot" title="已配置" />}
+                    </div>
+                  ))}
                 </div>
-                <div className="field-hint">
-                  {appid.trim() && secret.trim()
-                    ? "已配置：在「勾选与排序」里勾选「百度翻译」后即参与翻译与对比"
-                    : "密钥可留空；留空时百度翻译不可用"}
+                <div className="config-form">
+                  {cfgSrc === "baidu" ? (
+                    <>
+                      <div className="group-heading">百度翻译密钥（可选）</div>
+                      <label className="field">
+                        APP ID
+                        <input
+                          value={appid}
+                          placeholder="百度翻译开放平台 appid"
+                          onChange={(e) => setAppid(e.target.value)}
+                        />
+                      </label>
+                      <label className="field">
+                        密钥
+                        <input
+                          type="password"
+                          value={secret}
+                          placeholder="百度翻译开放平台密钥"
+                          onChange={(e) => setSecret(e.target.value)}
+                        />
+                      </label>
+                      <div className="source-actions">
+                        <button className="save-btn" onClick={saveBaiduKeys}>
+                          保存密钥
+                        </button>
+                      </div>
+                      <div className="field-hint">
+                        {appid.trim() && secret.trim()
+                          ? "已配置：在「勾选与排序」里勾选「百度翻译」后即参与翻译与对比"
+                          : "密钥可留空；留空时百度翻译不可用"}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="group-heading">腾讯云密钥（可选）</div>
+                      <label className="field">
+                        SecretId
+                        <input
+                          value={tcId}
+                          placeholder="腾讯云访问管理 API 密钥 SecretId"
+                          onChange={(e) => setTcId(e.target.value)}
+                        />
+                      </label>
+                      <label className="field">
+                        SecretKey
+                        <input
+                          type="password"
+                          value={tcKey}
+                          placeholder="腾讯云访问管理 API 密钥 SecretKey"
+                          onChange={(e) => setTcKey(e.target.value)}
+                        />
+                      </label>
+                      <div className="source-actions">
+                        <button className="save-btn" onClick={saveTencentKeys}>
+                          保存密钥
+                        </button>
+                      </div>
+                      <div className="field-hint">
+                        {tcId.trim() && tcKey.trim()
+                          ? "已配置：在「勾选与排序」里勾选「腾讯翻译」后即参与翻译与对比"
+                          : "密钥可留空；留空时腾讯翻译不可用。密钥在腾讯云控制台「访问管理 → API 密钥」获取，机器翻译有免费额度"}
+                      </div>
+                    </>
+                  )}
                 </div>
-              </>
+              </div>
             )}
           </>
         )}

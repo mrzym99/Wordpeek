@@ -423,6 +423,50 @@ input.recording {
   box-shadow: none;
 }
 
+/* ===== 内容框：内容 + 框内右上角复制按钮（Popup 译文 / 截图原文译文 / 输入翻译共用） ===== */
+.content-box {
+  background: #f5f7fa;
+  border-radius: 6px;
+  padding: 4px 10px 8px;
+  margin-bottom: 8px;
+}
+.content-box-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 24px;
+  gap: 8px;
+}
+.content-box-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.content-box-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto; /* 无标签时按钮也要贴右 */
+}
+/* 框内可编辑 textarea：底色/边距交给外框，避免双重底色 */
+.content-box textarea.shot-text {
+  background: transparent;
+  padding: 0;
+  margin-bottom: 0;
+}
+/* 框内释义列表：去掉自带外边距与底色 */
+.content-box .senses {
+  margin: 0;
+  background: transparent;
+  padding: 0;
+}
+.content-box .shot-senses {
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  max-height: 220px;
+}
+
 /* ===== 截图翻译结果卡片 ===== */
 .shot-text {
   white-space: pre-wrap;
@@ -449,11 +493,6 @@ textarea.shot-text {
 }
 textarea.shot-text:focus {
   box-shadow: inset 0 0 0 1.5px #4f8cff;
-}
-.shot-actions {
-  display: flex;
-  gap: 10px;
-  margin-bottom: 8px;
 }
 /* 重新翻译进行中：图标旋转 */
 .icon-btn.spinning {
@@ -488,20 +527,27 @@ textarea.shot-text:focus {
   font: 13.5px/1.65 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
 }
 
-textarea.input-text {
-  width: 100%;
-  box-sizing: border-box;
-  padding: 8px 10px;
+/* 输入翻译的目标语言切换（智能 / → 英文 / → 中文） */
+.lang-toggle {
+  display: inline-flex;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: var(--bg-subtle);
-  color: var(--text);
-  font: inherit;
-  resize: vertical;
+  overflow: hidden;
 }
-textarea.input-text:focus {
-  outline: none;
-  box-shadow: inset 0 0 0 1.5px #4f8cff;
+.lang-toggle button {
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.lang-toggle button + button { border-left: 1px solid var(--border); }
+.lang-toggle button.active {
+  background: var(--bg-subtle);
+  color: var(--accent);
+  font-weight: 600;
 }
 
 .input-actions {
@@ -513,7 +559,13 @@ textarea.input-text:focus {
 }
 
 /* ===== 多源对比 ===== */
-.compare { margin-top: 10px; }
+.compare {
+  margin-top: 10px;
+  padding: 10px 12px 8px;
+  background: var(--bg-subtle); /* 浅背景：对比区与上方主翻译在视觉上分区 */
+  border-radius: 8px;
+}
+.compare-row:first-of-type { padding-top: 0; }
 .compare-row + .compare-row {
   margin-top: 10px;
   padding-top: 8px;
@@ -593,4 +645,46 @@ textarea.input-text:focus {
   color: var(--accent);
   font-weight: 600;
   border-bottom-color: var(--accent);
+}
+
+/* 源配置 tab：左侧菜单选源 + 右侧密钥表单 */
+.config-split {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+.config-menu {
+  width: 110px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.config-menu-item {
+  position: relative;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.config-menu-item:hover { background: var(--bg-subtle); color: var(--text); }
+.config-menu-item.active {
+  background: var(--bg-subtle);
+  color: var(--accent);
+  font-weight: 600;
+}
+.config-dot {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok, #34a853);
+}
+.config-form {
+  flex: 1;
+  min-width: 0;
 }

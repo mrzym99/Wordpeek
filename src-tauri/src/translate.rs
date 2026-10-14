@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use md5::{Digest, Md5};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 /// 百度翻译 API 的鉴权配置
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -13,6 +13,15 @@ pub struct BaiduConfig {
     pub appid: String,
     #[serde(default)]
     pub secret: String,
+}
+
+/// 腾讯云机器翻译的鉴权配置（SecretId + SecretKey）
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct TencentConfig {
+    #[serde(default)]
+    pub secret_id: String,
+    #[serde(default)]
+    pub secret_key: String,
 }
 
 /// 应用配置，持久化在 app_config_dir/config.json
@@ -33,11 +42,16 @@ pub struct AppConfig {
     /// 截图 OCR 识别语言："auto" | "zh" | "en"
     #[serde(default = "default_ocr_lang")]
     pub ocr_lang: String,
+    /// 内置默认源（有道词典/必应翻译）是否启用；关闭后仅用勾选的额外源
+    #[serde(default = "default_builtin_sources")]
+    pub builtin_sources: bool,
     /// 输入翻译窗口的唤出快捷键，如 "Ctrl+Alt+I"
     #[serde(default = "default_input_hotkey")]
     pub input_hotkey: String,
     #[serde(default)]
     pub baidu: BaiduConfig,
+    #[serde(default)]
+    pub tencent: TencentConfig,
 }
 
 fn default_source() -> String {
@@ -56,38 +70,50 @@ fn default_ocr_lang() -> String {
     "auto".into()
 }
 
+fn default_builtin_sources() -> bool {
+    true
+}
+
 fn default_input_hotkey() -> String {
     "Ctrl+Alt+I".into()
 }
 
-/// 默认参与翻译的源：单词走有道、整句走必应（与改造前顺序一致）
+/// 默认无额外源：主翻译内置（单词→有道、句子→必应），额外源由用户自己勾选
 fn default_sources() -> Vec<String> {
-    vec!["youdao".into(), "bing".into()]
+    Vec::new()
 }
 
-/// 剔除非法源名与重复项；空结果回退默认——任何情况下都不能返回空列表
+/// 只保留合法的额外源并去重。主翻译的两个源（有道/必应）已内置化，不再作为
+/// 可配置项：老配置里残留的 youdao/bing 在这里被剥掉，否则会作为额外源
+/// 重复出现在对比区。需要密钥的源（百度）没配密钥时同样剥掉——保存密钥时
+/// 删掉密钥，勾选状态会随本次落盘自动移除。空列表合法——主翻译不依赖额外源。
 pub(crate) fn enabled_sources(cfg: &AppConfig) -> Vec<String> {
+    let baidu_ready = !cfg.baidu.appid.is_empty() && !cfg.baidu.secret.is_empty();
+    let tencent_ready =
+        !cfg.tencent.secret_id.is_empty() && !cfg.tencent.secret_key.is_empty();
     let mut out: Vec<String> = Vec::new();
     for s in &cfg.sources {
-        if matches!(s.as_str(), "youdao" | "bing" | "baidu") && !out.contains(s) {
+        let usable = match s.as_str() {
+            // 需密钥的源：没配密钥时自动剥掉
+            "baidu" => baidu_ready,
+            "tencent" => tencent_ready,
+            _ => false,
+        };
+        if usable && !out.contains(s) {
             out.push(s.clone());
         }
-    }
-    if out.is_empty() {
-        return default_sources();
     }
     out
 }
 
-/// 老配置迁移：曾用 source = "baidu" 表达「百度作主源」，
-/// 等价于把 baidu 排到列表最前（旧顺序即 [baidu, youdao, bing]）
+/// 老配置迁移：曾用 source = "baidu" 表达「百度作主源」。
+/// sources 为空时不补默认——额外源是可选项，主翻译不依赖它
 fn migrate_sources(cfg: &mut AppConfig) {
     if !cfg.sources.is_empty() {
         return;
     }
-    cfg.sources = default_sources();
     if cfg.source == "baidu" {
-        cfg.sources.insert(0, "baidu".into());
+        cfg.sources.push("baidu".into());
     }
 }
 
@@ -100,7 +126,9 @@ impl Default for AppConfig {
             screenshot_hotkey: default_screenshot_hotkey(),
             ocr_lang: default_ocr_lang(),
             input_hotkey: default_input_hotkey(),
+            builtin_sources: default_builtin_sources(),
             baidu: BaiduConfig::default(),
+            tencent: TencentConfig::default(),
         }
     }
 }
@@ -301,17 +329,28 @@ fn persist<F: FnOnce(&mut AppConfig)>(
 
     // 快捷键可能被修改：按新配置重新注册全部快捷键（失败仅日志，不阻断保存）
     crate::register_hotkeys(&app, &cfg);
+    // 广播配置变化：已打开的窗口（如划词卡片）据此作废按旧配置算出的结果，
+    // 典型场景是设置里拖拽排序后，对比区的顺序要跟上新配置
+    let _ = app.emit("config-changed", ());
     Ok(())
 }
 
-/// 翻译源：勾选/排序（源列表 tab）
+/// 翻译源：内置源开关 + 额外源勾选（翻译源 tab）。
+/// 至少保留一个源的约束只在这里拦——删密钥导致的自动剥离允许清空到零
 #[tauri::command]
 pub fn save_sources(
     app: AppHandle,
     state: State<SharedConfig>,
     sources: Vec<String>,
+    builtin_sources: bool,
 ) -> Result<(), String> {
-    persist(app, state, |c| c.sources = sources)
+    if !builtin_sources && sources.is_empty() {
+        return Err("至少保留一个翻译源：请先勾选额外源，再关闭默认源".into());
+    }
+    persist(app, state, |c| {
+        c.sources = sources;
+        c.builtin_sources = builtin_sources;
+    })
 }
 
 /// 百度密钥（源配置 tab）
@@ -326,6 +365,22 @@ pub fn save_baidu(
         c.baidu = BaiduConfig {
             appid: appid.trim().into(),
             secret: secret.trim().into(),
+        }
+    })
+}
+
+/// 腾讯云密钥（源配置 tab）
+#[tauri::command]
+pub fn save_tencent(
+    app: AppHandle,
+    state: State<SharedConfig>,
+    secret_id: String,
+    secret_key: String,
+) -> Result<(), String> {
+    persist(app, state, |c| {
+        c.tencent = TencentConfig {
+            secret_id: secret_id.trim().into(),
+            secret_key: secret_key.trim().into(),
         }
     })
 }
@@ -508,6 +563,106 @@ async fn translate_baidu(
     })
 }
 
+/// 时间戳（秒）→ UTC 日期 YYYY-MM-DD（TC3 签名按日期分区密钥，不引 chrono 手算）
+fn utc_date(secs: u64) -> String {
+    let days = (secs / 86400) as i64;
+    let z = days + 719468;
+    let era = z / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+fn hex_str(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// 腾讯云机器翻译（tmt.tencentcloudapi.com TextTranslate，TC3-HMAC-SHA256 签名）
+/// 单词、整句通吃；密钥在腾讯云控制台「访问管理 → API 密钥」申请
+async fn translate_tencent(text: &str, to: &str, tc: &TencentConfig) -> Result<WordInfo, String> {
+    use hmac::Mac;
+    use sha2::{Digest, Sha256};
+    type HmacSha256 = hmac::Hmac<Sha256>;
+
+    let service = "tmt";
+    let host = "tmt.tencentcloudapi.com";
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let date = utc_date(timestamp);
+
+    let payload = serde_json::json!({
+        "SourceText": text,
+        "Source": "auto",
+        "Target": if to == "en" { "en" } else { "zh" },
+        "ProjectId": 0,
+    })
+    .to_string();
+
+    // TC3 签名规范：CanonicalRequest → StringToSign → 派生密钥 → HMAC
+    let hashed_payload = hex_str(Sha256::digest(payload.as_bytes()).as_slice());
+    let canonical_request = format!(
+        "POST\n/\n\ncontent-type:application/json; charset=utf-8\nhost:{host}\nx-tc-action:texttranslate\n\ncontent-type;host;x-tc-action\n{hashed_payload}"
+    );
+    let hashed_canonical = hex_str(Sha256::digest(canonical_request.as_bytes()).as_slice());
+    let string_to_sign = format!(
+        "TC3-HMAC-SHA256\n{timestamp}\n{date}/{service}/tc3_request\n{hashed_canonical}"
+    );
+    let mac = |key: &[u8], data: &[u8]| -> Vec<u8> {
+        let mut m = HmacSha256::new_from_slice(key).expect("HMAC 接受任意长度密钥");
+        m.update(data);
+        m.finalize().into_bytes().to_vec()
+    };
+    let k_date = mac(format!("TC3{}", tc.secret_key).as_bytes(), date.as_bytes());
+    let k_service = mac(&k_date, service.as_bytes());
+    let k_signing = mac(&k_service, b"tc3_request");
+    let signature = hex_str(&mac(&k_signing, string_to_sign.as_bytes()));
+
+    let resp: serde_json::Value = reqwest::Client::new()
+        .post(format!("https://{host}/"))
+        .header("content-type", "application/json; charset=utf-8")
+        .header("host", host)
+        .header("x-tc-action", "TextTranslate")
+        .header("x-tc-version", "2018-03-21")
+        .header("x-tc-region", "ap-guangzhou")
+        .header("x-tc-timestamp", timestamp.to_string())
+        .header(
+            "authorization",
+            format!(
+                "TC3-HMAC-SHA256 Credential={}/{}/{}/tc3_request, SignedHeaders=content-type;host;x-tc-action, Signature={signature}",
+                tc.secret_id, date, service
+            ),
+        )
+        .body(payload)
+        .send()
+        .await
+        .map_err(|e| format!("请求失败: {e}"))?
+        .json()
+        .await
+        .map_err(|e| format!("响应解析失败: {e}"))?;
+    if let Some(code) = resp["Response"]["Error"]["Code"].as_str() {
+        let msg = resp["Response"]["Error"]["Message"].as_str().unwrap_or("");
+        return Err(format!("腾讯接口错误 {code}: {msg}"));
+    }
+    let sense = resp["Response"]["TargetText"].as_str().unwrap_or_default();
+    if sense.trim().is_empty() {
+        return Err("腾讯未返回译文".into());
+    }
+    Ok(WordInfo {
+        word: text.to_string(),
+        source: "tencent".into(),
+        senses: vec![sense.to_string()],
+        ..Default::default()
+    })
+}
+
 /// 目标语言 → 各接口的参数写法；非法值一律按中文处理
 pub(crate) fn bing_target(to: &str) -> &'static str {
     if to == "en" { "en" } else { "zh-Hans" }
@@ -517,26 +672,20 @@ pub(crate) fn baidu_target(to: &str) -> &'static str {
     if to == "en" { "en" } else { "zh" }
 }
 
-/// 把一个源按目标语言可用性追加进降级队列（去重）。
-/// 未勾选的源不会进来：勾选即取舍。百度密钥缺失留给 translate_text 报可读错误。
-fn push_source(order: &mut Vec<String>, source: &str, to: &str) {
-    let usable = match source {
-        // 有道 jsonapi 只能英→中
-        "youdao" => to == "zh",
-        "bing" => true,
-        "baidu" => true,
-        _ => false,
-    };
-    if usable && !order.iter().any(|s| s == source) {
-        order.push(source.to_string());
-    }
-}
-
-/// 降级顺序 = 用户勾选顺序（译为英文时自动跳过有道）
+/// 翻译/对比顺序：内置默认源（单词→有道，句子自动落到必应）在前，
+/// 用户勾选的额外源排在其后。内置源关闭后只剩额外源。
 pub(crate) fn build_order(cfg: &AppConfig, to: &str) -> Vec<String> {
     let mut order: Vec<String> = Vec::new();
+    if cfg.builtin_sources {
+        if to == "zh" {
+            order.push("youdao".into()); // 有道 jsonapi 只支持英→中
+        }
+        order.push("bing".into());
+    }
     for s in enabled_sources(cfg) {
-        push_source(&mut order, &s, to);
+        if !order.contains(&s) {
+            order.push(s);
+        }
     }
     order
 }
@@ -544,12 +693,17 @@ pub(crate) fn build_order(cfg: &AppConfig, to: &str) -> Vec<String> {
 async fn try_translate(
     source: &str,
     text: &str,
-    baidu: &BaiduConfig,
+    cfg: &AppConfig,
     to: &str,
 ) -> Result<WordInfo, String> {
     match source {
-        "baidu" => translate_baidu(text, &baidu.appid, &baidu.secret, to).await,
+        "baidu" => {
+            translate_baidu(text, &cfg.baidu.appid, &cfg.baidu.secret, to)
+                .await
+        }
         "bing" => translate_bing(text, to).await,
+        // 腾讯云机器翻译双向都支持
+        "tencent" => translate_tencent(text, to, &cfg.tencent).await,
         // 有道 jsonapi 只能英→中（词典 + 已下线的整句节点），译为其它语言交给降级链
         _ if to == "zh" => translate_youdao(text).await,
         _ => Err("有道词典仅支持译为中文".into()),
@@ -561,19 +715,41 @@ async fn try_translate(
 /// 从 translate 命令抽出，供截图翻译管线在无 State 的上下文直接调用。
 pub async fn translate_text(cfg: &AppConfig, text: &str, to: &str) -> Result<WordInfo, String> {
     let to = if to == "en" { "en" } else { "zh" };
-    let baidu_ready = !cfg.baidu.appid.is_empty() && !cfg.baidu.secret.is_empty();
+    let order = build_order(cfg, to);
+    if order.is_empty() {
+        return Err("没有可用的翻译源：内置源已关闭且未勾选（或未配密钥的）额外源".into());
+    }
     let mut errors: Vec<String> = Vec::new();
-    for src in build_order(cfg, to) {
-        if src == "baidu" && !baidu_ready {
-            errors.push("[百度] 未配置 appid/secret".into());
-            continue;
-        }
-        match try_translate(&src, text, &cfg.baidu, to).await {
+    for src in order {
+        match try_translate(&src, text, cfg, to).await {
             Ok(result) => return Ok(result),
             Err(e) => errors.push(format!("[{src}] {e}")),
         }
     }
     Err(errors.join("；"))
+}
+
+/// 粗略语言检测：文本含 CJK 字符（汉字/假名/韩文）→ 译为英文，否则 → 译为中文
+pub(crate) fn detect_to(text: &str) -> &'static str {
+    let cjk = text.chars().any(|c| {
+        matches!(c,
+            '\u{3400}'..='\u{4dbf}'   // CJK 扩展 A
+            | '\u{4e00}'..='\u{9fff}' // 基本汉字
+            | '\u{3040}'..='\u{30ff}' // 日文假名
+            | '\u{ac00}'..='\u{d7af}' // 韩文
+        )
+    });
+    if cjk { "en" } else { "zh" }
+}
+
+/// 解析目标语言：调用方没传 / 传了 "auto" → 自动检测
+fn resolve_to(text: &str, to: Option<&str>) -> &'static str {
+    match to {
+        Some(t) if !t.is_empty() && t != "auto" => {
+            if t == "en" { "en" } else { "zh" }
+        }
+        _ => detect_to(text),
+    }
 }
 
 #[tauri::command]
@@ -583,7 +759,7 @@ pub async fn translate(
     to: Option<String>,
 ) -> Result<WordInfo, String> {
     let cfg = state.lock().clone();
-    translate_text(&cfg, &text, to.as_deref().unwrap_or("zh")).await
+    translate_text(&cfg, &text, resolve_to(&text, to.as_deref())).await
 }
 
 /// 单源对比结果：失败的源也返回，由前端逐行展示错误
@@ -602,38 +778,40 @@ pub(crate) fn source_label(source: &str) -> &'static str {
         "youdao" => "有道词典",
         "bing" => "必应翻译",
         "baidu" => "百度翻译",
+        "tencent" => "腾讯翻译",
         _ => "未知源",
     }
 }
 
-/// 参与对比的源 = 用户勾选的源，按勾选顺序（译为英文时跳过有道）
+/// 参与对比的源：默认翻译的源排第一，勾选的额外源跟在后面
 pub(crate) fn compare_sources(cfg: &AppConfig, to: &str) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    for s in enabled_sources(cfg) {
-        if s == "youdao" && to != "zh" {
-            continue;
-        }
-        if !out.contains(&s) {
-            out.push(s);
-        }
-    }
-    out
+    build_order(cfg, to)
 }
 
-/// 并发请求全部勾选源并逐源收集结果：整体不失败，单个源出错只影响它自己那一行
-pub async fn translate_all_sources(cfg: &AppConfig, text: &str, to: &str) -> Vec<SourceResult> {
+/// 并发请求各源并逐源收集结果：整体不失败，单个源出错只影响它自己那一行。
+/// include_builtin = false 时只请求勾选的额外源（默认翻译的结果由前端复用主卡片数据）
+pub async fn translate_all_sources(
+    cfg: &AppConfig,
+    text: &str,
+    to: &str,
+    include_builtin: bool,
+) -> Vec<SourceResult> {
     let to = if to == "en" { "en" } else { "zh" };
     let baidu_ready = !cfg.baidu.appid.is_empty() && !cfg.baidu.secret.is_empty();
     // 每源一个异步任务：reqwest 请求并行发出，总耗时 ≈ 最慢的源
+    let mut sources = compare_sources(cfg, to);
+    if !include_builtin {
+        sources.retain(|s| s != "youdao" && s != "bing");
+    }
     let handles: Vec<(
         String,
         tauri::async_runtime::JoinHandle<Result<WordInfo, String>>,
-    )> = compare_sources(cfg, to)
+    )> = sources
         .into_iter()
         .map(|source| {
             let src = source.clone();
             let query = text.to_string();
-            let baidu = cfg.baidu.clone();
+            let cfg = cfg.clone(); // AppConfig 很小（几个字符串），克隆进异步任务避免生命周期问题
             let to = to.to_string();
             let ready = baidu_ready;
             let handle = tauri::async_runtime::spawn(async move {
@@ -641,7 +819,7 @@ pub async fn translate_all_sources(cfg: &AppConfig, text: &str, to: &str) -> Vec
                 if src == "baidu" && !ready {
                     return Err("未配置 appid/secret".to_string());
                 }
-                try_translate(&src, &query, &baidu, &to).await
+                try_translate(&src, &query, &cfg, &to).await
             });
             (source, handle)
         })
@@ -682,9 +860,15 @@ pub async fn translate_all(
     state: State<'_, SharedConfig>,
     text: String,
     to: Option<String>,
+    // false = 只请求额外源（默认翻译的结果前端复用主卡片数据，不重复请求）
+    include_builtin: Option<bool>,
 ) -> Result<Vec<SourceResult>, String> {
     let cfg = state.lock().clone();
-    Ok(translate_all_sources(&cfg, &text, to.as_deref().unwrap_or("zh")).await)
+    let include_builtin = include_builtin.unwrap_or(true);
+    Ok(
+        translate_all_sources(&cfg, &text, resolve_to(&text, to.as_deref()), include_builtin)
+            .await,
+    )
 }
 
 #[cfg(test)]
@@ -700,72 +884,93 @@ mod tests {
     }
 
     #[test]
-    fn migrate_sources_fills_defaults_for_old_configs() {
-        // 老配置没有 sources 字段 → 空 Vec → 迁移补默认
+    fn migrate_sources_keeps_empty_for_old_configs() {
+        // 老配置没有 sources 字段 → 空 Vec 保持为空（额外源是可选项）
         let mut cfg: AppConfig = serde_json::from_str("{}").unwrap();
         assert!(cfg.sources.is_empty());
         migrate_sources(&mut cfg);
-        assert_eq!(cfg.sources, vec!["youdao", "bing"]);
+        assert!(cfg.sources.is_empty());
         // 迁移幂等：已有值时不再动
+        cfg.sources = vec!["baidu".into()];
         let mut again = cfg.clone();
         migrate_sources(&mut again);
-        assert_eq!(again.sources, vec!["youdao", "bing"]);
+        assert_eq!(again.sources, vec!["baidu"]);
     }
 
     #[test]
-    fn legacy_baidu_primary_migrates_to_front() {
-        // 旧「启用为主源」= source: "baidu"，等价于把百度排到最前
+    fn legacy_baidu_primary_migrates_to_extra_sources() {
+        // 旧「启用为主源」= source: "baidu"，现在等价于勾选百度作额外源
         let mut cfg: AppConfig = serde_json::from_str(
             r#"{"source":"baidu","baidu":{"appid":"a","secret":"b"}}"#,
         )
         .unwrap();
         migrate_sources(&mut cfg);
-        assert_eq!(cfg.sources, vec!["baidu", "youdao", "bing"]);
+        assert_eq!(cfg.sources, vec!["baidu"]);
     }
 
     #[test]
-    fn enabled_sources_drops_unknown_and_duplicates() {
+    fn enabled_sources_keeps_only_extra_sources() {
+        // 默认无额外源
+        let cfg = AppConfig::default();
+        assert!(enabled_sources(&cfg).is_empty());
+        // 有道/必应已内置化：老配置残留的会被剥掉，避免对比区重复主翻译
         let mut cfg = AppConfig::default();
-        assert_eq!(enabled_sources(&cfg), vec!["youdao", "bing"]);
-        cfg.sources = vec!["bing".into(), "nope".into(), "bing".into()];
-        assert_eq!(enabled_sources(&cfg), vec!["bing"]);
-        // 全非法 → 回退默认，绝不能返回空（否则翻译没有可用源）
+        cfg.sources = vec!["youdao".into(), "baidu".into(), "bing".into(), "baidu".into()];
+        // 百度需密钥：没配密钥时同样剥掉
+        assert!(enabled_sources(&cfg).is_empty());
+        cfg.baidu = BaiduConfig {
+            appid: "a".into(),
+            secret: "b".into(),
+        };
+        assert_eq!(enabled_sources(&cfg), vec!["baidu"]);
+        // 腾讯同样需密钥（腾讯云 SecretId/SecretKey）：没配时剥掉，配了才可用
+        cfg.sources = vec!["tencent".into(), "nope".into()];
+        assert!(enabled_sources(&cfg).is_empty());
+        cfg.tencent = TencentConfig {
+            secret_id: "id".into(),
+            secret_key: "key".into(),
+        };
+        assert_eq!(enabled_sources(&cfg), vec!["tencent"]);
+        // 全非法 → 空列表合法（主翻译不受影响）
         cfg.sources = vec!["nope".into()];
-        assert_eq!(enabled_sources(&cfg), vec!["youdao", "bing"]);
+        assert!(enabled_sources(&cfg).is_empty());
     }
 
     #[test]
-    fn build_order_follows_checked_order() {
+    fn build_order_puts_builtin_first() {
         let mut cfg = AppConfig::default();
-        cfg.sources = vec!["bing".into(), "youdao".into()];
-        assert_eq!(build_order(&cfg, "zh"), vec!["bing", "youdao"]);
-        // 译为英文时跳过有道（它只支持英→中）
+        // 内置源开启：默认翻译在前，额外源在后
+        assert_eq!(build_order(&cfg, "zh"), vec!["youdao", "bing"]);
         assert_eq!(build_order(&cfg, "en"), vec!["bing"]);
+        cfg.sources = vec!["baidu".into()];
+        // 百度需密钥：没配密钥时进不了队列
+        assert_eq!(build_order(&cfg, "zh"), vec!["youdao", "bing"]);
+        cfg.baidu = BaiduConfig {
+            appid: "a".into(),
+            secret: "b".into(),
+        };
+        assert_eq!(build_order(&cfg, "zh"), vec!["youdao", "bing", "baidu"]);
+        // 内置源关闭：只剩额外源
+        cfg.builtin_sources = false;
+        assert_eq!(build_order(&cfg, "zh"), vec!["baidu"]);
+        // 内置源关闭且无额外源：空队列（persist 层会拦住这种配置落盘）
+        let mut off = AppConfig::default();
+        off.builtin_sources = false;
+        assert!(build_order(&off, "zh").is_empty());
     }
 
     #[test]
-    fn build_order_never_uses_unchecked_sources() {
-        // 只勾必应：即使必应失败也不会回落到未勾选的有道
+    fn compare_sources_puts_default_translation_first() {
         let mut cfg = AppConfig::default();
-        cfg.sources = vec!["bing".into()];
-        assert_eq!(build_order(&cfg, "zh"), vec!["bing"]);
-        // 勾了未配置密钥的百度：仍在队列里，由 translate_text 给出可读错误
-        cfg.sources = vec!["baidu".into(), "bing".into()];
-        assert_eq!(build_order(&cfg, "zh"), vec!["baidu", "bing"]);
-    }
-
-    #[test]
-    fn compare_sources_follows_checked_order_and_target() {
-        let mut cfg = AppConfig::default();
-        assert_eq!(compare_sources(&cfg, "zh"), vec!["youdao", "bing"]);
-        // 译为英文：对比页也不该出现有道
-        assert_eq!(compare_sources(&cfg, "en"), vec!["bing"]);
-        // 顺序即用户拖拽出来的优先级
-        cfg.sources = vec!["bing".into(), "youdao".into()];
-        assert_eq!(compare_sources(&cfg, "zh"), vec!["bing", "youdao"]);
-        // 勾了未配置密钥的百度：仍要出这一行（行内展示「未配置」原因）
-        cfg.sources = vec!["bing".into(), "baidu".into()];
-        assert_eq!(compare_sources(&cfg, "zh"), vec!["bing", "baidu"]);
+        cfg.tencent = TencentConfig {
+            secret_id: "id".into(),
+            secret_key: "key".into(),
+        };
+        cfg.sources = vec!["tencent".into()];
+        // 对比区：默认翻译的源排第一，额外源跟在后面
+        assert_eq!(compare_sources(&cfg, "zh"), vec!["youdao", "bing", "tencent"]);
+        cfg.builtin_sources = false;
+        assert_eq!(compare_sources(&cfg, "zh"), vec!["tencent"]);
     }
 
     #[test]
@@ -778,23 +983,28 @@ mod tests {
 
     #[tokio::test]
     async fn compare_reports_each_source_separately() {
-        // 整句：有道没有词条（错误行），必应出译文（成功行）——整体不失败
-        let cfg = AppConfig::default();
+        // 内置源关闭且无额外源：不允许出现（persist 会拦），这里直接验证空队列行为
+        let mut cfg = AppConfig::default();
+        cfg.builtin_sources = false;
+        assert!(translate_all_sources(&cfg, "hello", "zh", true).await.is_empty());
+
+        // 内置源关闭、只勾百度但密钥无效：只有百度这一行，且行内报错
+        cfg.sources = vec!["baidu".into()];
+        cfg.baidu = BaiduConfig {
+            appid: "fake".into(),
+            secret: "fake".into(),
+        };
         let rows = translate_all_sources(
             &cfg,
             "The quick brown fox jumps over the lazy dog",
             "zh",
+            true,
         )
         .await;
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0].source, "youdao");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].source, "baidu");
         assert!(!rows[0].ok);
         assert!(rows[0].error.is_some());
-        assert_eq!(rows[1].source, "bing");
-        assert!(rows[1].ok);
-        assert!(rows[1].error.is_none());
-        assert!(!rows[1].senses.is_empty());
-        println!("compare rows: {rows:?}");
     }
 
     #[test]
@@ -802,6 +1012,21 @@ mod tests {
         // 旧配置文件没有这个字段，serde 默认值必须兜底
         let cfg: AppConfig = serde_json::from_str("{}").unwrap();
         assert_eq!(cfg.input_hotkey, "Ctrl+Alt+I");
+    }
+
+    #[test]
+    fn detect_to_by_script() {
+        assert_eq!(detect_to("那只敏捷的棕色狐狸"), "en");
+        assert_eq!(detect_to("hello world"), "zh");
+        assert_eq!(detect_to("mixed 中文 text"), "en"); // 有汉字就算中文方向
+        assert_eq!(detect_to(""), "zh");
+    }
+
+    #[test]
+    fn utc_date_matches_epoch() {
+        assert_eq!(utc_date(0), "1970-01-01");
+        // 2026-01-01 00:00:00 UTC = 1767225600
+        assert_eq!(utc_date(1767225600), "2026-01-01");
     }
 
     #[test]
@@ -818,7 +1043,7 @@ mod tests {
     #[tokio::test]
     async fn youdao_rejects_non_chinese_target() {
         let cfg = AppConfig::default();
-        let err = try_translate("youdao", "hello", &cfg.baidu, "en")
+        let err = try_translate("youdao", "hello", &cfg, "en")
             .await
             .expect_err("译为英文应拒绝有道");
         assert!(err.contains("仅支持译为中文"), "错误信息应说明原因: {err}");
@@ -890,3 +1115,4 @@ mod tests {
         assert_eq!(info.source, "bing");
     }
 }
+

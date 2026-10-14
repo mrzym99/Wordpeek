@@ -10,6 +10,11 @@ export interface BaiduConfig {
   secret: string;
 }
 
+export interface TencentConfig {
+  secret_id: string;
+  secret_key: string;
+}
+
 /** 配置文件结构（与后端 AppConfig 对应，snake_case） */
 export interface AppConfig {
   source: string;
@@ -18,7 +23,10 @@ export interface AppConfig {
   screenshot_hotkey: string;
   ocr_lang: string;
   input_hotkey: string;
+  /** 内置默认源（有道词典/必应翻译）是否启用 */
+  builtin_sources: boolean;
   baidu: BaiduConfig;
+  tencent: TencentConfig;
 }
 
 export interface UpdateStatus {

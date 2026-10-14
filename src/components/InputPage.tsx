@@ -1,16 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { SourceResult } from "../types";
+import type { SourceResult, WordInfo } from "../types";
 import { useAutoFitWindow } from "../lib/autofit";
 import SourceCompare from "./SourceCompare";
+import ContentBox from "./ContentBox";
 
-/** 目标语言：目前固定译为英文（issue #2 第 1 条确认），不做选择器 */
-const TARGET = "en";
-
-/** 输入翻译窗口（?page=input）：打字/粘贴 → 按勾选的翻译源逐源给出英文译文 */
+/** 输入翻译窗口（?page=input）：打字/粘贴 → 默认翻译 + 勾选的额外源逐源给出译文，目标语言可智能/手动切换 */
 export default function InputPage() {
   const [text, setText] = useState("");
+  // 目标语言：智能 = 自动检测（中文→英文，其它→中文），也可手动固定方向
+  const [mode, setMode] = useState<"auto" | "en" | "zh">("auto");
   const [rows, setRows] = useState<SourceResult[] | null>(null);
+  // 默认源（有道/必应，各司其职）的结果，单独一行排在最前
+  const [defaultInfo, setDefaultInfo] = useState<WordInfo | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [copiedKey, setCopiedKey] = useState("");
@@ -29,13 +31,27 @@ export default function InputPage() {
   const run = async () => {
     const q = text.trim();
     if (!q) return;
+    // 智能 = 交给后端检测（含 CJK → 译英文，否则 → 译中文）
+    const target = mode === "auto" ? "auto" : mode;
     setLoading(true);
     setError("");
     setRows(null);
+    setDefaultInfo(null);
     try {
-      // 翻译请求由 Rust 端发出（避免 CORS，且 API 密钥不进前端）；
-      // 参与对比的就是设置里勾选的源，顺序也一致
-      setRows(await invoke<SourceResult[]>("translate_all", { text: q, to: TARGET }));
+      // 翻译请求由 Rust 端发出（避免 CORS，且 API 密钥不进前端）。
+      // 默认源（有道/必应）单独出结果，额外源并发对比；有道/必应不作为独立行出现
+      const [d, rs] = await Promise.allSettled([
+        invoke<WordInfo>("translate", { text: q, to: target }),
+        invoke<SourceResult[]>("translate_all", { text: q, to: target, includeBuiltin: false }),
+      ]);
+      setDefaultInfo(d.status === "fulfilled" ? d.value : null);
+      if (rs.status === "fulfilled") {
+        setRows(rs.value);
+      } else {
+        // 额外源整体失败（如没勾任何源）：有默认结果就不报错，否则给出原因
+        if (d.status === "fulfilled") setRows([]);
+        else setError(String(rs.reason));
+      }
     } catch (err) {
       setError(String(err));
     } finally {
@@ -55,35 +71,73 @@ export default function InputPage() {
   return (
     <div className="input-layout">
       <div className="card-body" ref={bodyRef}>
-        <textarea
-          ref={taRef}
-          className="input-text"
-          value={text}
-          rows={4}
-          spellCheck={false}
-          placeholder="输入或粘贴要翻译的文本，Ctrl+Enter 翻译（译为英文）"
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-              e.preventDefault();
-              run();
-            }
-          }}
-        />
+        <ContentBox
+          label="原文"
+          copied={copiedKey === "source"}
+          onCopy={() => copyRow("source", text)}
+        >
+          <textarea
+            ref={taRef}
+            className="shot-text"
+            value={text}
+            rows={4}
+            spellCheck={false}
+            placeholder="输入或粘贴要翻译的文本，Ctrl+Enter 翻译（右上角可切换目标语言）"
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault();
+                run();
+              }
+            }}
+          />
+        </ContentBox>
         <div className="input-actions">
-          <span className="field-hint">译为英文；逐个展示设置里勾选的翻译源结果</span>
+          <span className="field-hint">逐个展示设置里勾选的翻译源结果</span>
+          <span className="lang-toggle" role="group" aria-label="目标语言">
+            <button
+              className={mode === "auto" ? "active" : ""}
+              title="自动检测：中文译为英文，其它译为中文"
+              onClick={() => setMode("auto")}
+            >
+              智能
+            </button>
+            <button
+              className={mode === "en" ? "active" : ""}
+              title="固定译为英文"
+              onClick={() => setMode("en")}
+            >
+              → 英文
+            </button>
+            <button
+              className={mode === "zh" ? "active" : ""}
+              title="固定译为中文"
+              onClick={() => setMode("zh")}
+            >
+              → 中文
+            </button>
+          </span>
           <button className="save-btn" onClick={run} disabled={loading || !text.trim()}>
             {loading ? "翻译中…" : "翻译"}
           </button>
         </div>
         {error && <div className="error">{error}</div>}
         {loading && <div className="loading">翻译中…</div>}
-        {rows && rows.length === 0 && (
-          <div className="error">没有可用的翻译源，请在设置 → 翻译里勾选</div>
-        )}
-        {rows && rows.length > 0 && (
-          <SourceCompare rows={rows} copied={copiedKey} onCopy={copyRow} />
-        )}
+        {(() => {
+          // 默认源一行排最前（有道/必应看成一个源，各司其职），额外源跟在后面；
+          // 主翻译本身就是某个额外源时跳过该行避免重复
+          if (!rows) return null;
+          const all: SourceResult[] = [
+            ...(defaultInfo
+              ? [{ source: "default", label: "默认翻译", ok: true, senses: defaultInfo.senses, error: null }]
+              : []),
+            ...rows.filter((r) => r.source !== defaultInfo?.source),
+          ];
+          if (all.length === 0 && !loading) {
+            return <div className="error">没有可用的翻译源，请在设置 → 翻译里勾选</div>;
+          }
+          return <SourceCompare rows={all} copied={copiedKey} onCopy={copyRow} />;
+        })()}
       </div>
     </div>
   );

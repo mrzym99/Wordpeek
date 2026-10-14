@@ -3,9 +3,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { PhysicalPosition } from "@tauri-apps/api/dpi";
-import type { Selection, ShotResult, SourceResult, WordInfo } from "../types";
+import type { AppConfig, Selection, ShotResult, SourceResult, WordInfo } from "../types";
 import SenseList from "./SenseList";
 import SourceCompare from "./SourceCompare";
+import ContentBox from "./ContentBox";
 import { CheckIcon, CopyIcon, RefreshIcon } from "./icons";
 import { useAutoFitWindow } from "../lib/autofit";
 
@@ -20,7 +21,12 @@ export default function Popup() {
   const [error, setError] = useState("");
   // 多源对比：开启时在卡片底部追加各源译文（不隐藏原有内容）
   const [compareOpen, setCompareOpen] = useState(false);
+  // 已勾选的额外源个数：0 时隐藏「对比各源」按钮（persist 保证 sources 里
+  // 只留密钥就绪的合法源，所以这里不用再判密钥）
+  const [extrasCount, setExtrasCount] = useState(-1);
   const [rows, setRows] = useState<SourceResult[] | null>(null);
+  // rows 对应的原文：展开对比时原文没变就直接复用缓存，不重新翻译
+  const [compareText, setCompareText] = useState("");
   const [compareLoading, setCompareLoading] = useState(false);
   const [compareError, setCompareError] = useState("");
   // 截图翻译结果（screenshot-result 事件）；非空时卡片切到截图模式
@@ -41,15 +47,22 @@ export default function Popup() {
   // 划词/截图模式的对比原文：截图用编辑后的 draft，划词用单词
   const inShot = !!shotResult;
   const activeText = (inShot ? draft : word).trim();
+  // 默认翻译进行中：划词模式 = 还没结果也没报错；截图模式 = shotLoading
+  const mainLoading = inShot
+    ? !!shotResult!.text && !shotResult!.info && !shotResult!.error
+    : !info && !error && activeText !== "";
 
-  // 一次列出各勾选源的译文（顺序与设置页一致）；不影响卡片原有内容
+  // 列出勾选的额外源译文（默认翻译的结果直接复用主卡片数据，不重复请求）
   const runCompare = async (text: string) => {
     if (!text.trim()) return;
+    setCompareText(text);
     setCompareLoading(true);
     setRows(null);
     setCompareError("");
     try {
-      setRows(await invoke<SourceResult[]>("translate_all", { text, to: "zh" }));
+      setRows(
+        await invoke<SourceResult[]>("translate_all", { text, to: "auto", includeBuiltin: false })
+      );
     } catch (err) {
       setCompareError(String(err));
     } finally {
@@ -57,15 +70,38 @@ export default function Popup() {
     }
   };
 
-  // 对比各源：展开/收起卡片底部的多源对比区
+  // 对比各源：展开/收起卡片底部的多源对比区。
+  // 只在第一次（或原文变了）时请求，之后切换是纯显示/隐藏，不销毁结果
   const toggleCompare = () => {
     if (compareOpen) {
       setCompareOpen(false);
       return;
     }
     setCompareOpen(true);
-    runCompare(activeText);
+    if (rows === null || compareText !== activeText) runCompare(activeText);
   };
+
+  // 设置里改了配置（勾选/排序/密钥）：旧对比结果作废、额外源个数刷新；
+  // 对比区正开着就立刻按新配置重拉，收着就只清缓存（下次展开再拉）
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    listen("config-changed", () => {
+      invoke<AppConfig>("get_config")
+        .then((cfg) => setExtrasCount((cfg.sources ?? []).length))
+        .catch(() => {});
+      if (compareOpen) runCompare(activeText);
+      else {
+        setRows(null);
+        setCompareText("");
+      }
+    }).then((f) => (unlisten = f));
+    // 初始加载一次：决定「对比各源」按钮显示与否
+    invoke<AppConfig>("get_config")
+      .then((cfg) => setExtrasCount((cfg.sources ?? []).length))
+      .catch(() => {});
+    return () => unlisten?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [compareOpen, activeText]);
 
   // 用编辑后的截图原文重新翻译，结果回填卡片（不清空 draft）
   const retranslate = (text: string) => {
@@ -215,6 +251,13 @@ export default function Popup() {
   // 截图重新翻译进行中：info/error 均空且原文存在
   const shotLoading = inShot && !!shotResult!.text && !shotResult!.info && !shotResult!.error;
 
+  // 对比区只列勾选的额外源：默认翻译就是上方卡片内容，不重复展示；
+  // 主翻译本身就是某个额外源（如默认源关闭时百度兜底）时跳过该行避免重复
+  const mainSource = inShot ? shotResult?.info?.source : info?.source;
+  const compareRows: SourceResult[] | null = rows?.filter(
+    (r) => r.source !== mainSource
+  ) ?? null;
+
   return (
     <div className="card">
       {/* 顶部 padding 区是隐形拖拽热区：按住可移动窗口；窗口边缘仍可拉伸 */}
@@ -242,10 +285,17 @@ export default function Popup() {
         )}
         {/* 对比各源 + 设置：固定标题行右上角，两种模式都有 */}
         <div className="head-actions">
-          {activeText && (
+          {activeText && extrasCount !== 0 && (
             <button
               className="text-btn"
-              title={compareOpen ? "收起各源译文对比" : "在卡片底部追加各已勾选源的译文"}
+              disabled={mainLoading}
+              title={
+                mainLoading
+                  ? "等默认翻译完成后再对比"
+                  : compareOpen
+                    ? "收起各源译文对比"
+                    : "在卡片底部追加各已勾选源的译文"
+              }
               onClick={toggleCompare}
             >
               {compareOpen ? "收起对比" : "对比各源"}
@@ -292,40 +342,15 @@ export default function Popup() {
       {error && <div className="error">{error}</div>}
       {!inShot && !info && !error && <div className="loading">翻译中...</div>}
 
-      {/* 多源对比区：追加在原有内容下方，不遮盖原文/译文 */}
-      {compareOpen && (
-        <>
-          {compareLoading && <div className="loading">对比中…</div>}
-          {compareError && <div className="error">{compareError}</div>}
-          {rows && rows.length > 0 && (
-            <SourceCompare rows={rows} copied={copied} onCopy={doCopy} />
-          )}
-          {rows && rows.length === 0 && !compareLoading && (
-            <div className="error">没有可用的翻译源，请在设置 → 翻译里勾选</div>
-          )}
-        </>
-      )}
-
       {/* 截图模式：可编辑原文 + 复制/重译 + 译文 */}
       {inShot && shotResult && (
         <>
           {shotResult.text && (
-            <>
-              <textarea
-                className="shot-text"
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                rows={3}
-                spellCheck={false}
-              />
-              <div className="shot-actions">
-                <button
-                  className={"icon-btn" + (copied === "text" ? " ok" : "")}
-                  title="复制原文"
-                  onClick={() => doCopy("text", draft)}
-                >
-                  {copied === "text" ? <CheckIcon /> : <CopyIcon />}
-                </button>
+            <ContentBox
+              label="原文"
+              copied={copied === "text"}
+              onCopy={() => doCopy("text", draft)}
+              actions={
                 <button
                   className={"icon-btn" + (shotLoading ? " spinning" : "")}
                   title="重新翻译"
@@ -333,21 +358,26 @@ export default function Popup() {
                 >
                   <RefreshIcon />
                 </button>
-              </div>
-            </>
+              }
+            >
+              <textarea
+                className="shot-text"
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                rows={3}
+                spellCheck={false}
+              />
+            </ContentBox>
           )}
           {shotLoading && <div className="shot-loading">翻译中…</div>}
           {shotResult.info && (
-            <>
+            <ContentBox
+              label="译文"
+              copied={copied === "translation"}
+              onCopy={() => doCopy("translation", shotResult.info!.senses.join("\n"))}
+            >
               <SenseList senses={shotResult.info.senses} className="shot-senses" />
-              <button
-                className={"icon-btn" + (copied === "translation" ? " ok" : "")}
-                title="复制译文"
-                onClick={() => doCopy("translation", shotResult.info!.senses.join("\n"))}
-              >
-                {copied === "translation" ? <CheckIcon /> : <CopyIcon />}
-              </button>
-            </>
+            </ContentBox>
           )}
         </>
       )}
@@ -355,7 +385,12 @@ export default function Popup() {
       {/* 划词模式：词典卡片 */}
       {!inShot && info && (
         <>
-          <SenseList senses={info.senses} />
+          <ContentBox
+            copied={copied === "translation"}
+            onCopy={() => doCopy("translation", info.senses.join("\n"))}
+          >
+            <SenseList senses={info.senses} />
+          </ContentBox>
 
           {info.word_forms.length > 0 && (
             <div className="section">
@@ -386,6 +421,20 @@ export default function Popup() {
           ))}
         </>
       )}
+      {/* 对比区：放在卡片末尾（额外源跟在词典卡片/截图译文后面） */}
+      {compareOpen && (
+        <>
+          {compareLoading && <div className="loading">对比中…</div>}
+          {compareError && <div className="error">{compareError}</div>}
+          {compareRows && compareRows.length > 0 && (
+            <SourceCompare rows={compareRows} copied={copied} onCopy={doCopy} />
+          )}
+          {compareRows && compareRows.length === 0 && !compareLoading && (
+            <div className="error">没有可对比的额外源，可在设置 → 翻译里勾选</div>
+          )}
+        </>
+      )}
+
       </div>
     </div>
   );

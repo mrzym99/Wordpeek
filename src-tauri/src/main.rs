@@ -681,6 +681,7 @@ fn main() {
             translate::get_config,
             translate::save_sources,
             translate::save_baidu,
+            translate::save_tencent,
             translate::save_settings
         ])
         .run(tauri::generate_context!())
