@@ -388,11 +388,6 @@ export default function SettingsPage() {
                           保存密钥
                         </button>
                       </div>
-                      <div className="field-hint">
-                        {appid.trim() && secret.trim()
-                          ? "已配置：在「勾选与排序」里勾选「百度翻译」后即参与翻译与对比"
-                          : "密钥可留空；留空时百度翻译不可用"}
-                      </div>
                     </>
                   ) : (
                     <>
@@ -418,11 +413,6 @@ export default function SettingsPage() {
                         <button className="save-btn" onClick={saveTencentKeys}>
                           保存密钥
                         </button>
-                      </div>
-                      <div className="field-hint">
-                        {tcId.trim() && tcKey.trim()
-                          ? "已配置：在「勾选与排序」里勾选「腾讯翻译」后即参与翻译与对比"
-                          : "密钥可留空；留空时腾讯翻译不可用。密钥在腾讯云控制台「访问管理 → API 密钥」获取，机器翻译有免费额度"}
                       </div>
                     </>
                   )}
