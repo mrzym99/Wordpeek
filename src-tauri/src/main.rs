@@ -29,8 +29,14 @@ fn grab_selection() -> Option<String> {
     let mut enigo = Enigo::new(&Settings::default()).ok()?;
     let mut clipboard = Clipboard::new().ok()?;
 
-    let old = clipboard.get_text().unwrap_or_default();
-    println!("[grab] old clipboard: {:?}", old);
+    // 备份原剪贴板：文本优先；读不到文本（可能是图片/文件）就备份图片，
+    // 否则恢复时会把用户复制的非文本内容顶成空文本
+    let old_text = clipboard.get_text().ok();
+    let old_image = if old_text.is_none() {
+        clipboard.get_image().ok()
+    } else {
+        None
+    };
 
     // 先把剪贴板替换成哨兵值：若 Ctrl+C 成功，剪贴板必然变成选中文本。
     // 不能用"剪贴板内容是否变化"来判断，否则选中与剪贴板相同的文本时会被误判。
@@ -45,11 +51,24 @@ fn grab_selection() -> Option<String> {
     enigo.key(Key::C, Direction::Click).ok()?;
     enigo.key(Key::Control, Direction::Release).ok()?;
 
-    std::thread::sleep(std::time::Duration::from_millis(150));
+    // 目标应用写入选中文本有快有慢（PDF、大文档可能超过百毫秒），
+    // 固定 sleep 会在慢应用上误判“没选中内容”，且恢复时可能被慢应用
+    // 后写入的内容覆盖；轮询到内容不再是哨兵值为止，最多 ~600ms。
+    let mut text = SENTINEL.to_string();
+    for _ in 0..30 {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        text = clipboard.get_text().unwrap_or_default();
+        if text != SENTINEL {
+            break;
+        }
+    }
 
-    let text = clipboard.get_text().unwrap_or_default();
-    println!("[grab] after ctrl+c: {:?}", text);
-    let _ = clipboard.set_text(&old);
+    // 恢复原剪贴板（文本或图片）
+    if let Some(t) = old_text {
+        let _ = clipboard.set_text(&t);
+    } else if let Some(img) = old_image {
+        let _ = clipboard.set_image(img);
+    }
 
     // 剪贴板还是哨兵值说明 Ctrl+C 没有生效（目标应用没有可复制的内容）
     if text == SENTINEL {

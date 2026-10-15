@@ -23,6 +23,8 @@ export default function Popup() {
   const [word, setWord] = useState("");
   // 最近一次实际发起查词的词：改词框失焦时只在真正变化后才重查，避免回车+失焦查两次
   const lastLooked = useRef("");
+  // 查词序号：lookup 用它丢弃晚到的旧请求结果，避免快速连查时结果错乱
+  const seqRef = useRef(0);
   const [info, setInfo] = useState<WordInfo | null>(null);
   const [error, setError] = useState("");
   // 多源对比：开启时在卡片底部追加各源译文（不隐藏原有内容）
@@ -147,10 +149,14 @@ export default function Popup() {
       setInfo(null);
       setError("");
       setCompareOpen(false); // 新查词收起旧对比
+      const seq = ++seqRef.current;
       try {
         // 翻译请求由 Rust 端发出（避免 CORS，且 API 密钥不进前端）
-        setInfo(await invoke<WordInfo>("translate", { text: w }));
+        const res = await invoke<WordInfo>("translate", { text: w });
+        if (seqRef.current !== seq) return; // 已有更新的查询，丢弃过期结果
+        setInfo(res);
       } catch (err) {
+        if (seqRef.current !== seq) return;
         setError(String(err));
       }
     };
@@ -253,15 +259,20 @@ export default function Popup() {
   }, []);
 
   // 点击同义词 / 词形变化：在弹窗内继续查词，不重新定位窗口
+  // seq 计数保证慢的旧请求不会覆盖新查询的结果
   const lookup = async (w: string) => {
     lastLooked.current = w;
     setWord(w);
     setInfo(null);
     setError("");
     setCompareOpen(false); // 同义词跳查收起旧对比
+    const seq = ++seqRef.current;
     try {
-      setInfo(await invoke<WordInfo>("translate", { text: w }));
+      const res = await invoke<WordInfo>("translate", { text: w });
+      if (seqRef.current !== seq) return; // 已有更新的查询，丢弃过期结果
+      setInfo(res);
     } catch (err) {
+      if (seqRef.current !== seq) return;
       setError(String(err));
     }
   };

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::OnceLock;
 use parking_lot::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use md5::{Digest, Md5};
 use serde::{Deserialize, Serialize};
@@ -153,7 +153,13 @@ struct BingToken {
 /// 之前每次请求都 Client::new()，翻译/对比高频调用时池子来不及回收，内存缓慢上涨
 fn http() -> &'static reqwest::Client {
     static HTTP: OnceLock<reqwest::Client> = OnceLock::new();
-    HTTP.get_or_init(reqwest::Client::new)
+    HTTP.get_or_init(|| {
+        // 整体超时：服务端无响应时不能让弹窗永远停在“翻译中...”
+        reqwest::Client::builder()
+            .timeout(Duration::from_secs(15))
+            .build()
+            .expect("reqwest client")
+    })
 }
 
 static BING_TOKEN: parking_lot::Mutex<Option<BingToken>> = parking_lot::Mutex::new(None);
