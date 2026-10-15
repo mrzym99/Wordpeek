@@ -202,6 +202,22 @@ export default function Popup() {
         stopHideCheck();
         if (!(await win.isFocused())) {
           win.hide();
+          // 关闭即清空：下次打开从空态开始，残留内容不会影响首帧布局；
+          // 顺带序号+1，丢掉还在路上的旧翻译结果
+          seqRef.current++;
+          lastLooked.current = "";
+          setWord("");
+          setInfo(null);
+          setError("");
+          setShotResult(null);
+          setDraft("");
+          setShotTo("auto");
+          setCompareOpen(false);
+          setRows(null);
+          setCompareText("");
+          setCompareLoading(false);
+          setCompareError("");
+          setCopied("");
         }
       }, 150);
     };
