@@ -644,6 +644,15 @@ textarea.shot-text:focus {
   border-radius: 3px;
 }
 
+/* 自适应高度过程中不出滚动条：动画中间帧窗口比内容矮，这点溢出是暂时的，
+   出条会抢掉 6px 内容宽度让文字重新换行；落定后恢复上面按需显示的细条 */
+.card-body.is-fitting {
+  scrollbar-width: none;
+}
+.card-body.is-fitting::-webkit-scrollbar {
+  width: 0;
+}
+
 /* ===== 卡片内容区 ===== */
 /* 只收缩不拉伸（flex: 0 1 auto）：拉伸会把盒子高度变成窗口高度的倒影， */
 /* useAutoFitWindow 量到的就不是内容高度，自适应会退化成「永远不变」； */
@@ -686,6 +695,13 @@ textarea.shot-text:focus {
 /* 对比行译文一行一句，不显示释义序号 */
 .compare-row .senses { margin-top: 2px; }
 .compare-row .senses li::before { display: none; }
+/* 不显示序号的地方条目间不需要额外 padding：否则像百度这类按行返回的源
+   会比默认翻译（单条自动换行）行距松，两个源看上去不一样高；
+   背景色与框内边距保持各自现有差异 */
+.compare-row .senses li,
+.shot-senses li {
+  padding: 0;
+}
 .compare-error {
   margin-top: 4px;
   color: var(--error);

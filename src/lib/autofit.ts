@@ -46,6 +46,7 @@ export function useAutoFitWindow(
     let trailing: ReturnType<typeof setTimeout> | undefined;
 
     const canApply = () => Date.now() - userResizeAt > USER_RESIZE_QUIET;
+    const setFitting = (on: boolean) => body.classList.toggle("is-fitting", on);
     const send = (h: number) => {
       cur = h;
       suppressUntil = Date.now() + RESIZE_SUPPRESS;
@@ -55,6 +56,7 @@ export function useAutoFitWindow(
       const f = Math.min(1, (performance.now() - animStart) / ANIM_MS);
       const eased = 1 - (1 - f) ** 3; // ease-out cubic
       send(Math.round(animFrom + (target - animFrom) * eased));
+      if (f >= 1) setFitting(false); // 落定：没真溢出就不出滞动条，溢出了才出
       rafId = f < 1 ? requestAnimationFrame(tick) : undefined;
     };
     const apply = () => {
@@ -67,9 +69,11 @@ export function useAutoFitWindow(
       // 窗口隐藏时 rAF 会被节流（动画停在中间帧），直接发准确目标
       if (!cur || document.hidden || Math.abs(h - cur) < ANIM_MIN_DELTA) {
         send(h);
+        setFitting(false);
         return;
       }
       animFrom = cur;
+      setFitting(true); // 动画期间窗口暂时比内容矮，先藏滞动条
       animStart = performance.now();
       tick();
     };
