@@ -651,19 +651,6 @@ textarea.shot-text:focus {
    出条会抢掉 6px 内容宽度让文字重新换行；落定后恢复上面按需显示的细条。
    四个容器都要遮：.card 自己也是 overflow-y: auto（本文件:35），
    窗口高被 DPI 取整裁少 1px 时，出的是卡片最外边那一条 */
-html.is-fitting .card,
-html.is-fitting .card-body,
-html.is-fitting .shot-text,
-html.is-fitting .settings-content {
-  scrollbar-width: none;
-}
-html.is-fitting .card::-webkit-scrollbar,
-html.is-fitting .card-body::-webkit-scrollbar,
-html.is-fitting .shot-text::-webkit-scrollbar,
-html.is-fitting .settings-content::-webkit-scrollbar {
-  width: 0;
-}
-
 /* 窗口没顶到屏幕上限时永远不出条：装得下就没溢出，装不下 Rust 马上把窗口拉高，
    任何滚动条都只是高度变化瞬间的闪烁；只有 fit_window 返回值表明内容真的
    被上限裁住（html.is-capped）才恢复按需细条。
