@@ -32,7 +32,7 @@ export default function SourceBox({
       {label && <span className="source-box-label">{label}</span>}
       <textarea
         ref={textareaRef}
-        className="shot-text"
+        className={`shot-text${rows >= 4 ? " input-box" : ""}`}
         value={value}
         rows={rows}
         placeholder={placeholder}
