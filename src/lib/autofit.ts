@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
@@ -35,8 +35,10 @@ export function useAutoFitWindow(
   chrome: number = CARD_CHROME,
   min = 0,
   max = Infinity
-) {
+): { setBody: (el: HTMLDivElement | null) => void; refit: () => void } {
   const [body, setBody] = useState<HTMLDivElement | null>(null);
+  // refit 需要重置 effect 内部的 target/cur 状态，经由 ref 暴露稳定引用给调用方
+  const refitRef = useRef<() => void>(() => {});
   useEffect(() => {
     if (!body) return;
     let target = 0; // 已提交的目标高度（去重用它比，动画中途改目标不会重复发）
@@ -53,10 +55,21 @@ export function useAutoFitWindow(
     // 不只是一个元素；动画落定后去掉类，真滚动不了才重新出条
     const setFitting = (on: boolean) =>
       document.documentElement.classList.toggle("is-fitting", on);
+    let fitFailed = false;
     const send = (h: number) => {
       cur = h;
       suppressUntil = Date.now() + RESIZE_SUPPRESS;
-      invoke("fit_window", { label, height: h }).catch(() => {});
+      invoke("fit_window", { label, height: h })
+        .then(() => {
+          fitFailed = false;
+        })
+        .catch(() => {
+          // 偶发失败（窗口暂不可写等）不再永久静默：静默期后补测重试一次
+          if (!fitFailed) {
+            fitFailed = true;
+            schedule();
+          }
+        });
     };
     const tick = () => {
       const f = Math.min(1, (performance.now() - animStart) / ANIM_MS);
@@ -122,6 +135,7 @@ export function useAutoFitWindow(
       else schedule();
     };
     window.addEventListener("focus", refit);
+    refitRef.current = refit;
     return () => {
       disposed = true;
       ro.disconnect();
@@ -131,5 +145,6 @@ export function useAutoFitWindow(
       if (rafId !== undefined) cancelAnimationFrame(rafId);
     };
   }, [body, label, chrome, min, max]);
-  return setBody;
+  const refit = useCallback(() => refitRef.current(), []);
+  return { setBody, refit };
 }

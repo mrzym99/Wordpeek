@@ -18,7 +18,7 @@ export default function InputPage() {
   const [loading, setLoading] = useState(false);
   const [copiedKey, setCopiedKey] = useState("");
   // .input-layout 上下 padding 14×2 + 1px 余量；min 只防塌，空态窗口贴着内容走，避免底部大片空白
-  const bodyRef = useAutoFitWindow("input", 29, 180);
+  const { setBody, refit } = useAutoFitWindow("input", 29, 180);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
@@ -26,7 +26,8 @@ export default function InputPage() {
     const win = getCurrentWindow();
     win.show().catch(() => {});
     win.setFocus().catch(() => {});
-  }, []);
+    refit(); // 首次按当前内容纠正窗口高度
+  }, [refit]);
 
   useEffect(() => {
     // 窗口每次被唤到前台都聚焦输入框，省一次点击
@@ -78,7 +79,7 @@ export default function InputPage() {
 
   return (
     <div className="input-layout">
-      <div className="card-body" ref={bodyRef}>
+      <div className="card-body" ref={setBody}>
         <SourceBox
           value={text}
           onChange={setText}

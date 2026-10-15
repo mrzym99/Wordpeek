@@ -49,6 +49,9 @@ pub struct AppConfig {
     /// 输入翻译窗口的唤出快捷键，如 "Ctrl+Alt+I"
     #[serde(default = "default_input_hotkey")]
     pub input_hotkey: String,
+    /// 划词弹窗宽度（逻辑像素）：用户拖拽后落盘，重启恢复；高度自适应不存
+    #[serde(default = "default_popup_width")]
+    pub popup_width: f64,
     #[serde(default)]
     pub baidu: BaiduConfig,
     #[serde(default)]
@@ -77,6 +80,10 @@ fn default_builtin_sources() -> bool {
 
 fn default_input_hotkey() -> String {
     "Ctrl+Alt+I".into()
+}
+
+fn default_popup_width() -> f64 {
+    400.0
 }
 
 /// 默认无额外源：主翻译内置（单词→有道、句子→必应），额外源由用户自己勾选
@@ -128,6 +135,7 @@ impl Default for AppConfig {
             ocr_lang: default_ocr_lang(),
             input_hotkey: default_input_hotkey(),
             builtin_sources: default_builtin_sources(),
+            popup_width: default_popup_width(),
             baidu: BaiduConfig::default(),
             tencent: TencentConfig::default(),
         }
@@ -436,6 +444,27 @@ pub fn save_settings(
         c.input_hotkey = input_hotkey;
         c.ocr_lang = ocr_lang;
     })
+}
+
+/// 弹窗宽度（用户拖拽后落盘）：只写这一个字段并直接写盘。
+/// 刻意不走 persist()：宽度保存不需要重注册快捷键，也不该发 config-changed
+/// （会无谓作废划词卡片里的对比区缓存）
+#[tauri::command]
+pub fn save_popup_width(app: AppHandle, state: State<SharedConfig>, width: f64) -> Result<(), String> {
+    let mut cfg = state.lock().clone();
+    // 高度动画也会触发 resize 事件：宽度没变就不写盘
+    if (cfg.popup_width - width).abs() <= 0.5 {
+        return Ok(());
+    }
+    cfg.popup_width = width;
+    let path = config_path(&app).ok_or("无法定位配置目录")?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("创建配置目录失败: {e}"))?;
+    }
+    let json = serde_json::to_string_pretty(&cfg).map_err(|e| e.to_string())?;
+    std::fs::write(&path, json).map_err(|e| format!("写入配置文件失败: {e}"))?;
+    *state.lock() = cfg;
+    Ok(())
 }
 
 /// tr 节点里的 "l.i" 可能是字符串，也可能是字符串数组
@@ -1066,6 +1095,7 @@ mod tests {
         // 旧配置文件没有这个字段，serde 默认值必须兜底
         let cfg: AppConfig = serde_json::from_str("{}").unwrap();
         assert_eq!(cfg.input_hotkey, "Ctrl+Alt+I");
+        assert_eq!(cfg.popup_width, 400.0);
     }
 
     #[test]

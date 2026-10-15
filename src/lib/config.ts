@@ -26,3 +26,8 @@ export function saveSettings(fields: {
 }) {
   return invoke("save_settings", fields);
 }
+
+/** 弹窗宽度（用户拖拽后防抖落盘，重启恢复）；高度自适应不存 */
+export function savePopupWidth(width: number) {
+  return invoke("save_popup_width", { width });
+}

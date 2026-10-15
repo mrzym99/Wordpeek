@@ -120,11 +120,11 @@ fn work_area_at(_x: i32, _y: i32) -> (i32, i32, i32, i32) {
     (0, 0, 0, 0)
 }
 
-/// 内容高度 → 窗口客户区（inner）逻辑高度：下限 60px，上限为工作区高度的 70% 再扣掉标题栏
-/// （拿不到工作区信息时退回 800px；工作区极小时仍保证不低于下限）
-fn fit_height(content_h: f64, work_h: i32, chrome_h: f64) -> f64 {
-    let max = if work_h > 0 {
-        work_h as f64 * 0.7 - chrome_h
+/// 内容高度 → 窗口客户区（inner）逻辑高度：下限 60px，上限为工作区（逻辑像素）扣掉标题栏
+/// 再留 40px 边距，内容真超出才内部滚动（拿不到工作区信息时退回 800px；工作区极小时仍不低于下限）
+fn fit_height(content_h: f64, work_h: f64, chrome_h: f64) -> f64 {
+    let max = if work_h > 0.0 {
+        work_h - chrome_h - 40.0
     } else {
         800.0
     };
@@ -199,10 +199,15 @@ fn fit_window(app: AppHandle, label: String, height: f64) -> Result<(), String> 
     // 标题栏/边框占掉的逻辑像素：无边框弹窗为 0，带标题栏的窗口约 31
     let chrome_w = outer.width.saturating_sub(inner.width) as f64 / scale;
     let chrome_h = outer.height.saturating_sub(inner.height) as f64 / scale;
-    // 高度上限用窗口所在屏的工作区（排除任务栏）
+    // 高度上限用窗口所在屏的工作区（排除任务栏）；work_area_at 给的是物理像素，
+    // 内容高度是逻辑像素，先除以缩放再钳制（多屏不同 DPI 时上限才不偏大）
     let (_, _, _, work_h) = work_area_at(pos.x + 8, pos.y + 8);
     let inner_w = inner.width as f64 / scale;
-    let inner_h = fit_height(height, work_h, chrome_h);
+    let inner_h = fit_height(
+        height,
+        if work_h > 0 { work_h as f64 / scale } else { 0.0 },
+        chrome_h,
+    );
     win.set_size(tauri::LogicalSize::new(inner_w, inner_h))
         .map_err(|e| e.to_string())?;
 
@@ -636,6 +641,19 @@ fn main() {
             // 启动时加载翻译配置（有默认值，配置文件不存在也能跑）
             let handle = app.handle().clone();
             app.manage(parking_lot::Mutex::new(translate::load_config(&handle)));
+
+            // 恢复用户拖过的弹窗宽度（高度由前端自适应，不持久化）
+            if let Some(win) = app.get_webview_window("main") {
+                let w = handle
+                    .state::<parking_lot::Mutex<translate::AppConfig>>()
+                    .lock()
+                    .popup_width;
+                if let Ok(sz) = win.inner_size() {
+                    let s = win.scale_factor().unwrap_or(1.0);
+                    let _ = win.set_size(tauri::LogicalSize::new(w, sz.height as f64 / s));
+                }
+            }
+
             app.manage(UpdateState::default());
             app.manage(ScreenshotState::default());
 
@@ -721,7 +739,8 @@ fn main() {
             translate::save_sources,
             translate::save_baidu,
             translate::save_tencent,
-            translate::save_settings
+            translate::save_settings,
+            translate::save_popup_width
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -753,13 +772,14 @@ mod tests {
 
     #[test]
     fn fit_height_clamps_between_floor_and_work_area() {
-        // 工作区 1040px 高：上限 = 728px（70%）
-        assert_eq!(fit_height(120.0, 1040, 0.0), 120.0); // 常见短卡片：原样
-        assert_eq!(fit_height(10.0, 1040, 0.0), 60.0); // 下限，别只剩一条缝
-        assert_eq!(fit_height(900.0, 1040, 0.0), 728.0); // 超出上限 → 内部滚动
-        assert_eq!(fit_height(900.0, 1040, 31.0), 697.0); // 有标题栏：上限再扣掉标题栏
-        assert_eq!(fit_height(900.0, 0, 0.0), 800.0); // 拿不到工作区 → 退回 800
-        assert_eq!(fit_height(9000.0, 50, 31.0), 60.0); // 工作区极小时不低于下限
+        // 工作区 1040px（逻辑）：上限 = 1040-40 = 1000px
+        assert_eq!(fit_height(120.0, 1040.0, 0.0), 120.0); // 常见短卡片：原样
+        assert_eq!(fit_height(10.0, 1040.0, 0.0), 60.0); // 下限，别只剩一条缝
+        assert_eq!(fit_height(900.0, 1040.0, 0.0), 900.0); // 没到上限：铺满内容
+        assert_eq!(fit_height(1100.0, 1040.0, 0.0), 1000.0); // 超出上限 → 内部滚动
+        assert_eq!(fit_height(1100.0, 1040.0, 31.0), 969.0); // 有标题栏：上限再扣掉标题栏
+        assert_eq!(fit_height(900.0, 0.0, 0.0), 800.0); // 拿不到工作区 → 退回 800
+        assert_eq!(fit_height(9000.0, 50.0, 31.0), 60.0); // 工作区极小时不低于下限
     }
 
     #[test]

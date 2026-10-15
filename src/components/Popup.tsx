@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getVersion } from "@tauri-apps/api/app";
 import { PhysicalPosition } from "@tauri-apps/api/dpi";
+import { savePopupWidth } from "../lib/config";
 import type { AppConfig, Selection, ShotResult, SourceResult, WordInfo } from "../types";
 import SenseList from "./SenseList";
 import SourceCompare from "./SourceCompare";
@@ -21,7 +22,8 @@ function isSentenceText(t: string) {
 /** 划词/截图统一弹窗：同一张卡片，标题行 = 可编辑原文 + 「对比各源」/设置按钮 */
 export default function Popup() {
   // 卡片内容高度上报给 Rust，窗口按内容收缩（防止透明区域吞掉下层窗口的点击）
-  const bodyRef = useAutoFitWindow("main", 67, 190); // padding+border 35 + header 32；最小高度防查词时塌成一条，上限交给 Rust 按屏幕钳制
+  // padding+border 35 + header 32；最小高度防查词时塌成一条，上限交给 Rust 按屏幕钳制
+  const { setBody, refit } = useAutoFitWindow("main", 67, 190);
   const [appVersion, setAppVersion] = useState("");
   useEffect(() => {
     getVersion().then(setAppVersion).catch(() => {});
@@ -163,6 +165,7 @@ export default function Popup() {
     let unlistenBlur: (() => void) | undefined;
     let unlistenFocus: (() => void) | undefined;
     let unlistenShot: (() => void) | undefined;
+    let unlistenResized: (() => void) | undefined;
 
     const lookup = async (w: string) => {
       lastLooked.current = w;
@@ -217,6 +220,7 @@ export default function Popup() {
         await win.setPosition(new PhysicalPosition(x, y));
         await win.show();
         await win.setFocus();
+        refit(); // 不依赖焦点事件：窗口重开时残留的拖拽高度立刻按内容纠正
         lookup(text.trim());
       });
       if (disposed) sel();
@@ -258,6 +262,7 @@ export default function Popup() {
         }
         win.show();
         win.setFocus();
+        refit();
       });
       if (disposed) shot();
       else unlistenShot = shot;
@@ -268,6 +273,24 @@ export default function Popup() {
       const focus = await win.listen("tauri://focus", stopHideCheck);
       if (disposed) focus();
       else unlistenFocus = focus;
+
+      // 用户拖宽弹窗后防抖落盘，重启恢复；高度动画引发的 resize 宽度不变，
+      // 会被「与上次已存宽度比较」过滤掉，不会频繁写盘
+      let widthTimer: number | undefined;
+      let savedWidth = 0;
+      const resized = await win.onResized(async (e) => {
+        const s = await win.scaleFactor();
+        const w = e.payload.width / s;
+        if (Math.abs(w - savedWidth) <= 0.5) return;
+        if (widthTimer !== undefined) clearTimeout(widthTimer);
+        widthTimer = window.setTimeout(() => {
+          widthTimer = undefined;
+          savedWidth = w;
+          savePopupWidth(w).catch(() => {});
+        }, 500);
+      });
+      if (disposed) resized();
+      else unlistenResized = resized;
     };
 
     setup();
@@ -276,6 +299,7 @@ export default function Popup() {
       unlistenBlur?.();
       unlistenFocus?.();
       unlistenShot?.();
+      unlistenResized?.();
       stopHideCheck();
     };
   }, []);
@@ -361,7 +385,7 @@ export default function Popup() {
         </div>
       </div>
 
-      <div className="card-body" ref={bodyRef}>
+      <div className="card-body" ref={setBody}>
       {error && <div className="error">{error}</div>}
       {!inShot && !info && !error && <div className="loading">翻译中...</div>}
 
