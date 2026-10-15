@@ -12,6 +12,12 @@ import SourceBox from "./SourceBox";
 import { CheckIcon, CopyIcon } from "./icons";
 import { useAutoFitWindow } from "../lib/autofit";
 
+/** 句子判定：英文看空格/标点，中文没空格所以看汉字数（超过两个当句子） */
+function isSentenceText(t: string) {
+  const s = t.trim();
+  return /[\s，。！？；,.!?;:]/.test(s) || (s.match(/[\u4e00-\u9fff]/g)?.length ?? 0) > 2;
+}
+
 /** 划词/截图统一弹窗：同一张卡片，标题行 = 可编辑原文 + 「对比各源」/设置按钮 */
 export default function Popup() {
   // 卡片内容高度上报给 Rust，窗口按内容收缩（防止透明区域吞掉下层窗口的点击）
@@ -314,7 +320,6 @@ export default function Popup() {
 
   // 截图重新翻译进行中：info/error 均空且原文存在
   const shotLoading = inShot && !!shotResult!.text && !shotResult!.info && !shotResult!.error;
-
   // 对比区只列勾选的额外源：默认翻译就是上方卡片内容，不重复展示；
   // 主翻译本身就是某个额外源（如默认源关闭时百度兜底）时跳过该行避免重复
   const mainSource = inShot ? shotResult?.info?.source : info?.source;
@@ -474,11 +479,21 @@ export default function Popup() {
       )}
 
       {/* 划词模式：词典卡片 */}
-      {/* 划词模式是完整词典卡片（音标/词形/同义词），译文平铺不套灰底框，
-          套框反而显得孤立（截图模式只有裸译文才用框） */}
+      {/* 句子翻译跟截图译文同款：套灰框、不带行首序号（序号在多行译文里看起来像行号）；
+          单词仍是平铺词典卡片（音标/词形/同义词），套框反而显得孤立 */}
       {!inShot && info && (
         <>
-          <SenseList senses={info.senses} />
+          {isSentenceText(info.word) ? (
+            <ContentBox
+              label="译文"
+              copied={copied === "translation"}
+              onCopy={() => doCopy("translation", info.senses.join("\n"))}
+            >
+              <SenseList senses={info.senses} className="shot-senses" />
+            </ContentBox>
+          ) : (
+            <SenseList senses={info.senses} />
+          )}
 
           {info.word_forms.length > 0 && (
             <div className="section">
