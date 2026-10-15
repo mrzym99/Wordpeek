@@ -541,13 +541,15 @@ input.recording {
   background: transparent;
   padding: 0;
   margin: 0;
-  max-height: 220px;
 }
 
 /* ===== 截图翻译结果卡片 ===== */
 .shot-text {
   white-space: pre-wrap;
-  max-height: 180px;
+  /* 高度跟内容走：装得下就不自己出条（旧 WebView2 不支持 field-sizing 时退回固定高，不算退化）；
+     空内容的高度下限由下面 textarea.shot-text 的 min-height: 56px 提供 */
+  field-sizing: content;
+  max-height: calc(100vh - 67px);
   overflow-y: auto;
   background: #f5f7fa;
   border-radius: 6px;
@@ -584,13 +586,14 @@ textarea.shot-text:focus {
   margin-bottom: 8px;
 }
 /* 截图卡片译文容器：与原文区同款浅灰圆角；不显示序号 */
+/* 不封顶不出自己的滚动条：卡片现在能长到屏幕允许的高度，这里再写死 220px
+   会让稍长的译文在一个根本不需要滚动的小框里出条；真装不下时由
+   外层 .card-body（100vh 上限）接管滚动 */
 .shot-senses {
   margin: 0 0 8px;
   background: #f5f7fa;
   border-radius: 6px;
   padding: 8px 10px;
-  max-height: 220px;
-  overflow-y: auto;
 }
 .shot-senses li::before { display: none; }
 
@@ -645,11 +648,19 @@ textarea.shot-text:focus {
 }
 
 /* 自适应高度过程中不出滚动条：动画中间帧窗口比内容矮，这点溢出是暂时的，
-   出条会抢掉 6px 内容宽度让文字重新换行；落定后恢复上面按需显示的细条 */
-.card-body.is-fitting {
+   出条会抢掉 6px 内容宽度让文字重新换行；落定后恢复上面按需显示的细条。
+   四个容器都要遮：.card 自己也是 overflow-y: auto（本文件:35），
+   窗口高被 DPI 取整裁少 1px 时，出的是卡片最外边那一条 */
+html.is-fitting .card,
+html.is-fitting .card-body,
+html.is-fitting .shot-text,
+html.is-fitting .settings-content {
   scrollbar-width: none;
 }
-.card-body.is-fitting::-webkit-scrollbar {
+html.is-fitting .card::-webkit-scrollbar,
+html.is-fitting .card-body::-webkit-scrollbar,
+html.is-fitting .shot-text::-webkit-scrollbar,
+html.is-fitting .settings-content::-webkit-scrollbar {
   width: 0;
 }
 

@@ -15,6 +15,9 @@ const RESIZE_SUPPRESS = 80;
 const ANIM_MS = 140;
 /** 变化小于该值直接跳，不值得动画（微抖） */
 const ANIM_MIN_DELTA = 12;
+/** 上报高度多留的余量（px）：逻辑高 撞上窗口 DPI 取整（125%/150%）轻易就少 1px， */
+/** 内容刚好顶满时会被裁出个滚动条；这点白边在卡片 16px 内边距里看不出来 */
+const FIT_SLACK = 4;
 
 /**
  * 让窗口高度跟着卡片内容走：内容少时窗口收缩到刚好包住卡片，
@@ -46,7 +49,10 @@ export function useAutoFitWindow(
     let trailing: ReturnType<typeof setTimeout> | undefined;
 
     const canApply = () => Date.now() - userResizeAt > USER_RESIZE_QUIET;
-    const setFitting = (on: boolean) => body.classList.toggle("is-fitting", on);
+    // 类名挂在 <html> 上：要遮的是页面里全部滚动容器（.card / .card-body / 原文框），
+    // 不只是一个元素；动画落定后去掉类，真滚动不了才重新出条
+    const setFitting = (on: boolean) =>
+      document.documentElement.classList.toggle("is-fitting", on);
     const send = (h: number) => {
       cur = h;
       suppressUntil = Date.now() + RESIZE_SUPPRESS;
@@ -56,13 +62,13 @@ export function useAutoFitWindow(
       const f = Math.min(1, (performance.now() - animStart) / ANIM_MS);
       const eased = 1 - (1 - f) ** 3; // ease-out cubic
       send(Math.round(animFrom + (target - animFrom) * eased));
-      if (f >= 1) setFitting(false); // 落定：没真溢出就不出滞动条，溢出了才出
+      if (f >= 1) setFitting(false); // 落定：没真溢出就不出滚动条，溢出了才出
       rafId = f < 1 ? requestAnimationFrame(tick) : undefined;
     };
     const apply = () => {
       // scrollHeight：内容被盒子截断时才是真正的自然高度
       const content = Math.max(body.offsetHeight, body.scrollHeight);
-      const h = Math.min(max, Math.max(min, Math.ceil(content) + chrome));
+      const h = Math.min(max, Math.max(min, Math.ceil(content) + chrome + FIT_SLACK));
       if (Math.abs(h - target) < EPSILON) return;
       target = h;
       if (rafId !== undefined) cancelAnimationFrame(rafId);
@@ -73,7 +79,7 @@ export function useAutoFitWindow(
         return;
       }
       animFrom = cur;
-      setFitting(true); // 动画期间窗口暂时比内容矮，先藏滞动条
+      setFitting(true); // 动画期间窗口暂时比内容矮，先藏滚动条
       animStart = performance.now();
       tick();
     };
