@@ -300,10 +300,31 @@ fn config_path(app: &AppHandle) -> Option<PathBuf> {
     app.path().app_config_dir().ok().map(|d| d.join("config.json"))
 }
 
+/// identifier 曾为 com.wordpeek.app（macOS 包扩展名冲突被迫改名），
+/// app_config_dir 随之变化；仅此一次性把旧目录的 config.json 搬过来，
+/// 且仅在新配置不存在时——绝不覆盖用户当前配置。
+fn migrate_identifier_rename(app: &AppHandle) {
+    let Some(path) = config_path(app) else { return };
+    if path.exists() {
+        return;
+    }
+    let legacy = app
+        .path()
+        .app_config_dir()
+        .ok()
+        .and_then(|d| d.parent().map(|p| p.join("com.wordpeek.app").join("config.json")));
+    if let (Some(legacy), Some(dir)) = (legacy, path.parent()) {
+        if std::fs::create_dir_all(dir).is_ok() && std::fs::copy(&legacy, &path).is_ok() {
+            println!("[config] migrated legacy config from com.wordpeek.app");
+        }
+    }
+}
+
 /// 启动时调用：读配置文件，不存在或损坏则用默认值，并补齐老配置缺少的字段。
-/// 不做旧目录迁移：卸载重装后若配置丢失，把远古配置搬回来
-/// 反而会覆盖用户的当前设置（如翻译源被复旧为 baidu）。
+/// 卸载重装后不做旧目录迁移：把远古配置搬回来反而会覆盖用户的当前设置
+/// （如翻译源被复旧为 baidu）。
 pub fn load_config(app: &AppHandle) -> AppConfig {
+    migrate_identifier_rename(app);
     let raw = config_path(app)
         .and_then(|p| std::fs::read_to_string(p).ok());
     let mut cfg: AppConfig = raw

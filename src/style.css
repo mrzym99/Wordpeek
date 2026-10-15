@@ -518,7 +518,6 @@ input.recording {
   color: var(--text-secondary);
   margin-bottom: 4px;
 }
-}
 /* 框内释义列表：去掉自带外边距与底色 */
 .content-box .senses {
   margin: 0;
