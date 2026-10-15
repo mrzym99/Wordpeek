@@ -82,7 +82,7 @@ export default function InputPage() {
         <SourceBox
           value={text}
           onChange={setText}
-          rows={4}
+          rows={6}
           textareaRef={taRef}
           onEnter={run}
           placeholder="输入或粘贴要翻译的文本（Enter 翻译，Shift+Enter 换行，右上角可切换目标语言）"

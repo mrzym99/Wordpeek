@@ -682,14 +682,16 @@ html.is-fitting .settings-content::-webkit-scrollbar {
 /* ===== 多源对比 ===== */
 .compare {
   margin-top: 10px;
-  padding: 10px 12px 8px;
   background: var(--bg-subtle); /* 浅背景：对比区与上方主翻译在视觉上分区 */
   border-radius: 8px;
+  overflow: hidden;
 }
-.compare-row:first-of-type { padding-top: 0; }
+
+.compare-row {
+  padding: 8px 10px;
+}
+
 .compare-row + .compare-row {
-  margin-top: 10px;
-  padding-top: 8px;
   border-top: 1px solid var(--border);
 }
 .compare-head {
