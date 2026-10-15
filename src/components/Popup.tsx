@@ -313,7 +313,8 @@ export default function Popup() {
       {/* header 固定不随内容滚动；body 才是滚动区 */}
       <div className="word-head">
         <div className="app-title">
-          Wordpeek{appVersion && <span className="app-version">v{appVersion}</span>}
+          Wordpeek<span className="app-beta">beta</span>
+          {appVersion && <span className="app-version">v{appVersion}</span>}
         </div>
         {/* 对比各源 + 设置：固定标题行右上角，两种模式都有 */}
         <div className="head-actions">

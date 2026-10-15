@@ -83,6 +83,17 @@ html, body, #root {
   font-weight: 500;
   color: var(--text-faint);
 }
+/* 测试阶段标记：还有小问题在修，别当成正式版 */
+.app-beta {
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  vertical-align: 2px;
+  color: var(--accent);
+  background: rgba(35, 131, 226, 0.1);
+}
 
 /* 有道单词卡：单词 + 音标/发音 一行排列 */
 .word-line {
