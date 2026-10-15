@@ -228,11 +228,34 @@ fn open_settings(app: AppHandle) {
     }
 }
 
-/// 显示输入翻译窗口（托盘菜单 / 输入翻译快捷键共用）
+/// 显示输入翻译窗口（托盘菜单 / 输入翻译快捷键共用）。
+/// 不常驻：没建过就按需创建为隐藏态，内容就绪后由前端自己 show；
+/// 点 ✕ 即销毁，回收它那个常驻 WebView2 renderer（~60MB）
 fn open_input_window(app: &AppHandle) {
     if let Some(win) = app.get_webview_window("input") {
         let _ = win.show();
         let _ = win.set_focus();
+        return;
+    }
+    let for_builder = app.clone();
+    // Windows 上 webview 窗口必须在事件循环线程创建，快捷键/托盘回调不保证在主线程
+    let spawn = app.run_on_main_thread(move || {
+        if let Err(e) = tauri::WebviewWindowBuilder::new(
+            &for_builder,
+            "input",
+            tauri::WebviewUrl::App("/?page=input".into()),
+        )
+        .title("Wordpeek 输入翻译")
+        .inner_size(460.0, 240.0)
+        .resizable(true)
+        .visible(false)
+        .build()
+        {
+            eprintln!("[input] 创建窗口失败: {e}");
+        }
+    });
+    if let Err(e) = spawn {
+        eprintln!("[input] 主线程调度失败: {e}");
     }
 }
 
@@ -639,18 +662,16 @@ fn main() {
                 }
             });
 
-            // 设置/输入窗口点 ✕ 时只隐藏不销毁，否则窗口一旦关闭
-            // 就无法再次打开（get_webview_window 返回 None）
-            for label in ["settings", "input"] {
-                if let Some(win) = app.get_webview_window(label) {
-                    let w = win.clone();
-                    win.on_window_event(move |event| {
-                        if let WindowEvent::CloseRequested { api, .. } = event {
-                            api.prevent_close();
-                            let _ = w.hide();
-                        }
-                    });
-                }
+            // 设置窗口点 ✕ 时只隐藏不销毁：一旦销毁就再也打不开（get_webview_window 返回 None）。
+            // 输入翻译窗口相反——关掉即销毁，要用时 open_input_window 重建
+            if let Some(win) = app.get_webview_window("settings") {
+                let w = win.clone();
+                win.on_window_event(move |event| {
+                    if let WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = w.hide();
+                    }
+                });
             }
 
             // 系统托盘：应用常驻后台的唯一可见入口，

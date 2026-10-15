@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { SourceResult, WordInfo } from "../types";
 import { useAutoFitWindow } from "../lib/autofit";
 import SourceCompare from "./SourceCompare";
@@ -19,6 +20,13 @@ export default function InputPage() {
   // .input-layout 上下 padding 14×2 + 1px 余量
   const bodyRef = useAutoFitWindow("input", 29, 260, 480);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    // 窗口由 Rust 按需创建为隐藏态，内容挂好了再自己显示，避免先白屏一下
+    const win = getCurrentWindow();
+    win.show().catch(() => {});
+    win.setFocus().catch(() => {});
+  }, []);
 
   useEffect(() => {
     // 窗口每次被唤到前台都聚焦输入框，省一次点击
