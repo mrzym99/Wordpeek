@@ -18,7 +18,7 @@ export default function InputPage() {
   const [loading, setLoading] = useState(false);
   const [copiedKey, setCopiedKey] = useState("");
   // .input-layout 上下 padding 14×2 + 1px 余量
-  const bodyRef = useAutoFitWindow("input", 29, 260, 480);
+  const bodyRef = useAutoFitWindow("input", 29, 260);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {

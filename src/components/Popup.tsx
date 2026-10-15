@@ -15,7 +15,7 @@ import { useAutoFitWindow } from "../lib/autofit";
 /** 划词/截图统一弹窗：同一张卡片，标题行 = 可编辑原文 + 「对比各源」/设置按钮 */
 export default function Popup() {
   // 卡片内容高度上报给 Rust，窗口按内容收缩（防止透明区域吞掉下层窗口的点击）
-  const bodyRef = useAutoFitWindow("main", 63, 190, 520); // chrome 35 + header 28；最小/最大高度：查词过程不再跳变，超长内容框内滚动
+  const bodyRef = useAutoFitWindow("main", 67, 190); // padding+border 35 + header 32；最小高度防查词时塌成一条，上限交给 Rust 按屏幕钳制
   const [appVersion, setAppVersion] = useState("");
   useEffect(() => {
     getVersion().then(setAppVersion).catch(() => {});

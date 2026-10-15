@@ -9,14 +9,23 @@ const EPSILON = 3;
 /** 用户手动拖拽窗口后，暂停自动适配的静默期（ms）：拖拽中窗口尺寸由用户主导， */
 /** 自动适配反向 set_size 会和系统拖拽循环互相触发，陷入「拔河」死循环 */
 const USER_RESIZE_QUIET = 300;
+/** 自己 set_size 引发的 onResized 抑制窗口（ms）：每发一帧续期，动画结束后很快失效 */
+const RESIZE_SUPPRESS = 80;
+/** 窗口高度过渡时长（ms）与缓动帧数无关，用时间轴算 */
+const ANIM_MS = 140;
+/** 变化小于该值直接跳，不值得动画（微抖） */
+const ANIM_MIN_DELTA = 12;
 
 /**
  * 让窗口高度跟着卡片内容走：内容少时窗口收缩到刚好包住卡片，
- * 不再留下「透明但吃点击」的空白区域。返回内容容器的 ref——
- * 该容器高度即内容自然高度（不受 .card 的 height:100% 影响）。
+ * 内容多时长到屏幕允许的上限（Rust fit_height 钳工作区），再高就框内滚动，
+ * 不再留下「透明但吃点击」的空白区域。返回内容容器的 ref。
+ * 量的是内容自然高度 max(offsetHeight, scrollHeight)：
+ * 调用方须让容器只收缩不拉伸（.card-body 用 flex: 0 1 auto），
+ * 否则量到的是被窗口拉伸后的盒子高度，自适应会退化成「永远不变」。
  * min/max：钳制上报高度，内容在两者之间时窗口不动，
- * 避免查词过程中高度反复跳变闪烁；超出 max 时容器自己出滚动条
- * （配合调用方给容器设 max-height + overflow-y）。
+ * 避免查词过程中高度反复跳变闪烁；上限一般不传，交给 Rust 按屏幕钳制。
+ * 高度变化用 ~140ms 缓动逐帧 set_size（前端驱动，Rust 只是唯一写入者）。
  */
 export function useAutoFitWindow(
   label: string,
@@ -27,18 +36,42 @@ export function useAutoFitWindow(
   const [body, setBody] = useState<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!body) return;
-    let last = 0;
+    let target = 0; // 已提交的目标高度（去重用它比，动画中途改目标不会重复发）
+    let cur = 0; // 上一帧真正发出去的高度；0 = 还没发过（首次直接跳）
+    let animFrom = 0;
+    let animStart = 0;
+    let rafId: number | undefined;
     let userResizeAt = 0;
-    let programmatic = false;
+    let suppressUntil = 0;
     let trailing: ReturnType<typeof setTimeout> | undefined;
 
     const canApply = () => Date.now() - userResizeAt > USER_RESIZE_QUIET;
-    const apply = () => {
-      const h = Math.min(max, Math.max(min, Math.ceil(body.offsetHeight) + chrome));
-      if (Math.abs(h - last) < EPSILON) return;
-      last = h;
-      programmatic = true;
+    const send = (h: number) => {
+      cur = h;
+      suppressUntil = Date.now() + RESIZE_SUPPRESS;
       invoke("fit_window", { label, height: h }).catch(() => {});
+    };
+    const tick = () => {
+      const f = Math.min(1, (performance.now() - animStart) / ANIM_MS);
+      const eased = 1 - (1 - f) ** 3; // ease-out cubic
+      send(Math.round(animFrom + (target - animFrom) * eased));
+      rafId = f < 1 ? requestAnimationFrame(tick) : undefined;
+    };
+    const apply = () => {
+      // scrollHeight：内容被盒子截断时才是真正的自然高度
+      const content = Math.max(body.offsetHeight, body.scrollHeight);
+      const h = Math.min(max, Math.max(min, Math.ceil(content) + chrome));
+      if (Math.abs(h - target) < EPSILON) return;
+      target = h;
+      if (rafId !== undefined) cancelAnimationFrame(rafId);
+      // 窗口隐藏时 rAF 会被节流（动画停在中间帧），直接发准确目标
+      if (!cur || document.hidden || Math.abs(h - cur) < ANIM_MIN_DELTA) {
+        send(h);
+        return;
+      }
+      animFrom = cur;
+      animStart = performance.now();
+      tick();
     };
     // 静默期内的变化不丢：停一场 trailing 补测一次
     const schedule = () => {
@@ -55,16 +88,13 @@ export function useAutoFitWindow(
     apply(); // 首次测量（ResizeObserver 只保证后续变化）
 
     // 用户拖拽窗口边缘：暂停自动适配，拖完 300ms 后补一次。
-    // 自己 set_size 引发的 onResized 用 programmatic 标记跳过，
+    // 自己 set_size（包成动画则是一连串）引发的 onResized 用抑制时间跳过，
     // 不当作「用户在拖拽」——否则正常适配会被自己误伤
     let disposed = false;
     let unlistenResize: (() => void) | undefined;
     getCurrentWindow()
       .onResized(() => {
-        if (programmatic) {
-          programmatic = false;
-          return;
-        }
+        if (Date.now() < suppressUntil) return;
         userResizeAt = Date.now();
         schedule();
       })
@@ -74,9 +104,10 @@ export function useAutoFitWindow(
       });
 
     // 窗口从隐藏态被 show 出来时，隐藏期间的 set_size 可能没落地：
-    // 拿到焦点即强制重报一次，保证显示出来的尺寸就是内容尺寸
+    // 拿到焦点即强制重报一次，保证显示出来的尺寸就是内容尺寸（不带动画）
     const refit = () => {
-      last = 0;
+      target = 0;
+      cur = 0;
       if (canApply()) apply();
       else schedule();
     };
@@ -87,6 +118,7 @@ export function useAutoFitWindow(
       unlistenResize?.();
       window.removeEventListener("focus", refit);
       if (trailing !== undefined) clearTimeout(trailing);
+      if (rafId !== undefined) cancelAnimationFrame(rafId);
     };
   }, [body, label, chrome, min, max]);
   return setBody;

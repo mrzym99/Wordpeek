@@ -644,16 +644,19 @@ textarea.shot-text:focus {
   border-radius: 3px;
 }
 
-/* ===== 卡片内容区高度钳制（与 useAutoFitWindow 的 min/max 对应） ===== */
-/* 超过上限时框内滚动，窗口高度封顶不再拉高；header 固定在上方不参与滚动 */
+/* ===== 卡片内容区 ===== */
+/* 只收缩不拉伸（flex: 0 1 auto）：拉伸会把盒子高度变成窗口高度的倒影， */
+/* useAutoFitWindow 量到的就不是内容高度，自适应会退化成「永远不变」； */
+/* max-height 用 100vh（= 窗口高）− chrome，窗口长到屏幕上限后剩下的内容才能框内滚动， */
+/* 而不是溢出到窗口外被切掉（chrome 与调用方传给 useAutoFitWindow 的一致） */
 .card-body {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-height: 0;
-  max-height: 455px; /* 520 - chrome 63（35 + header 28） */
+  max-height: calc(100vh - 67px); /* padding+border 35 + header 32，与 Popup 传给 hook 的 chrome 一致 */
   overflow-y: auto;
 }
 .input-layout .card-body {
-  max-height: 451px; /* 480 - chrome 29 */
+  max-height: calc(100vh - 29px); /* .input-layout 不是 flex 容器，靠 max-height 自己截断 */
 }
 
 /* ===== 多源对比 ===== */
