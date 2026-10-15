@@ -23,18 +23,6 @@
         "resizable": true
       },
       {
-        "label": "settings",
-        "title": "Wordpeek 设置",
-        "url": "/?page=settings",
-        "width": 500,
-        "height": 360,
-        "visible": false,
-        "resizable": false,
-        "decorations": true,
-        "transparent": false,
-        "dragDropEnabled": false
-      },
-      {
         "label": "screenshot",
         "url": "/?page=screenshot",
         "width": 100,

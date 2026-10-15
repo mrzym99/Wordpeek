@@ -25,6 +25,8 @@ export interface AppConfig {
   input_hotkey: string;
   /** 内置默认源（有道词典/必应翻译）是否启用 */
   builtin_sources: boolean;
+  /** 设置窗口上次停留的一级菜单，重开时恢复 */
+  settings_section?: string;
   baidu: BaiduConfig;
   tencent: TencentConfig;
 }

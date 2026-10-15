@@ -31,3 +31,8 @@ export function saveSettings(fields: {
 export function savePopupWidth(width: number) {
   return invoke("save_popup_width", { width });
 }
+
+/** 设置窗口当前一级菜单：切页即落盘，重开设置窗口时回到上次页 */
+export function saveSettingsSection(section: string) {
+  return invoke("save_settings_section", { section });
+}

@@ -4,7 +4,7 @@ use arboard::Clipboard;
 use enigo::{Direction, Enigo, Key, Settings, Keyboard};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Emitter, Manager, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
@@ -226,12 +226,37 @@ fn fit_window(app: AppHandle, label: String, height: f64) -> Result<f64, String>
     Ok(inner_h)
 }
 
-/// 显示独立的设置窗口（弹窗齿轮按钮 / 托盘菜单共用）
+/// 显示独立的设置窗口（弹窗齿轮按钮 / 托盘菜单共用）。
+/// 不常驻：没建过就按需创建为隐藏态，内容就绪后由前端自己 show；
+/// 点 ✕ 即销毁，回收它那个常驻 WebView2 renderer；一级菜单选择已存配置，
+/// 重开时设置页自动回到上次停留的菜单
 #[tauri::command]
 fn open_settings(app: AppHandle) {
     if let Some(win) = app.get_webview_window("settings") {
         let _ = win.show();
         let _ = win.set_focus();
+        return;
+    }
+    let for_builder = app.clone();
+    // Windows 上 webview 窗口必须在事件循环线程创建，托盘/齿轮回调不保证在主线程
+    let spawn = app.run_on_main_thread(move || {
+        if let Err(e) = tauri::WebviewWindowBuilder::new(
+            &for_builder,
+            "settings",
+            tauri::WebviewUrl::App("/?page=settings".into()),
+        )
+        .title("Wordpeek 设置")
+        .inner_size(500.0, 360.0)
+        .resizable(false)
+        .visible(false)
+        .disable_drag_drop_handler()
+        .build()
+        {
+            eprintln!("[settings] 创建窗口失败: {e}");
+        }
+    });
+    if let Err(e) = spawn {
+        eprintln!("[settings] 调度创建失败: {e}");
     }
 }
 
@@ -682,17 +707,8 @@ fn main() {
                 }
             });
 
-            // 设置窗口点 ✕ 时只隐藏不销毁：一旦销毁就再也打不开（get_webview_window 返回 None）。
-            // 输入翻译窗口相反——关掉即销毁，要用时 open_input_window 重建
-            if let Some(win) = app.get_webview_window("settings") {
-                let w = win.clone();
-                win.on_window_event(move |event| {
-                    if let WindowEvent::CloseRequested { api, .. } = event {
-                        api.prevent_close();
-                        let _ = w.hide();
-                    }
-                });
-            }
+            // 设置窗口也改为按需创建（open_settings），点 ✕ 即销毁，
+            // 不再需要关闭时隐藏的守卫
 
             // 系统托盘：应用常驻后台的唯一可见入口，
             // 左键/右键弹出菜单，可打开设置或退出
@@ -742,7 +758,8 @@ fn main() {
             translate::save_baidu,
             translate::save_tencent,
             translate::save_settings,
-            translate::save_popup_width
+            translate::save_popup_width,
+            translate::save_settings_section
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

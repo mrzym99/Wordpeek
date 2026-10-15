@@ -52,6 +52,9 @@ pub struct AppConfig {
     /// 划词弹窗宽度（逻辑像素）：用户拖拽后落盘，重启恢复；高度自适应不存
     #[serde(default = "default_popup_width")]
     pub popup_width: f64,
+    /// 设置窗口上次停留的一级菜单：切页即落盘，重开设置窗口时回到上次页
+    #[serde(default = "default_settings_section")]
+    pub settings_section: String,
     #[serde(default)]
     pub baidu: BaiduConfig,
     #[serde(default)]
@@ -84,6 +87,10 @@ fn default_input_hotkey() -> String {
 
 fn default_popup_width() -> f64 {
     400.0
+}
+
+fn default_settings_section() -> String {
+    "translate".into()
 }
 
 /// 默认无额外源：主翻译内置（单词→有道、句子→必应），额外源由用户自己勾选
@@ -136,6 +143,7 @@ impl Default for AppConfig {
             input_hotkey: default_input_hotkey(),
             builtin_sources: default_builtin_sources(),
             popup_width: default_popup_width(),
+            settings_section: default_settings_section(),
             baidu: BaiduConfig::default(),
             tencent: TencentConfig::default(),
         }
@@ -457,6 +465,29 @@ pub fn save_popup_width(app: AppHandle, state: State<SharedConfig>, width: f64) 
         return Ok(());
     }
     cfg.popup_width = width;
+    let path = config_path(&app).ok_or("无法定位配置目录")?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("创建配置目录失败: {e}"))?;
+    }
+    let json = serde_json::to_string_pretty(&cfg).map_err(|e| e.to_string())?;
+    std::fs::write(&path, json).map_err(|e| format!("写入配置文件失败: {e}"))?;
+    *state.lock() = cfg;
+    Ok(())
+}
+
+/// 设置窗口当前停留的一级菜单：切页即落盘，重开设置窗口时回到上次页。
+/// 直接写盘不走 persist：不重挂快捷键、不发 config-changed（表单状态没变）
+#[tauri::command]
+pub fn save_settings_section(
+    app: AppHandle,
+    state: State<SharedConfig>,
+    section: String,
+) -> Result<(), String> {
+    let mut cfg = state.lock().clone();
+    if cfg.settings_section == section {
+        return Ok(());
+    }
+    cfg.settings_section = section;
     let path = config_path(&app).ok_or("无法定位配置目录")?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("创建配置目录失败: {e}"))?;
@@ -1096,6 +1127,7 @@ mod tests {
         let cfg: AppConfig = serde_json::from_str("{}").unwrap();
         assert_eq!(cfg.input_hotkey, "Ctrl+Alt+I");
         assert_eq!(cfg.popup_width, 400.0);
+        assert_eq!(cfg.settings_section, "translate");
     }
 
     #[test]

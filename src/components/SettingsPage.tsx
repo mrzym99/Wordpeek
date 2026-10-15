@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { AppConfig, UpdateStatus } from "../types";
-import { saveBaidu, saveTencent, saveSources, saveSettings } from "../lib/config";
+import { saveBaidu, saveTencent, saveSources, saveSettings, saveSettingsSection } from "../lib/config";
 import HotkeyRecorder from "./HotkeyRecorder";
 
 type SettingsSection = "translate" | "hotkey" | "shot" | "about" | "other";
@@ -71,6 +72,13 @@ export default function SettingsPage() {
   const [checked, setChecked] = useState(false); // 是否检查过更新（用于显示"已是最新"）
   const [copied, setCopied] = useState<CopiedKind>(""); // 复制成功反馈，1.5s 后复位
 
+  // 窗口由 Rust 按需创建为隐藏态（open_settings），内容挂好了再自己显示，避免先白屏
+  useEffect(() => {
+    const win = getCurrentWindow();
+    win.show().catch(() => {});
+    win.setFocus().catch(() => {});
+  }, []);
+
   // 复制推荐语/链接；成功后按钮短暂显示"已复制 ✓"
   const copyShare = (kind: Exclude<CopiedKind, "">, text: string) => {
     invoke("copy_text", { text })
@@ -137,6 +145,9 @@ export default function SettingsPage() {
           setScreenshotHotkey(cfg.screenshot_hotkey || "Ctrl+Alt+S");
           setInputHotkey(cfg.input_hotkey || "Ctrl+Alt+I");
           setOcrLang(cfg.ocr_lang || "auto");
+          // 回到上次停留的一级菜单（切页时已落盘；配置里没有/非法就留在默认）
+          const saved = SECTIONS.find((s) => s.id === cfg.settings_section)?.id;
+          if (saved) setSection(saved);
         })
         .catch(() => {
           if (!cancelled && tries > 0) setTimeout(() => load(tries - 1), 300);
@@ -258,7 +269,11 @@ export default function SettingsPage() {
           <div
             key={s.id}
             className={`nav-item ${section === s.id ? "active" : ""}`}
-            onClick={() => setSection(s.id)}
+            onClick={() => {
+              setSection(s.id);
+              // 记住一级菜单：设置窗口已改为关掉即销毁，重开要回到这页
+              saveSettingsSection(s.id).catch(() => {});
+            }}
           >
             {s.label}
           </div>
