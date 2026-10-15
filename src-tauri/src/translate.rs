@@ -764,17 +764,36 @@ pub async fn translate_text(cfg: &AppConfig, text: &str, to: &str) -> Result<Wor
     Err(errors.join("；"))
 }
 
-/// 粗略语言检测：文本含 CJK 字符（汉字/假名/韩文）→ 译为英文，否则 → 译为中文
+/// 语言方向检测：按「中文词数 vs 英文词数」加权判定主体语言，译为对方语言。
+/// 不直接比字符数：一个中文词平均 ≈ 2 个汉字，而一个英文词平均 5~6 个字母，
+/// 比字母会把「请检查 API timeout 的返回值」这类中文句误判成英文为主。
+/// 纯中/纯英/空串结果和旧的「见 CJK 就 →en」一致，只有中英混排会变
 pub(crate) fn detect_to(text: &str) -> &'static str {
-    let cjk = text.chars().any(|c| {
-        matches!(c,
+    let mut cjk = 0usize;
+    let mut words = 0usize;
+    let mut in_word = false;
+    for c in text.chars() {
+        if matches!(c,
             '\u{3400}'..='\u{4dbf}'   // CJK 扩展 A
             | '\u{4e00}'..='\u{9fff}' // 基本汉字
             | '\u{3040}'..='\u{30ff}' // 日文假名
             | '\u{ac00}'..='\u{d7af}' // 韩文
-        )
-    });
-    if cjk { "en" } else { "zh" }
+        ) {
+            cjk += 1;
+            in_word = false;
+        } else if c.is_alphabetic() {
+            // 字母连段计为一个词（其它字母文字也当英文词算）
+            if !in_word {
+                words += 1;
+                in_word = true;
+            }
+        } else {
+            in_word = false;
+        }
+    }
+    // 两个汉字算一个中文词；打平算中文为主（保住旧的「有汉字就 →en」），没汉字一律 →zh
+    let zh_words = (cjk + 1) / 2;
+    if cjk > 0 && zh_words >= words { "en" } else { "zh" }
 }
 
 /// 解析目标语言：调用方没传 / 传了 "auto" → 自动检测
@@ -1053,8 +1072,14 @@ mod tests {
     fn detect_to_by_script() {
         assert_eq!(detect_to("那只敏捷的棕色狐狸"), "en");
         assert_eq!(detect_to("hello world"), "zh");
-        assert_eq!(detect_to("mixed 中文 text"), "en"); // 有汉字就算中文方向
+        assert_eq!(detect_to("mixed 中文 text"), "zh"); // 英文句里只夹一个中文词：主体是英文
         assert_eq!(detect_to(""), "zh");
+        // 中英混排：按中文词 vs 英文词加权，不再“一个汉字就算中文”
+        assert_eq!(detect_to("The 型号 说明 is wrong"), "zh");
+        assert_eq!(detect_to("Click the OK button to 确认"), "zh");
+        assert_eq!(detect_to("React 组件"), "en"); // 打平仍按旧的「有汉字就 →en」
+        // 中文为主只夹几个术语 → 仍译为英文
+        assert_eq!(detect_to("请检查 API timeout 的返回值"), "en");
     }
 
     #[test]

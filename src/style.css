@@ -504,7 +504,9 @@ input.recording {
 /* 内容框下方的操作行（如截图原文的「重新翻译」） */
 .box-actions {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
+  gap: 8px;
   margin: -3px 0 8px;
 }
 

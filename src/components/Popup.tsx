@@ -41,6 +41,8 @@ export default function Popup() {
   const [shotResult, setShotResult] = useState<ShotResult | null>(null);
   // 截图原文可编辑副本：用户修掉 OCR 错误换行后可重新翻译
   const [draft, setDraft] = useState("");
+  // 截图重译的目标语言：auto = 交给后端按汉字/英文词加权检测
+  const [shotTo, setShotTo] = useState<"auto" | "en" | "zh">("auto");
   // 复制反馈 key：可能是 "text"/"translation" 或某个翻译源名，1.5s 后自动复位
   const [copied, setCopied] = useState("");
   const doCopy = (key: string, text: string) => {
@@ -127,13 +129,26 @@ export default function Popup() {
   }, []);
 
   // 用编辑后的截图原文重新翻译，结果回填卡片（不清空 draft）
-  const retranslate = (text: string) => {
+  const retranslate = (text: string, to: string = shotTo) => {
     if (!text.trim()) return;
     setCompareOpen(false); // 原文变了，旧对比结果作废
     setShotResult((r) => (r ? { ...r, info: null, error: null } : r));
-    invoke<WordInfo>("translate", { text })
-      .then((info) => setShotResult((r) => (r ? { ...r, info, error: null } : r)))
-      .catch((e) => setShotResult((r) => (r ? { ...r, error: String(e) } : r)));
+    const seq = ++seqRef.current; // 连点方向时，慢的旧请求不能覆盖新结果
+    invoke<WordInfo>("translate", { text, to })
+      .then((info) => {
+        if (seqRef.current !== seq) return;
+        setShotResult((r) => (r ? { ...r, info, error: null } : r));
+      })
+      .catch((e) => {
+        if (seqRef.current !== seq) return;
+        setShotResult((r) => (r ? { ...r, error: String(e) } : r));
+      });
+  };
+
+  // 切方向顺手按新方向重译当前原文，省一次点「重新翻译」
+  const pickTo = (to: "auto" | "en" | "zh") => {
+    setShotTo(to);
+    retranslate(draft, to);
   };
 
   useEffect(() => {
@@ -208,6 +223,7 @@ export default function Popup() {
         setShotResult(e.payload);
         setCompareOpen(false); // 新一轮结果收起旧对比
         setDraft(e.payload.text ?? ""); // 新一轮结果重置编辑副本
+        setShotTo("auto"); // 新一轮回到自动检测，不沿用上轮手动方向
         const { virtual, mouse, work } = e.payload;
         try {
           // 两步定位：先粗移到鼠标旁——窗口落到目标屏后，Windows 会按该屏缩放
@@ -413,6 +429,32 @@ export default function Popup() {
           )}
           {shotResult.text && (
             <div className="box-actions">
+              <span className="lang-toggle" role="group" aria-label="目标语言">
+                <button
+                  className={shotTo === "auto" ? "active" : ""}
+                  disabled={shotLoading}
+                  title="自动检测：按汉字与英文词比例判定方向"
+                  onClick={() => pickTo("auto")}
+                >
+                  智能
+                </button>
+                <button
+                  className={shotTo === "en" ? "active" : ""}
+                  disabled={shotLoading}
+                  title="固定译为英文"
+                  onClick={() => pickTo("en")}
+                >
+                  → 英文
+                </button>
+                <button
+                  className={shotTo === "zh" ? "active" : ""}
+                  disabled={shotLoading}
+                  title="固定译为中文"
+                  onClick={() => pickTo("zh")}
+                >
+                  → 中文
+                </button>
+              </span>
               <button className="text-btn" disabled={shotLoading} onClick={() => retranslate(draft)}>
                 {shotLoading ? "翻译中…" : "重新翻译"}
               </button>
