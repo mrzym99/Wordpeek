@@ -621,15 +621,12 @@ fn main() {
             let shot_handle = handle.clone();
             std::thread::spawn(move || {
                 std::thread::sleep(std::time::Duration::from_millis(800));
-                if let (Ok(screen), Some(win)) = (
-                    crate::capture::capture_virtual_screen(),
+                if let (Some((ox, oy, w, h)), Some(win)) = (
+                    crate::capture::virtual_screen_bounds(),
                     shot_handle.get_webview_window("screenshot"),
                 ) {
-                    let _ = win.set_position(tauri::PhysicalPosition::new(
-                        screen.origin_x,
-                        screen.origin_y,
-                    ));
-                    let _ = win.set_size(tauri::PhysicalSize::new(screen.width, screen.height));
+                    let _ = win.set_position(tauri::PhysicalPosition::new(ox, oy));
+                    let _ = win.set_size(tauri::PhysicalSize::new(w as u32, h as u32));
                 }
             });
 

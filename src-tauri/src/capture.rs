@@ -135,6 +135,32 @@ pub fn capture_virtual_screen() -> Result<CapturedScreen, String> {
     Err("截图翻译仅支持 Windows".into())
 }
 
+/// 虚拟屏幕几何 (原点 x, 原点 y, 宽, 高)，物理像素。
+/// 只需要尺寸的场景用它：整屏抓像素会白 alloc w*h*4（4096×1440 ≈ 22MB）
+#[cfg(windows)]
+pub fn virtual_screen_bounds() -> Option<(i32, i32, i32, i32)> {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
+        SM_YVIRTUALSCREEN,
+    };
+    unsafe {
+        let (ox, oy) = (
+            GetSystemMetrics(SM_XVIRTUALSCREEN),
+            GetSystemMetrics(SM_YVIRTUALSCREEN),
+        );
+        let (w, h) = (
+            GetSystemMetrics(SM_CXVIRTUALSCREEN),
+            GetSystemMetrics(SM_CYVIRTUALSCREEN),
+        );
+        (w > 0 && h > 0).then_some((ox, oy, w, h))
+    }
+}
+
+#[cfg(not(windows))]
+pub fn virtual_screen_bounds() -> Option<(i32, i32, i32, i32)> {
+    None
+}
+
 /// BGRA（GDI 输出）→ RGBA，alpha 置 255
 fn bgra_to_rgba(buf: &mut [u8]) {
     for px in buf.chunks_exact_mut(4) {

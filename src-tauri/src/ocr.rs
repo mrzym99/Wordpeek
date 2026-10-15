@@ -179,7 +179,7 @@ mod tests {
                 }
             }
         }
-        let p = preprocess(&encode_gray(&img).expect("编码应成功")).expect("预处理应成功");
+        let p = preprocess(&encode_gray(img).expect("编码应成功")).expect("预处理应成功");
         assert_eq!(p.scale, 1);
 
         // 拉伸变体：反色生效 → 笔画变深、背景变亮
@@ -473,9 +473,10 @@ pub(crate) fn scale_lines(lines: &mut [OcrLine], f: u32) {
 }
 
 /// 灰度图编码成 PNG（写回给 Windows 解码器）
-fn encode_gray(img: &image::GrayImage) -> Result<Vec<u8>, String> {
+/// 收所有权：借用版要 `img.clone()` 整张图才能包成 DynamicImage
+fn encode_gray(img: image::GrayImage) -> Result<Vec<u8>, String> {
     let mut out = Vec::new();
-    image::DynamicImage::ImageLuma8(img.clone())
+    image::DynamicImage::ImageLuma8(img)
         .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
         .map_err(|e| format!("PNG 编码失败: {e}"))?;
     Ok(out)
@@ -494,8 +495,10 @@ pub(crate) fn preprocess(png: &[u8]) -> Result<Prepped, String> {
             scale: 1,
         });
     }
-    let img = image::load_from_memory(png).map_err(|e| format!("PNG 解码失败: {e}"))?;
-    let gray = img.to_luma8();
+    // 一步转灰度：RGBA 原图在本行结束就释放，不跟着后续变体一起活着
+    let gray = image::load_from_memory(png)
+        .map_err(|e| format!("PNG 解码失败: {e}"))?
+        .to_luma8();
     let scale = upscale_factor(gray.width(), gray.height());
     let scaled: image::GrayImage = if scale > 1 {
         image::imageops::resize(
@@ -519,11 +522,11 @@ pub(crate) fn preprocess(png: &[u8]) -> Result<Prepped, String> {
     let variants = vec![
         Prep {
             mode: PrepMode::Stretch,
-            png: encode_gray(&stretch_contrast(&base))?,
+            png: encode_gray(stretch_contrast(&base))?,
         },
         Prep {
             mode: PrepMode::Binarize,
-            png: encode_gray(&adaptive_binarize(&denoised, 8))?,
+            png: encode_gray(adaptive_binarize(&denoised, 8))?,
         },
     ];
     Ok(Prepped { variants, scale })
@@ -612,15 +615,26 @@ pub(crate) fn recognize_report(png: &[u8], lang: &str) -> Result<OcrReport, Stri
     let available = available_languages()?;
     let engines = candidate_engines(lang, &available)?;
     let prepped = preprocess(png)?;
-    let bitmaps = decode_variants(&prepped)?;
     let plan = attempt_plan(&engines);
 
     let mut best: Option<OcrReport> = None;
     let mut attempts = 0usize;
     let mut last_err: Option<String> = None;
     for (idx, mode) in plan {
-        let Some((_, bitmap)) = bitmaps.iter().find(|(m, _)| *m == mode) else {
+        // 变体按需解码：达标即退出时不必把另一个 Bgra8 位图也提前备好
+        let Some(variant) = prepped.variants.iter().find(|v| v.mode == mode) else {
             continue;
+        };
+        let bitmap = match decode_bitmap(&variant.png) {
+            Ok(b) => b,
+            Err(e) => {
+                // 主变体的解码失败要如实报错，不能被备用引擎掩盖
+                if idx == 0 {
+                    return Err(e);
+                }
+                last_err = Some(e);
+                continue;
+            }
         };
         let engine = match create_engine(&engines[idx]) {
             Ok(e) => e,
@@ -634,7 +648,7 @@ pub(crate) fn recognize_report(png: &[u8], lang: &str) -> Result<OcrReport, Stri
             }
         };
         attempts += 1;
-        match run_engine(&engine, bitmap) {
+        match run_engine(&engine, &bitmap) {
             Ok(mut lines) => {
                 let text = lines
                     .iter()
@@ -741,18 +755,6 @@ fn decode_bitmap(png: &[u8]) -> Result<windows::Graphics::Imaging::SoftwareBitma
         .map_err(|e| e.to_string())?;
     SoftwareBitmap::ConvertWithAlpha(&decoded, BitmapPixelFormat::Bgra8, BitmapAlphaMode::Premultiplied)
         .map_err(|e| format!("位图格式转换失败: {e}"))
-}
-
-/// 把全部变体解码成位图（每个变体只解码一次）
-#[cfg(windows)]
-fn decode_variants(
-    prepped: &Prepped,
-) -> Result<Vec<(PrepMode, windows::Graphics::Imaging::SoftwareBitmap)>, String> {
-    prepped
-        .variants
-        .iter()
-        .map(|v| Ok((v.mode, decode_bitmap(&v.png)?)))
-        .collect()
 }
 
 /// 跑一次识别，返回原始（未还原坐标的）文本行
