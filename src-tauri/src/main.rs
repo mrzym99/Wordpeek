@@ -187,8 +187,10 @@ fn clamp_to_screen(app: &AppHandle, label: &str, x: i32, y: i32) -> (i32, i32) {
 /// 前端量好卡片内容高度后调用：把窗口调整到刚好包住卡片，并重新钳制位置。
 /// 只改高度——宽度保持用户当前宽度（长文本可手动拉宽）。
 /// 位置钳制用「自己算出的新外框尺寸」，不依赖 set_size 之后立刻回读（那是异步消息）。
+/// 返回实际生效的窗口高度（可能被屏幕上限钳小）：前端用它判断「内容真的
+/// 装不下了」（is-capped），没顶到上限前一律不出滚动条，避免高度动画中闪条
 #[tauri::command]
-fn fit_window(app: AppHandle, label: String, height: f64) -> Result<(), String> {
+fn fit_window(app: AppHandle, label: String, height: f64) -> Result<f64, String> {
     let win = app
         .get_webview_window(&label)
         .ok_or_else(|| format!("窗口不存在: {label}"))?;
@@ -221,7 +223,7 @@ fn fit_window(app: AppHandle, label: String, height: f64) -> Result<(), String> 
     win.set_position(tauri::PhysicalPosition::new(nx, ny))
         .map_err(|e| e.to_string())?;
     println!("[fit] {label} content {height} -> inner {inner_w}x{inner_h}, pos ({nx}, {ny})");
-    Ok(())
+    Ok(inner_h)
 }
 
 /// 显示独立的设置窗口（弹窗齿轮按钮 / 托盘菜单共用）

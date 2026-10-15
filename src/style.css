@@ -664,6 +664,22 @@ html.is-fitting .settings-content::-webkit-scrollbar {
   width: 0;
 }
 
+/* 窗口没顶到屏幕上限时永远不出条：装得下就没溢出，装不下 Rust 马上把窗口拉高，
+   任何滚动条都只是高度变化瞬间的闪烁；只有 fit_window 返回值表明内容真的
+   被上限裁住（html.is-capped）才恢复按需细条。
+   .card / .card-body / .shot-text 的 max-height 都是 100vh − chrome，
+   没顶上限时本来就不溢出，遮住不影响真实滚动；设置页不在自适应体系里，不参与 */
+html:not(.is-capped) .card,
+html:not(.is-capped) .card-body,
+html:not(.is-capped) .shot-text {
+  scrollbar-width: none;
+}
+html:not(.is-capped) .card::-webkit-scrollbar,
+html:not(.is-capped) .card-body::-webkit-scrollbar,
+html:not(.is-capped) .shot-text::-webkit-scrollbar {
+  width: 0;
+}
+
 /* ===== 卡片内容区 ===== */
 /* 只收缩不拉伸（flex: 0 1 auto）：拉伸会把盒子高度变成窗口高度的倒影， */
 /* useAutoFitWindow 量到的就不是内容高度，自适应会退化成「永远不变」； */

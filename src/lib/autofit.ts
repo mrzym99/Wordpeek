@@ -60,8 +60,15 @@ export function useAutoFitWindow(
       cur = h;
       suppressUntil = Date.now() + RESIZE_SUPPRESS;
       invoke("fit_window", { label, height: h })
-        .then(() => {
+        .then((applied) => {
           fitFailed = false;
+          // 请求高 > 实际生效高 = Rust 钳到屏幕上限了，内容真装不下，
+          // 这时才允许出滚动条；没顶上限时窗口马上会长到包住内容，
+          // 任何溢出都是暂时的，CSS 据此一直遮条
+          document.documentElement.classList.toggle(
+            "is-capped",
+            h - Number(applied) > 0.5
+          );
         })
         .catch(() => {
           // 偶发失败（窗口暂不可写等）不再永久静默：静默期后补测重试一次
