@@ -73,5 +73,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          cp src-tauri/target/release/wordpeek.exe "Wordpeek_${GITHUB_REF_NAME#v}_x64-portable.exe"
-          gh release upload "$GITHUB_REF_NAME" Wordpeek_*_portable.exe --clobber
+          FILE="Wordpeek_${GITHUB_REF_NAME#v}_x64-portable.exe"
+          cp src-tauri/target/release/wordpeek.exe "$FILE"
+          gh release upload "$GITHUB_REF_NAME" "$FILE" --clobber
