@@ -72,10 +72,10 @@ html, body, #root {
 
 /* 左上角应用名 */
 .app-title {
-  font-size: 15px;
+  font-size: 18px;
   font-weight: 700;
-  color: var(--text); /* 与单词同色，保持一致 */
-  letter-spacing: 0.3px;
+  color: var(--text);
+  letter-spacing: 0.5px;
 }
 .app-version {
   margin-left: 5px;
