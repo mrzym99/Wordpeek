@@ -11,11 +11,12 @@
 - **丰富的词典卡片**：音标（美/英）、词性、多释义、词形变化、同义词（可点击跳查）、考试标签
 - **翻译策略**：默认源内置（单词→有道词典，句子→必应翻译，免 Key 开箱即用），可在设置里关闭（不能全关，至少保留一个源）；**额外源**：腾讯翻译（腾讯云密钥）、百度翻译（开放平台密钥）——都需先在「源配置」（左侧菜单切换源）填好密钥才能勾选，删密钥自动取消勾选
 - **多源对比**：有道/必应视为同一个「默认源」（单词/句子各司其职），对比区不单独出现；额外源（如百度）以浅色背景分区展示在卡片末尾或输入窗口「默认翻译」行之后，逐行可复制
+- **截图翻译**：`Ctrl+Alt+S` 框选屏幕区域，系统 OCR 本地离线识别（免 Key）后自动翻译，详见[截图翻译](#截图翻译)
 - **可配置**：独立设置窗口——额外翻译源勾选、API 密钥、三个快捷键（支持录制组合键）
 
 ## 下载安装
 
-前往 [Releases](../../releases) 下载 `Wordpeek_x.x.x_x64-setup.exe` 安装，或下载便携版 `wordpeek.exe` 直接运行。
+前往 [Releases](../../releases) 下载 `Wordpeek_x.x.x_x64-setup.exe` 安装，或下载免安装便携版 `Wordpeek_x.x.x_x64-portable.exe` 直接运行。
 
 ### ⚠️ 安装时的安全提示
 
@@ -58,7 +59,7 @@ npm run tauri build   # 打包，产物在 src-tauri/target/release/bundle/nsis/
   - 「百度翻译」：填入 [百度翻译开放平台](https://fanyi-api.baidu.com/) 的 APP ID / 密钥
   - 「腾讯翻译」：填入 [腾讯云访问管理 API 密钥](https://console.cloud.tencent.com/cam/capi) 的 SecretId / SecretKey（机器翻译每月有免费额度）
   - 填好后在「翻译源」里勾选，即出现在划词卡片的「对比各源」里
-- 配置保存于 `%APPDATA%\com.wordpeek.app\config.json`（密钥为明文，请勿外传此文件）
+- 配置保存于 `%APPDATA%\com.wordpeek.desktop\config.json`（密钥为明文，请勿外传此文件）
 
 ## 原理
 
@@ -72,11 +73,15 @@ npm run tauri build   # 打包，产物在 src-tauri/target/release/bundle/nsis/
 ## 目录
 
 ```
-src/App.tsx            # 弹窗 UI + 设置窗口 + 事件监听
-src/components/InputPage.tsx  # 输入翻译窗口（?page=input）
-src-tauri/src/main.rs  # 全局快捷键、模拟 Ctrl+C、剪贴板、光标坐标、托盘
-src-tauri/src/translate.rs  # 翻译源（有道/百度）、配置读写
-src-tauri/tauri.conf.json   # 无边框/置顶/透明弹窗 + 独立设置窗口
+src/components/Popup.tsx         # 划词/输入弹窗 UI + 事件监听
+src/components/InputPage.tsx     # 输入翻译窗口（?page=input）
+src/components/ScreenshotPage.tsx  # 截图遮罩框选（?page=screenshot）
+src/components/SettingsPage.tsx  # 设置窗口
+src-tauri/src/main.rs            # 全局快捷键、模拟 Ctrl+C、截图会话、托盘
+src-tauri/src/capture.rs         # GDI 抓屏、裁剪、PNG 编码
+src-tauri/src/ocr.rs             # Windows OCR + 图像预处理择优
+src-tauri/src/translate.rs       # 翻译源（有道/必应/百度/腾讯）、配置读写
+src-tauri/tauri.conf.json        # 无边框/置顶/透明弹窗 + 独立设置窗口
 ```
 
 ## 许可证
