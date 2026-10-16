@@ -64,6 +64,8 @@ export default function SettingsPage() {
   const [inputHotkey, setInputHotkey] = useState("Ctrl+Alt+I");
   const [ocrLang, setOcrLang] = useState("auto");
   const [saveError, setSaveError] = useState("");
+  // get_config 重试耗尽：表单停在默认值，此时绝不能允许保存（会把默认值覆盖到真配置上）
+  const [loadFailed, setLoadFailed] = useState(false);
   const [saved, setSaved] = useState(false);
   const [update, setUpdate] = useState<UpdateStatus | null>(null);
   const [checking, setChecking] = useState(false);
@@ -150,7 +152,14 @@ export default function SettingsPage() {
           if (saved) setSection(saved);
         })
         .catch(() => {
-          if (!cancelled && tries > 0) setTimeout(() => load(tries - 1), 300);
+          if (cancelled) return;
+          if (tries > 0) {
+            setTimeout(() => load(tries - 1), 300);
+          } else {
+            // 表单此刻停在默认值：禁用保存，避免一次保存把真配置（密钥/快捷键）抹成默认
+            setSaveError("配置加载失败，保存已停用（重启应用后再试）");
+            setLoadFailed(true);
+          }
         });
     };
     load(10);
@@ -167,25 +176,25 @@ export default function SettingsPage() {
         ? keysReady(tcId, tcKey)
         : true;
 
-  // 保存密钥后同步勾选：密钥被清空时后端会自动剥掉对应源，这里同步本地状态
-  const syncAfterKeySave = (
+  // 保存密钥后同步勾选：密钥被清空时后端会自动剥掉对应源，这里同步本地状态。
+  // 失败必须上抖——静默失败会让界面显示「已保存」而密钥其实没落盘
+  const syncAfterKeySave = async (
     id: string,
     isReady: boolean,
     save: () => Promise<unknown>
   ) => {
-    setSources((prev) => {
-      if (isReady || !prev.includes(id)) return prev;
-      const next = prev.filter((s) => s !== id);
-      saveSources(next, builtin).catch(() => {});
-      return next;
-    });
-    save();
+    await save();
+    if (!isReady && sources.includes(id)) {
+      const next = sources.filter((s) => s !== id);
+      setSources(next);
+      await saveSources(next, builtin);
+    }
   };
 
   const saveBaiduKeys = async () => {
     setSaveError("");
     try {
-      syncAfterKeySave("baidu", keysReady(appid, secret), () => saveBaidu(appid, secret));
+      await syncAfterKeySave("baidu", keysReady(appid, secret), () => saveBaidu(appid, secret));
       setSaved(true);
       setTimeout(() => setSaved(false), 1500);
     } catch (err) {
@@ -196,7 +205,7 @@ export default function SettingsPage() {
   const saveTencentKeys = async () => {
     setSaveError("");
     try {
-      syncAfterKeySave("tencent", keysReady(tcId, tcKey), () => saveTencent(tcId, tcKey));
+      await syncAfterKeySave("tencent", keysReady(tcId, tcKey), () => saveTencent(tcId, tcKey));
       setSaved(true);
       setTimeout(() => setSaved(false), 1500);
     } catch (err) {
@@ -399,7 +408,7 @@ export default function SettingsPage() {
                         />
                       </label>
                       <div className="source-actions">
-                        <button className="save-btn" onClick={saveBaiduKeys}>
+                        <button className="save-btn" onClick={saveBaiduKeys} disabled={loadFailed}>
                           保存密钥
                         </button>
                       </div>
@@ -425,7 +434,7 @@ export default function SettingsPage() {
                         />
                       </label>
                       <div className="source-actions">
-                        <button className="save-btn" onClick={saveTencentKeys}>
+                        <button className="save-btn" onClick={saveTencentKeys} disabled={loadFailed}>
                           保存密钥
                         </button>
                       </div>

@@ -358,7 +358,7 @@ fn install_update(app: AppHandle) -> Result<(), String> {
 }
 
 /// 解析 "Ctrl+Alt+T" 形式的快捷键字符串
-fn parse_hotkey(s: &str) -> Result<Shortcut, String> {
+pub(crate) fn parse_hotkey(s: &str) -> Result<Shortcut, String> {
     let mut mods = Modifiers::empty();
     let mut key: Option<Code> = None;
     for part in s.split('+') {

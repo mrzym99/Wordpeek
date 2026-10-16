@@ -208,21 +208,7 @@ async fn bing_token() -> Result<BingToken, String> {
         .await
         .map_err(|e| format!("响应解析失败: {e}"))?;
 
-    let ig = html
-        .find("IG:\"")
-        .map(|i| html[i + 4..i + 36].to_string())
-        .ok_or("必应页面缺少 IG")?;
-    let ap = html
-        .find("params_AbusePreventionHelper")
-        .ok_or("必应页面缺少防滥用参数")?;
-    let rest = &html[ap..];
-    let open = rest.find('[').ok_or("必应防滥用参数格式异常")?;
-    let rest = &rest[open + 1..];
-    let comma = rest.find(',').ok_or("必应防滥用参数格式异常")?;
-    let key = rest[..comma].to_string();
-    let q = rest[comma + 2..].find('"').ok_or("必应防滥用参数格式异常")?;
-    let token = rest[comma + 2..comma + 2 + q].to_string();
-
+    let (ig, key, token) = parse_bing_token(&html)?;
     let tok = BingToken {
         ig,
         key,
@@ -231,6 +217,37 @@ async fn bing_token() -> Result<BingToken, String> {
     };
     *BING_TOKEN.lock() = Some(tok.clone());
     Ok(tok)
+}
+
+/// 从必应翻译首页 HTML 抽出凭证（IG / key / token）。
+/// 纯函数：格式是必应说了算，随时会变，这里必须用 checked 切片，
+/// 格式异常时返回 Err（弹窗显示错误），绝不能 panic。
+fn parse_bing_token(html: &str) -> Result<(String, String, String), String> {
+    let err = |m: &str| format!("必应页面格式异常：{m}（可能已改版）");
+    let i = html.find("IG:\"").ok_or_else(|| err("缺少 IG"))?;
+    let rest = html.get(i + 4..).ok_or_else(|| err("缺少 IG"))?;
+    // IG 固定 32 位且紧跟收尾引号：不校验的话会把后面的标签一起吞进凭证
+    if rest.as_bytes().get(32) != Some(&b'"') {
+        return Err(err("IG 长度不足"));
+    }
+    let ig = rest.get(..32).ok_or_else(|| err("IG 长度不足"))?.to_string();
+    let ap = html
+        .find("params_AbusePreventionHelper")
+        .ok_or_else(|| err("缺少防滥用参数"))?;
+    let rest = &html[ap..];
+    let open = rest.find('[').ok_or_else(|| err("防滥用参数格式异常"))?;
+    let rest = &rest[open + 1..];
+    let comma = rest.find(',').ok_or_else(|| err("防滥用参数格式异常"))?;
+    let key = rest[..comma].to_string();
+    // 逗号后预期是 ", "，但别对空格做硬假设：找到下一个引号内的内容当 token
+    let tail = rest.get(comma + 1..).ok_or_else(|| err("防滥用参数格式异常"))?;
+    let tail = tail.trim_start();
+    let tail = tail.strip_prefix('"').ok_or_else(|| err("防滥用参数格式异常"))?;
+    let token = tail.split('"').next().unwrap_or_default().to_string();
+    if ig.is_empty() || key.is_empty() || token.is_empty() {
+        return Err(err("凭证为空"));
+    }
+    Ok((ig, key, token))
 }
 
 /// 必应翻译（免 Key）：从 cn.bing.com 取临时凭证后调 ttranslatev3
@@ -339,13 +356,43 @@ fn migrate_identifier_rename(app: &AppHandle) {
 /// 启动时调用：读配置文件，不存在或损坏则用默认值，并补齐老配置缺少的字段。
 /// 卸载重装后不做旧目录迁移：把远古配置搬回来反而会覆盖用户的当前设置
 /// （如翻译源被复旧为 baidu）。
+/// 原子落盘：先写 .tmp 再 rename 覆盖，断电/崩溃不会留下截断的 config.json
+/// （直接 fs::write 覆盖原文件，中途失败 = 配置丢失）
+fn write_config(path: &std::path::Path, cfg: &AppConfig) -> Result<(), String> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("创建配置目录失败: {e}"))?;
+    }
+    let json = serde_json::to_string_pretty(cfg).map_err(|e| e.to_string())?;
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, json).map_err(|e| format!("写入配置文件失败: {e}"))?;
+    std::fs::rename(&tmp, path).map_err(|e| format!("写入配置文件失败: {e}"))
+}
+
 pub fn load_config(app: &AppHandle) -> AppConfig {
     migrate_identifier_rename(app);
-    let raw = config_path(app)
-        .and_then(|p| std::fs::read_to_string(p).ok());
-    let mut cfg: AppConfig = raw
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default();
+    let path = config_path(app);
+    let raw = path.as_ref().and_then(|p| std::fs::read_to_string(p).ok());
+    let mut cfg: AppConfig = match raw {
+        Some(s) => match serde_json::from_str(&s) {
+            Ok(c) => c,
+            Err(e) => {
+                // 损坏的配置绝不静默丢弃：备份后用默认值，用户至少能找回来
+                if let Some(p) = path {
+                    let bak = p.with_extension("json.bak");
+                    let _ = std::fs::rename(&p, &bak);
+                    eprintln!("[config] 配置文件解析失败（{e}），已备份到 {} 并改用默认配置", bak.display());
+                }
+                AppConfig::default()
+            }
+        },
+        None => {
+            if path.is_some() {
+                // 文件存在但读不了（如杀软占用）：打日志提醒，避免后面一次保存把真配置盖成默认值
+                eprintln!("[config] 配置文件存在但读取失败，本次使用默认值");
+            }
+            AppConfig::default()
+        }
+    };
     migrate_sources(&mut cfg);
     cfg
 }
@@ -363,19 +410,25 @@ fn persist<F: FnOnce(&mut AppConfig)>(
     state: State<SharedConfig>,
     mutate: F,
 ) -> Result<(), String> {
-    let mut cfg = state.lock().clone();
-    mutate(&mut cfg);
-    // 快捷键重复会被后端拦下，设置页直接显示这条错误
-    crate::validate_hotkeys(&[&cfg.hotkey, &cfg.screenshot_hotkey, &cfg.input_hotkey])?;
-    // 勾选列表去重并剔除非法项，避免空列表导致没有可用源
-    cfg.sources = enabled_sources(&cfg);
+    // 全程持锁：读-改-写期间不能放锁，否则两个并发保存会互相覆盖字段。
+    // 克隆出来改，失败时不污染内存态
     let path = config_path(&app).ok_or("无法定位配置目录")?;
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| format!("创建配置目录失败: {e}"))?;
-    }
-    let json = serde_json::to_string_pretty(&cfg).map_err(|e| e.to_string())?;
-    std::fs::write(&path, json).map_err(|e| format!("写入配置文件失败: {e}"))?;
-    *state.lock() = cfg.clone();
+    let cfg = {
+        let mut guard = state.lock();
+        let mut cfg = guard.clone();
+        mutate(&mut cfg);
+        // 快捷键重复会被后端拦下，设置页直接显示这条错误
+        crate::validate_hotkeys(&[&cfg.hotkey, &cfg.screenshot_hotkey, &cfg.input_hotkey])?;
+        // 快捷键格式不对会在注册时静默失败，保存时就拦住
+        for h in [&cfg.hotkey, &cfg.screenshot_hotkey, &cfg.input_hotkey] {
+            crate::parse_hotkey(h)?;
+        }
+        // 勾选列表去重并剔除非法项，避免空列表导致没有可用源
+        cfg.sources = enabled_sources(&cfg);
+        write_config(&path, &cfg)?;
+        *guard = cfg.clone();
+        cfg
+    };
     println!("[config] saved");
 
     // 快捷键可能被修改：按新配置重新注册全部快捷键（失败仅日志，不阻断保存）
@@ -459,20 +512,14 @@ pub fn save_settings(
 /// （会无谓作废划词卡片里的对比区缓存）
 #[tauri::command]
 pub fn save_popup_width(app: AppHandle, state: State<SharedConfig>, width: f64) -> Result<(), String> {
-    let mut cfg = state.lock().clone();
+    let path = config_path(&app).ok_or("无法定位配置目录")?;
+    let mut guard = state.lock();
     // 高度动画也会触发 resize 事件：宽度没变就不写盘
-    if (cfg.popup_width - width).abs() <= 0.5 {
+    if (guard.popup_width - width).abs() <= 0.5 {
         return Ok(());
     }
-    cfg.popup_width = width;
-    let path = config_path(&app).ok_or("无法定位配置目录")?;
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| format!("创建配置目录失败: {e}"))?;
-    }
-    let json = serde_json::to_string_pretty(&cfg).map_err(|e| e.to_string())?;
-    std::fs::write(&path, json).map_err(|e| format!("写入配置文件失败: {e}"))?;
-    *state.lock() = cfg;
-    Ok(())
+    guard.popup_width = width;
+    write_config(&path, &guard)
 }
 
 /// 设置窗口当前停留的一级菜单：切页即落盘，重开设置窗口时回到上次页。
@@ -483,19 +530,13 @@ pub fn save_settings_section(
     state: State<SharedConfig>,
     section: String,
 ) -> Result<(), String> {
-    let mut cfg = state.lock().clone();
-    if cfg.settings_section == section {
+    let path = config_path(&app).ok_or("无法定位配置目录")?;
+    let mut guard = state.lock();
+    if guard.settings_section == section {
         return Ok(());
     }
-    cfg.settings_section = section;
-    let path = config_path(&app).ok_or("无法定位配置目录")?;
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| format!("创建配置目录失败: {e}"))?;
-    }
-    let json = serde_json::to_string_pretty(&cfg).map_err(|e| e.to_string())?;
-    std::fs::write(&path, json).map_err(|e| format!("写入配置文件失败: {e}"))?;
-    *state.lock() = cfg;
-    Ok(())
+    guard.settings_section = section;
+    write_config(&path, &guard)
 }
 
 /// tr 节点里的 "l.i" 可能是字符串，也可能是字符串数组
@@ -632,7 +673,8 @@ async fn translate_baidu(
         ])
         .send()
         .await
-        .map_err(|e| format!("请求失败: {e}"))?
+        // URL 里有 appid+sign，reqwest 错误 Display 默认带完整 URL，必须脱掉
+        .map_err(|e| format!("请求失败: {}", e.without_url()))?
         .json()
         .await
         .map_err(|e| format!("响应解析失败: {e}"))?;
@@ -1088,6 +1130,33 @@ mod tests {
     }
 
     #[test]
+    fn parse_bing_token_happy_path() {
+        let ig = "A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6"; // 32 位
+        let html = format!(
+            "<script>var params_AbusePreventionHelper = [1234567890,\"TOKENABC\",3600000];</script> IG:\"{ig}\";"
+        );
+        let (g, key, token) = parse_bing_token(&html).expect("完整页面应能抽出凭证");
+        assert_eq!(g, ig);
+        assert_eq!(key, "1234567890");
+        assert_eq!(token, "TOKENABC");
+    }
+
+    #[test]
+    fn parse_bing_token_rejects_malformed_pages() {
+        // 缺 IG
+        assert!(parse_bing_token("params_AbusePreventionHelper=[1,\"t\"]").is_err());
+        // 缺防滥用参数
+        assert!(parse_bing_token("IG:\"A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6\"").is_err());
+        // IG 不足 32 位
+        assert!(parse_bing_token("IG:\"short\"params_AbusePreventionHelper=[1,\"t\"]").is_err());
+        // 防滥用参数无逗号
+        assert!(parse_bing_token("IG:\"A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6\"params_AbusePreventionHelper=[1").is_err());
+        // 空页面 / 纯乱文本不 panic，返回 Err
+        assert!(parse_bing_token("").is_err());
+        assert!(parse_bing_token("随机网页内容").is_err());
+    }
+
+    #[test]
     fn source_labels_are_human_readable() {
         assert_eq!(source_label("youdao"), "有道词典");
         assert_eq!(source_label("bing"), "必应翻译");
@@ -1162,7 +1231,9 @@ mod tests {
         assert_eq!(baidu_target("fr"), "zh");
     }
 
+    // 真网络请求：默认忽略，跑法 cargo test -- --ignored
     #[tokio::test]
+    #[ignore]
     async fn youdao_rejects_non_chinese_target() {
         let cfg = AppConfig::default();
         let err = try_translate("youdao", "hello", &cfg, "en")
@@ -1171,7 +1242,9 @@ mod tests {
         assert!(err.contains("仅支持译为中文"), "错误信息应说明原因: {err}");
     }
 
+    // 真网络请求：默认忽略，跑法 cargo test -- --ignored
     #[tokio::test]
+    #[ignore]
     async fn chinese_input_translates_to_english_via_bing() {
         // 未配置百度：中→英只能走必应（有道不支持该方向）
         let cfg = AppConfig::default();
@@ -1183,7 +1256,9 @@ mod tests {
         println!("en result: {:?}", info.senses);
     }
 
+    // 真网络请求：默认忽略，跑法 cargo test -- --ignored
     #[tokio::test]
+    #[ignore]
     async fn youdao_returns_entries() {
         let result = translate_youdao("error").await;
         println!("youdao result: {result:?}");
@@ -1192,7 +1267,9 @@ mod tests {
         assert!(info.usphone.is_some());
     }
 
+    // 真网络请求：默认忽略，跑法 cargo test -- --ignored
     #[tokio::test]
+    #[ignore]
     async fn youdao_happy_has_synos() {
         let info = translate_youdao("happy").await.expect("should succeed");
         println!("synos: {:?}", info.synos);
@@ -1200,7 +1277,9 @@ mod tests {
         assert!(!info.word_forms.is_empty());
     }
 
+    // 真网络请求：默认忽略，跑法 cargo test -- --ignored
     #[tokio::test]
+    #[ignore]
     async fn full_sentence_reports_baidu_guidance() {
         // 有道免费整句接口已下线：整句应报引导配置百度的错误（translate_text 会自动降级百度）
         let r = translate_youdao("The quick brown fox jumps over the lazy dog").await;
@@ -1208,7 +1287,9 @@ mod tests {
         assert!(msg.contains("整句"), "错误信息应说明整句原因: {msg}");
     }
 
+    // 真网络请求：默认忽略，跑法 cargo test -- --ignored
     #[tokio::test]
+    #[ignore]
     async fn baidu_rejects_bad_key() {
         // 错误 key 应返回带信息的 Err（能到达 API 且错误处理正常）
         let r = translate_baidu("error", "dummy-appid", "dummy-secret", "zh").await;
@@ -1216,7 +1297,9 @@ mod tests {
         println!("baidu err: {:?}", r.err());
     }
 
+    // 真网络请求：默认忽略，跑法 cargo test -- --ignored
     #[tokio::test]
+    #[ignore]
     async fn bing_translates_full_sentence() {
         // 必应免 Key 兜底：整句应返回译文
         let info = translate_bing("The quick brown fox jumps over the lazy dog", "zh")
@@ -1227,7 +1310,9 @@ mod tests {
         println!("bing result: {:?}", info.senses);
     }
 
+    // 真网络请求：默认忽略，跑法 cargo test -- --ignored
     #[tokio::test]
+    #[ignore]
     async fn default_strategy_falls_back_to_bing_without_baidu_keys() {
         // 未配置百度：整句走 有道→必应，最终应拿到非有道来源的译文
         let cfg = AppConfig::default();
