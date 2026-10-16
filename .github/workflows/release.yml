@@ -66,3 +66,12 @@ jobs:
           releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: false
           prerelease: false
+
+      # 附加免安装便携版：构建产物里的裸 exe，解压即用/单文件直接跑（仅依赖系统 WebView2）
+      - name: Upload portable exe
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cp src-tauri/target/release/wordpeek.exe "Wordpeek_${GITHUB_REF_NAME#v}_x64-portable.exe"
+          gh release upload "$GITHUB_REF_NAME" Wordpeek_*_portable.exe --clobber
