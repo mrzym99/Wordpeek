@@ -155,9 +155,9 @@ mod tests {
         let png = encode_png(&rgba, 50, 20).expect("编码应成功");
         let p = preprocess(&png).expect("预处理应成功");
         assert_eq!(p.scale, 4);
-        assert_eq!(p.variants.len(), 2);
-        for v in &p.variants {
-            let img = image::load_from_memory(&v.png).expect("变体应是合法 PNG");
+        for mode in [PrepMode::Stretch, PrepMode::Binarize] {
+            let bytes = p.png_for(mode).expect("变体应生成成功").expect("应有该变体");
+            let img = image::load_from_memory(&bytes).expect("变体应是合法 PNG");
             assert_eq!((img.width(), img.height()), (200, 80));
         }
         // 已够大的图不放大，但仍有二值化变体
@@ -183,14 +183,16 @@ mod tests {
         assert_eq!(p.scale, 1);
 
         // 拉伸变体：反色生效 → 笔画变深、背景变亮
-        let stretch = image::load_from_memory(&p.variants[0].png)
+        let stretch_png = p.png_for(PrepMode::Stretch).expect("生成成功").expect("有变体");
+        let stretch = image::load_from_memory(&stretch_png)
             .unwrap()
             .to_luma8();
         assert!(stretch.get_pixel(46, 200)[0] < 64, "反色后笔画应偏黑");
         assert!(stretch.get_pixel(70, 200)[0] > 192, "反色后背景应偏白");
 
         // 二值化变体：笔画为黑、笔画间隔为白
-        let bin = image::load_from_memory(&p.variants[1].png)
+        let bin_png = p.png_for(PrepMode::Binarize).expect("生成成功").expect("有变体");
+        let bin = image::load_from_memory(&bin_png)
             .unwrap()
             .to_luma8();
         assert_eq!(bin.get_pixel(46, 200)[0], 0, "笔画应为黑");
@@ -321,10 +323,34 @@ pub(crate) struct Prep {
     pub png: Vec<u8>,
 }
 
-/// 预处理结果：变体 + 相对原裁剪图的放大倍数（用于把 OCR 坐标还原回去）
+/// 预处理结果：底图 + 按需生成的变体缓存 + 相对原裁剪图的放大倍数（用于把 OCR 坐标还原回去）。
+/// 变体懒生成：Stretch 首试通常达标即退，Binarize 的模糊+积分图+编码在常规路径全部免掉（峰值省几十 MB）。
 pub(crate) struct Prepped {
-    pub variants: Vec<Prep>,
+    base: Option<image::GrayImage>, // 处理完的底图（放大/反色后）；None = RAW 模式
+    variants: std::cell::RefCell<Vec<Prep>>,
     pub scale: u32,
+}
+
+impl Prepped {
+    /// 取某变体的 PNG，首次用时生成并缓存；RAW 模式下只有缓存的原图变体，其余返回 None
+    pub(crate) fn png_for(&self, mode: PrepMode) -> Result<Option<Vec<u8>>, String> {
+        if let Some(p) = self.variants.borrow().iter().find(|v| v.mode == mode) {
+            return Ok(Some(p.png.clone()));
+        }
+        let Some(base) = self.base.as_ref() else {
+            return Ok(None);
+        };
+        let png = match mode {
+            PrepMode::Stretch => encode_gray(stretch_contrast(base))?,
+            PrepMode::Binarize => {
+                // 二值化前轻度高斯模糊：压掉 JPEG 噪点与背景纹理，同时保留笔画
+                let denoised = image::imageops::blur(base, 0.8);
+                encode_gray(adaptive_binarize(&denoised, 8))?
+            }
+        };
+        self.variants.borrow_mut().push(Prep { mode, png: png.clone() });
+        Ok(Some(png))
+    }
 }
 
 /// 短边放大到至少 300px（Windows OCR 对小字号识别极差），倍数 1~4，
@@ -406,12 +432,14 @@ pub(crate) fn stretch_contrast(img: &image::GrayImage) -> image::GrayImage {
 pub(crate) fn adaptive_binarize(img: &image::GrayImage, c: i32) -> image::GrayImage {
     let (w, h) = (img.width() as usize, img.height() as usize);
     let src = img.as_raw();
-    // 积分图带一圈 0 边界：int[y][x] = 左上角 y×x 区域的和
-    let mut integral = vec![0u64; (w + 1) * (h + 1)];
+    // 积分图带一圈 0 边界：int[y][x] = 左上角 y×x 区域的和。
+    // u32 够用：放大后最长边封顶 4000（upscale_factor），总和 ≤ 4000×4000×255 < u32::MAX；
+    // 只有容斥四项相减那一步可能越界，显式升 u64。比 u64 积分图省一半峰值内存。
+    let mut integral = vec![0u32; (w + 1) * (h + 1)];
     for y in 0..h {
-        let mut row_sum = 0u64;
+        let mut row_sum = 0u32;
         for x in 0..w {
-            row_sum += src[y * w + x] as u64;
+            row_sum += src[y * w + x] as u32;
             integral[(y + 1) * (w + 1) + x + 1] = integral[y * (w + 1) + x + 1] + row_sum;
         }
     }
@@ -423,11 +451,11 @@ pub(crate) fn adaptive_binarize(img: &image::GrayImage, c: i32) -> image::GrayIm
         for x in 0..w {
             let x0 = x.saturating_sub(r);
             let x1 = (x + r + 1).min(w);
-            let area = ((x1 - x0) * (y1 - y0)) as u64;
-            let sum = integral[y1 * (w + 1) + x1] + integral[y0 * (w + 1) + x0]
-                - integral[y0 * (w + 1) + x1]
-                - integral[y1 * (w + 1) + x0];
-            if (src[y * w + x] as i32) < (sum / area) as i32 - c {
+            let area = ((x1 - x0) * (y1 - y0)) as u32;
+            let sum = integral[y1 * (w + 1) + x1] as u64 + integral[y0 * (w + 1) + x0] as u64
+                - integral[y0 * (w + 1) + x1] as u64
+                - integral[y1 * (w + 1) + x0] as u64;
+            if (src[y * w + x] as i32) < (sum / area as u64) as i32 - c {
                 out[y * w + x] = 0;
             }
         }
@@ -488,10 +516,11 @@ fn encode_gray(img: image::GrayImage) -> Result<Vec<u8>, String> {
 pub(crate) fn preprocess(png: &[u8]) -> Result<Prepped, String> {
     if std::env::var_os("WORDPEEK_OCR_RAW").is_some() {
         return Ok(Prepped {
-            variants: vec![Prep {
+            base: None,
+            variants: std::cell::RefCell::new(vec![Prep {
                 mode: PrepMode::Stretch,
                 png: png.to_vec(),
-            }],
+            }]),
             scale: 1,
         });
     }
@@ -500,7 +529,7 @@ pub(crate) fn preprocess(png: &[u8]) -> Result<Prepped, String> {
         .map_err(|e| format!("PNG 解码失败: {e}"))?
         .to_luma8();
     let scale = upscale_factor(gray.width(), gray.height());
-    let scaled: image::GrayImage = if scale > 1 {
+    let mut base: image::GrayImage = if scale > 1 {
         image::imageops::resize(
             &gray,
             gray.width() * scale,
@@ -512,24 +541,16 @@ pub(crate) fn preprocess(png: &[u8]) -> Result<Prepped, String> {
         gray
     };
 
-    let mut base = scaled;
     if should_invert(pixel_mean(&base)) {
         image::imageops::invert(&mut base);
     }
 
-    // 二值化前轻度高斯模糊：压掉 JPEG 噪点与背景纹理，同时保留笔画
-    let denoised = image::imageops::blur(&base, 0.8);
-    let variants = vec![
-        Prep {
-            mode: PrepMode::Stretch,
-            png: encode_gray(stretch_contrast(&base))?,
-        },
-        Prep {
-            mode: PrepMode::Binarize,
-            png: encode_gray(adaptive_binarize(&denoised, 8))?,
-        },
-    ];
-    Ok(Prepped { variants, scale })
+    // 变体不在此处生成：由 recognize_report 按 attempt_plan 按需调 png_for
+    Ok(Prepped {
+        base: Some(base),
+        variants: std::cell::RefCell::new(Vec::new()),
+        scale,
+    })
 }
 
 /// 候选 OCR 引擎
@@ -621,11 +642,12 @@ pub(crate) fn recognize_report(png: &[u8], lang: &str) -> Result<OcrReport, Stri
     let mut attempts = 0usize;
     let mut last_err: Option<String> = None;
     for (idx, mode) in plan {
-        // 变体按需解码：达标即退出时不必把另一个 Bgra8 位图也提前备好
-        let Some(variant) = prepped.variants.iter().find(|v| v.mode == mode) else {
-            continue;
+        // 变体按需生成/解码：达标即退出时 Binarize 的模糊+积分图+编码全部不做
+        let png = match prepped.png_for(mode)? {
+            Some(p) => p,
+            None => continue,
         };
-        let bitmap = match decode_bitmap(&variant.png) {
+        let bitmap = match decode_bitmap(&png) {
             Ok(b) => b,
             Err(e) => {
                 // 主变体的解码失败要如实报错，不能被备用引擎掩盖
@@ -748,13 +770,23 @@ fn decode_bitmap(png: &[u8]) -> Result<windows::Graphics::Imaging::SoftwareBitma
         .map_err(|e| e.to_string())?
         .get()
         .map_err(|e| e.to_string())?;
-    let decoded = decoder
-        .GetSoftwareBitmapAsync()
-        .map_err(|e| e.to_string())?
-        .get()
-        .map_err(|e| e.to_string())?;
-    SoftwareBitmap::ConvertWithAlpha(&decoded, BitmapPixelFormat::Bgra8, BitmapAlphaMode::Premultiplied)
-        .map_err(|e| format!("位图格式转换失败: {e}"))
+    let bitmap = {
+        // 解码出的 RGBA 位图用完即弃，不陪着 Bgra8 转换结果活到函数尾（大图瞬时省一半）
+        let decoded = decoder
+            .GetSoftwareBitmapAsync()
+            .map_err(|e| e.to_string())?
+            .get()
+            .map_err(|e| e.to_string())?;
+        let bitmap = SoftwareBitmap::ConvertWithAlpha(
+            &decoded,
+            BitmapPixelFormat::Bgra8,
+            BitmapAlphaMode::Premultiplied,
+        )
+        .map_err(|e| format!("位图格式转换失败: {e}"))?;
+        drop(decoded);
+        bitmap
+    };
+    Ok(bitmap)
 }
 
 /// 跑一次识别，返回原始（未还原坐标的）文本行
