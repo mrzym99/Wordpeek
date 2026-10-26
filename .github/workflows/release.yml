@@ -76,3 +76,39 @@ jobs:
           FILE="Wordpeek_${GITHUB_REF_NAME#v}_x64-portable.exe"
           cp src-tauri/target/release/wordpeek.exe "$FILE"
           gh release upload "$GITHUB_REF_NAME" "$FILE" --clobber
+
+  # macOS 版：只出 dmg，挂到同一个 Release。
+  # 不做更新包（createUpdaterArtifacts=false，见 tauri.macos.conf.json）——
+  # macOS 自动更新要求 app 已签名+公证，未签名包更新后会被 Gatekeeper 拦。
+  build-macos:
+    needs: build # 等 Windows job 建好 Release，避免两个 job 抢着创建
+    # 明确要 Apple Silicon：产物是 aarch64 dmg（macos-latest 可能随 GitHub 调整架构）
+    runs-on: macos-14
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # tauri.macos.conf.json 会被自动合并：targets=app+dmg、icon.icns、不产出更新签名。
+      # dmg 步骤（hdiutil）偶发失败，重试一次只重建 dmg。
+      - name: Build dmg
+        run: npm run tauri build || npm run tauri build -- --bundles dmg
+
+      - name: Upload dmg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$GITHUB_REF_NAME" src-tauri/target/release/bundle/dmg/*.dmg --clobber
