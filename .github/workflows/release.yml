@@ -108,6 +108,11 @@ jobs:
       - name: Build dmg
         run: npm run tauri build || npm run tauri build -- --bundles dmg
 
+      # 回归护栏：bundle 没签名/seal 不完整时，下载后的副本会被 Gatekeeper 判为
+      # 「已被修改或已损坏」且右键打开也无效（详见 tauri.macos.conf.json 里 signingIdentity）
+      - name: Verify code signature
+        run: codesign --verify --deep --strict src-tauri/target/release/bundle/macos/Wordpeek.app
+
       - name: Upload dmg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

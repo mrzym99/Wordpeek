@@ -33,7 +33,7 @@ macOS 不允许应用静默读屏/模拟按键，首次使用需在「系统设�
 
 ### ⚠️ 安装时的安全提示
 
-本项目没有代码签名证书（Windows 的 exe 未做数字签名，macOS 未签名也未公证），系统会拦截——**这是所有未签名软件的正常现象，不代表文件有问题**。
+本项目没有代码签名证书（Windows 的 exe 未做数字签名，macOS 只做了 ad-hoc 签名、没有开发者 ID 也未公证），系统会拦截——**这是所有未签名软件的正常现象，不代表文件有问题**。
 
 **macOS**：双击 dmg 里的应用可能被拦，提示「无法打开，因为 Apple 无法验证」或「已损坏，应移到废纸篓」。
 
@@ -107,7 +107,7 @@ src-tauri/src/capture.rs         # 纯函数：裁剪、缩放、PNG 编码
 src-tauri/src/ocr.rs             # OCR 实现：Windows WinRT / macOS Vision + 共用图像预处理
 src-tauri/src/translate.rs       # 翻译源（有道/必应/百度/腾讯）、配置读写
 src-tauri/tauri.conf.json        # 无边框/置顶/透明弹窗 + 独立设置窗口
-src-tauri/tauri.macos.conf.json  # macOS 打包覆盖：app+dmg、icon.icns、不产出更新签名
+src-tauri/tauri.macos.conf.json  # macOS 打包覆盖：app+dmg、icon.icns、ad-hoc 签名、不产出更新签名
 ```
 
 ## 许可证
