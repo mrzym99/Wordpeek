@@ -386,7 +386,8 @@ pub fn load_config(app: &AppHandle) -> AppConfig {
             }
         },
         None => {
-            if path.is_some() {
+            // 只在文件真的存在时才报：新建安装时文件本就不存在，不必吓人
+            if path.as_ref().is_some_and(|p| p.exists()) {
                 // 文件存在但读不了（如杀软占用）：打日志提醒，避免后面一次保存把真配置盖成默认值
                 eprintln!("[config] 配置文件存在但读取失败，本次使用默认值");
             }

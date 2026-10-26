@@ -29,6 +29,7 @@ export default function InputPage() {
     refit(); // 首次按当前内容纠正窗口高度
   }, [refit]);
 
+
   useEffect(() => {
     // 窗口每次被唤到前台都聚焦输入框，省一次点击
     const focus = () => taRef.current?.focus();

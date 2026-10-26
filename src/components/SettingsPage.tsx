@@ -2,16 +2,20 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import type { AppConfig, UpdateStatus } from "../types";
+import type { AppConfig, PermissionStatus, UpdateStatus } from "../types";
 import { saveBaidu, saveTencent, saveSources, saveSettings, saveSettingsSection } from "../lib/config";
 import HotkeyRecorder from "./HotkeyRecorder";
 
-type SettingsSection = "translate" | "hotkey" | "shot" | "about" | "other";
+type SettingsSection = "translate" | "hotkey" | "shot" | "perm" | "about" | "other";
+
+/** macOS 需要在系统设置里手动授权；Windows 无此概念，菜单也不显示 */
+const IS_MAC = navigator.userAgent.includes("Macintosh");
 
 const SECTIONS: { id: SettingsSection; label: string }[] = [
   { id: "translate", label: "翻译" },
   { id: "hotkey", label: "快捷键" },
   { id: "shot", label: "截图翻译" },
+  ...(IS_MAC ? [{ id: "perm" as const, label: "系统权限" }] : []),
   { id: "about", label: "关于" },
   { id: "other", label: "其他" },
 ];
@@ -73,6 +77,18 @@ export default function SettingsPage() {
   const [updateError, setUpdateError] = useState("");
   const [checked, setChecked] = useState(false); // 是否检查过更新（用于显示"已是最新"）
   const [copied, setCopied] = useState<CopiedKind>(""); // 复制成功反馈，1.5s 后复位
+  // macOS 系统权限（Windows 恒为已授）
+  const [perms, setPerms] = useState<PermissionStatus | null>(null);
+
+  // 读权限状态；从系统设置授权回来（窗口重新获得焦点）时再读一次
+  useEffect(() => {
+    if (!IS_MAC) return;
+    const refresh = () =>
+      invoke<PermissionStatus>("check_permissions").then(setPerms).catch(() => {});
+    refresh();
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, []);
 
   // 窗口由 Rust 按需创建为隐藏态（open_settings），内容挂好了再自己显示，避免先白屏
   useEffect(() => {
@@ -457,7 +473,9 @@ export default function SettingsPage() {
               输入翻译快捷键
               <HotkeyRecorder value={inputHotkey} onChange={setInputHotkey} />
             </label>
-            <div className="field-hint">点击输入框后按下组合键即可更换，需包含 Ctrl / Alt / Shift 之一；划词、截图、输入翻译三个快捷键不能相同</div>
+            <div className="field-hint">
+              点击输入框后按下组合键即可更换，需包含 {IS_MAC ? "Ctrl / Alt / Shift / Cmd" : "Ctrl / Alt / Shift"} 之一；划词、截图、输入翻译三个快捷键不能相同
+            </div>
           </>
         )}
 
@@ -480,6 +498,53 @@ export default function SettingsPage() {
           </>
         )}
 
+        {section === "perm" && IS_MAC && (
+          <>
+            <div className="section-heading">系统权限</div>
+            <div className="about-text">
+              <p>
+                Wordpeek 需要两项系统权限：划词翻译靠<b>辅助功能</b>模拟 Cmd+C 读取选中文本，
+                截图翻译靠<b>屏幕录制</b>截取屏幕像素。
+              </p>
+              <p>授权后请重启应用（修改权限后系统需要重启进程才生效）。</p>
+            </div>
+            <div className="update-tip">
+              <span className="tip-text">
+                辅助功能：{perms?.accessibility ? "已授权 ✓" : "未授权"}
+              </span>
+              <div className="tip-actions">
+                <button
+                  className="update-btn"
+                  onClick={() =>
+                    openUrl(
+                      "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+                    ).catch(() => {})
+                  }
+                >
+                  打开设置
+                </button>
+              </div>
+            </div>
+            <div className="update-tip">
+              <span className="tip-text">
+                屏幕录制：{perms?.screen_capture ? "已授权 ✓" : "未授权"}
+              </span>
+              <div className="tip-actions">
+                <button
+                  className="update-btn"
+                  onClick={() =>
+                    openUrl(
+                      "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+                    ).catch(() => {})
+                  }
+                >
+                  打开设置
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+
         {section === "about" && (
           <>
             <div className="section-heading">关于</div>
@@ -489,7 +554,12 @@ export default function SettingsPage() {
                 <span className="app-beta">beta</span> — 最小划词翻译
               </p>
               <p>在任意窗口选中单词，按快捷键，鼠标旁弹出翻译卡片。</p>
-              <p>设置保存于 %APPDATA%\com.wordpeek.desktop\config.json</p>
+              <p>
+                设置保存于{" "}
+                {IS_MAC
+                  ? "~/Library/Application Support/com.wordpeek.desktop/config.json"
+                  : "%APPDATA%\\com.wordpeek.desktop\\config.json"}
+              </p>
             </div>
             <div className="update-tip">
               {update?.available ? (

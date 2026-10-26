@@ -261,6 +261,37 @@ mod tests {
         assert!(attempt_plan(&three).iter().all(|(i, _)| *i < 3));
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "依赖 macOS Vision 与本地样本图；手动运行：cargo test ocr_fixture_report -- --ignored --nocapture"]
+    fn ocr_fixture_report() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            println!("样本目录不存在: {}（说明见该目录 README）", dir.display());
+            return;
+        };
+        let mut n = 0;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("png") {
+                continue;
+            }
+            let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+            let bytes = std::fs::read(&path).expect("读取样本失败");
+            match recognize(&bytes, "auto") {
+                Ok(lines) => {
+                    println!("=== {name} | {} 行 ===", lines.len());
+                    for l in &lines {
+                        println!("  [{}x{}+{}+{}] {}", l.w, l.h, l.x, l.y, l.text);
+                    }
+                }
+                Err(e) => println!("=== {name} | 失败: {e} ==="),
+            }
+            n += 1;
+        }
+        println!("共 {n} 个样本");
+    }
+
     #[cfg(windows)]
     #[test]
     #[ignore = "依赖系统 OCR 语言包与本地样本图；手动运行：cargo test ocr_fixture_report -- --ignored --nocapture"]
@@ -839,7 +870,74 @@ fn run_engine(
     Ok(lines)
 }
 
-#[cfg(not(windows))]
+/// macOS Vision（VNRecognizeTextRequest）：PNG → 文本行（行坐标保留，本期不使用）。
+/// Vision 对小字识别好，预处理免掉：原图直接送识别（RAW 直传）
+#[cfg(target_os = "macos")]
+pub fn recognize(png: &[u8], lang: &str) -> Result<Vec<OcrLine>, String> {
+    use objc2::rc::Retained;
+    use objc2::AnyThread;
+    use objc2_foundation::{NSData, NSDictionary, NSArray, NSString};
+    use objc2_vision::{
+        VNImageRequestHandler, VNRecognizeTextRequest, VNRequest, VNRequestTextRecognitionLevel,
+    };
+
+    let (w, h) = {
+        let img = image::load_from_memory(png).map_err(|e| format!("PNG 解码失败: {e}"))?;
+        (img.width(), img.height())
+    };
+    if w == 0 || h == 0 {
+        return Err("图像尺寸非法".into());
+    }
+
+    let data = NSData::with_bytes(png);
+    let handler = VNImageRequestHandler::initWithData_options(
+        VNImageRequestHandler::alloc(),
+        &data,
+        &NSDictionary::new(),
+    );
+    let request = unsafe { VNRecognizeTextRequest::init(VNRecognizeTextRequest::alloc()) };
+    request.setRecognitionLevel(VNRequestTextRecognitionLevel::Accurate);
+    request.setUsesLanguageCorrection(true);
+    // 语言提示：zh 简/繁都提示；en 固定 en-US；auto 不设（引擎自动）
+    let langs: Vec<Retained<NSString>> = match lang {
+        "zh" => vec![NSString::from_str("zh-Hans"), NSString::from_str("zh-Hant")],
+        "en" => vec![NSString::from_str("en-US")],
+        _ => vec![],
+    };
+    if !langs.is_empty() {
+        let refs: Vec<&NSString> = langs.iter().map(|s| &**s).collect();
+        request.setRecognitionLanguages(&NSArray::from_slice(&refs));
+    }
+
+    let reqs = NSArray::from_slice(&[&*request as &VNRequest]);
+    handler
+        .performRequests_error(&reqs)
+        .map_err(|e| format!("OCR 识别失败: {e}"))?;
+
+    let Some(results) = request.results() else {
+        return Err("OCR 未返回结果".into());
+    };
+    let n = results.count();
+    let mut lines = Vec::with_capacity(n);
+    for i in 0..n {
+        let obs = results.objectAtIndex(i);
+        let cands = obs.topCandidates(1);
+        let Some(t) = cands.firstObject() else { continue };
+        // boundingBox 归一化（左下原点）→ 裁剪图物理像素（左上原点）
+        let bb = unsafe { obs.boundingBox() };
+        lines.push(OcrLine {
+            text: t.string().to_string(),
+            x: (bb.origin.x * w as f64).round() as i32,
+            y: ((1.0 - bb.origin.y - bb.size.height) * h as f64).round() as i32,
+            w: (bb.size.width * w as f64).round() as i32,
+            h: (bb.size.height * h as f64).round() as i32,
+        });
+    }
+    println!("[ocr] macos vision: {} 行", lines.len());
+    Ok(lines)
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn recognize(_png: &[u8], _lang: &str) -> Result<Vec<OcrLine>, String> {
-    Err("截图翻译仅支持 Windows".into())
+    Err("截图翻译仅支持 Windows 和 macOS".into())
 }

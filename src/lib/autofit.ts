@@ -48,7 +48,7 @@ export function useAutoFitWindow(
     const send = (h: number) => {
       cur = h;
       suppressUntil = Date.now() + RESIZE_SUPPRESS;
-      invoke("fit_window", { label, height: h })
+      invoke("fit_window", { label, height: h, viewport: window.innerHeight })
         .then((applied) => {
           fitFailed = false;
           // 请求高 > 实际生效高 = Rust 钳到屏幕上限了，内容真装不下，
@@ -89,6 +89,11 @@ export function useAutoFitWindow(
     // 不用 requestAnimationFrame：窗口显示前是隐藏状态，rAF 会被节流甚至不触发
     const ro = new ResizeObserver(() => (canApply() ? apply() : schedule()));
     ro.observe(body);
+    // 盒子长到 max-height 封顶后（.card-body 就是这种布局），内容再多盒子也不再变大，
+    // ResizeObserver 不会响 —— 译文/多源结果进来时高度就永远不更新。
+    // 直接盯 DOM 变化：节点增删就是重排的唯一信号
+    const mo = new MutationObserver(() => (canApply() ? apply() : schedule()));
+    mo.observe(body, { childList: true, subtree: true, characterData: true });
     apply(); // 首次测量（ResizeObserver 只保证后续变化）
 
     // 用户拖拽窗口边缘：暂停自动适配，拖完 300ms 后补一次。
@@ -120,6 +125,7 @@ export function useAutoFitWindow(
     return () => {
       disposed = true;
       ro.disconnect();
+      mo.disconnect();
       unlistenResize?.();
       window.removeEventListener("focus", refit);
       if (trailing !== undefined) clearTimeout(trailing);

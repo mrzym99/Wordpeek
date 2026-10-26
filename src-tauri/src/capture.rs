@@ -1,5 +1,4 @@
-#![allow(dead_code)] // Task 5b 接入截图流程后移除
-//! GDI 抓屏：虚拟屏幕截取、裁剪、PNG 编码（抓屏仅 Windows，其余纯函数跨平台）
+//! 抓屏纯函数：裁剪、PNG 编码、通道转换（平台抓屏实现在 platform/ 模块）
 
 /// 选区（物理像素，相对虚拟屏幕原点）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,112 +60,17 @@ pub fn encode_png(rgba: &[u8], width: i32, height: i32) -> Result<Vec<u8>, Strin
     Ok(out)
 }
 
-/// 抓取整个虚拟屏幕（所有显示器覆盖的范围），仅 Windows
-#[cfg(windows)]
-pub fn capture_virtual_screen() -> Result<CapturedScreen, String> {
-    use windows::Win32::Graphics::Gdi::{
-        BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC,
-        GetDIBits, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS, SRCCOPY,
-    };
-    use windows::Win32::UI::WindowsAndMessaging::{
-        GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
-        SM_YVIRTUALSCREEN,
-    };
-
-    unsafe {
-        let ox = GetSystemMetrics(SM_XVIRTUALSCREEN);
-        let oy = GetSystemMetrics(SM_YVIRTUALSCREEN);
-        let w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
-        let h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
-        if w <= 0 || h <= 0 {
-            return Err("获取虚拟屏幕尺寸失败".into());
-        }
-
-        let screen_dc = GetDC(None);
-        let mem_dc = CreateCompatibleDC(screen_dc);
-        let bitmap = CreateCompatibleBitmap(screen_dc, w, h);
-        let old = SelectObject(mem_dc, bitmap);
-
-        let blit = BitBlt(mem_dc, 0, 0, w, h, screen_dc, ox, oy, SRCCOPY);
-
-        // MSDN：GetDIBits 调用时位图不能被选入任何 DC —— 必须先取下位图再读像素
-        SelectObject(mem_dc, old);
-
-        // 负高度 = 自上而下行序；32bpp BI_RGB 输出为 BGRA。
-        // biSize 必须显式设置：windows crate 的 Default() 是全零，缺了它 GetDIBits 直接失败
-        let mut bmi = BITMAPINFO::default();
-        bmi.bmiHeader = BITMAPINFOHEADER {
-            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-            biWidth: w,
-            biHeight: -h,
-            biPlanes: 1,
-            biBitCount: 32,
-            biCompression: 0, // BI_RGB
-            ..Default::default()
-        };
-        let mut rgba = vec![0u8; (w as usize) * (h as usize) * 4];
-        let lines = GetDIBits(
-            screen_dc,
-            bitmap,
-            0,
-            h as u32,
-            Some(rgba.as_mut_ptr() as *mut _),
-            &mut bmi,
-            DIB_RGB_COLORS,
-        );
-
-        let _ = DeleteObject(bitmap);
-        let _ = DeleteDC(mem_dc);
-        ReleaseDC(None, screen_dc);
-
-        if let Err(e) = blit {
-            return Err(format!("BitBlt 抓屏失败: {e}"));
-        }
-        if lines == 0 {
-            return Err("GetDIBits 读取像素失败".into());
-        }
-        bgra_to_rgba(&mut rgba);
-        Ok(CapturedScreen { width: w, height: h, origin_x: ox, origin_y: oy, rgba })
-    }
-}
-
-#[cfg(not(windows))]
-pub fn capture_virtual_screen() -> Result<CapturedScreen, String> {
-    Err("截图翻译仅支持 Windows".into())
-}
-
-/// 虚拟屏幕几何 (原点 x, 原点 y, 宽, 高)，物理像素。
-/// 只需要尺寸的场景用它：整屏抓像素会白 alloc w*h*4（4096×1440 ≈ 22MB）
-#[cfg(windows)]
-pub fn virtual_screen_bounds() -> Option<(i32, i32, i32, i32)> {
-    use windows::Win32::UI::WindowsAndMessaging::{
-        GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
-        SM_YVIRTUALSCREEN,
-    };
-    unsafe {
-        let (ox, oy) = (
-            GetSystemMetrics(SM_XVIRTUALSCREEN),
-            GetSystemMetrics(SM_YVIRTUALSCREEN),
-        );
-        let (w, h) = (
-            GetSystemMetrics(SM_CXVIRTUALSCREEN),
-            GetSystemMetrics(SM_CYVIRTUALSCREEN),
-        );
-        (w > 0 && h > 0).then_some((ox, oy, w, h))
-    }
-}
-
-#[cfg(not(windows))]
-pub fn virtual_screen_bounds() -> Option<(i32, i32, i32, i32)> {
-    None
-}
-
-/// BGRA（GDI 输出）→ RGBA，alpha 置 255
-fn bgra_to_rgba(buf: &mut [u8]) {
+/// BGRA（GDI/Vision 输出）→ RGBA，alpha 置 255
+pub(crate) fn bgra_to_rgba(buf: &mut [u8]) {
     for px in buf.chunks_exact_mut(4) {
         px.swap(0, 2);
         px[3] = 255;
     }
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+pub fn capture_virtual_screen() -> Result<CapturedScreen, String> {
+    Err("截图翻译仅支持 Windows 和 macOS".into())
 }
 
 #[cfg(test)]
@@ -213,12 +117,20 @@ mod tests {
         assert_eq!(img.to_rgba8().into_raw(), rgba);
     }
 
+    #[test]
+    fn bgra_to_rgba_swaps_channels() {
+        let mut buf = vec![1, 2, 3, 255, 4, 5, 6, 0];
+        bgra_to_rgba(&mut buf);
+        assert_eq!(buf, vec![3, 2, 1, 255, 6, 5, 4, 255]);
+    }
+
     /// 手动冒烟：真实抓屏 → PNG → OCR（需系统装 OCR 语言包）。
     /// 运行：cargo test smoke_real_pipeline -- --ignored --nocapture
+    #[cfg(any(windows, target_os = "macos"))]
     #[test]
     #[ignore]
     fn smoke_real_pipeline() {
-        let screen = capture_virtual_screen().expect("GDI 抓屏应成功");
+        let screen = crate::platform::capture_virtual_screen().expect("抓屏应成功");
         println!(
             "虚拟屏: {}x{} @({}, {})，字节长度 {}",
             screen.width, screen.height, screen.origin_x, screen.origin_y, screen.rgba.len()

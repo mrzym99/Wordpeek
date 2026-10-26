@@ -75,6 +75,12 @@ export interface ShotResult {
   work: { x: number; y: number; width: number; height: number };
 }
 
+/** 系统权限状态（macOS）：Windows 恒为 true */
+export interface PermissionStatus {
+  accessibility: boolean;
+  screen_capture: boolean;
+}
+
 /** 逐源对比结果（translate_all 命令） */
 export interface SourceResult {
   source: string;

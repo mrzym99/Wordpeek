@@ -2,7 +2,7 @@
 
 在任意窗口选中单词，按下快捷键，鼠标旁弹出翻译卡片；点击窗外自动隐藏。
 
-![](https://img.shields.io/badge/platform-Windows-blue) ![](https://img.shields.io/badge/license-MIT-green)
+![](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-blue) ![](https://img.shields.io/badge/license-MIT-green)
 
 ## 功能
 
@@ -11,12 +11,24 @@
 - **丰富的词典卡片**：音标（美/英）、词性、多释义、词形变化、同义词（可点击跳查）、考试标签
 - **翻译策略**：默认源内置（单词→有道词典，句子→必应翻译，免 Key 开箱即用），可在设置里关闭（不能全关，至少保留一个源）；**额外源**：腾讯翻译（腾讯云密钥）、百度翻译（开放平台密钥）——都需先在「源配置」（左侧菜单切换源）填好密钥才能勾选，删密钥自动取消勾选
 - **多源对比**：有道/必应视为同一个「默认源」（单词/句子各司其职），对比区不单独出现；额外源（如百度）以浅色背景分区展示在卡片末尾或输入窗口「默认翻译」行之后，逐行可复制
-- **截图翻译**：`Ctrl+Alt+S` 框选屏幕区域，系统 OCR 本地离线识别（免 Key）后自动翻译，详见[截图翻译](#截图翻译)
-- **可配置**：独立设置窗口——额外翻译源勾选、API 密钥、三个快捷键（支持录制组合键）
+- **截图翻译**：`Ctrl+Alt+S` 框选屏幕区域，系统 OCR 本地离线识别（免 Key）后自动翻译，详见[截图翻译](#截图翻译)- **可配置**：独立设置窗口——额外翻译源勾选、API 密钥、三个快捷键（支持录制组合键）
 
 ## 下载安装
 
-前往 [Releases](../../releases) 下载 `Wordpeek_x.x.x_x64-setup.exe` 安装，或下载免安装便携版 `Wordpeek_x.x.x_x64-portable.exe` 直接运行。
+**Windows**：前往 [Releases](../../releases) 下载 `Wordpeek_x.x.x_x64-setup.exe` 安装，或下载免安装便携版 `Wordpeek_x.x.x_x64-portable.exe` 直接运行。
+
+**macOS**（Apple Silicon，macOS 11+）：暂未提供预编译包，请[从源码构建](#从源码构建)，产物为 `src-tauri/target/release/bundle/macos/Wordpeek.app`。
+
+### macOS 权限（首次运行必读）
+
+macOS 不允许应用静默读屏/模拟按键，首次使用需在「系统设置 → 隐私与安全性」授权两项：
+
+| 权限 | 用途 | 位置 |
+|---|---|---|
+| 辅助功能 | 模拟 Cmd+C 读取选中文本 | 隐私与安全性 → 辅助功能 |
+| 屏幕录制 | 截图翻译抓取屏幕像素 | 隐私与安全性 → 屏幕录制 |
+
+设置 → 系统权限 里有当前状态和一键跳转按钮；**授权后需退出并重启应用**（系统只对新进程生效）。
 
 ### ⚠️ 安装时的安全提示
 
@@ -34,13 +46,17 @@
 > Windows SmartScreen 的拦截与文件是否真的危险无关，只与"是否有人举报过该文件、下载量是否足够"有关。小众软件几乎必然被拦截，代码签名证书价格昂贵（每年数千元），个人开源项目通常无力承担。
 
 ## 从源码构建
+前置：Node.js 18+、Rust
 
-前置：Node.js 18+、Rust（MSVC 工具链）+ [Visual Studio Build Tools](https://visualstudio.microsoft.com/zh-hans/visual-cpp-build-tools/)
+- Windows：MSVC 工具链 + [Visual Studio Build Tools](https://visualstudio.microsoft.com/zh-hans/visual-cpp-build-tools/)
+- macOS：Xcode Command Line Tools（`xcode-select --install`），无需额外依赖（OCR 走系统 Vision，抓屏走 CoreGraphics）
 
 ```bash
 npm install
 npm run tauri dev     # 开发模式
-npm run tauri build   # 打包，产物在 src-tauri/target/release/bundle/nsis/
+npm run tauri build   # 打包
+#   Windows → src-tauri/target/release/bundle/nsis/
+#   macOS   → src-tauri/target/release/bundle/macos/Wordpeek.app（+ .dmg）
 ```
 
 ## 使用说明
@@ -59,13 +75,13 @@ npm run tauri build   # 打包，产物在 src-tauri/target/release/bundle/nsis/
   - 「百度翻译」：填入 [百度翻译开放平台](https://fanyi-api.baidu.com/) 的 APP ID / 密钥
   - 「腾讯翻译」：填入 [腾讯云访问管理 API 密钥](https://console.cloud.tencent.com/cam/capi) 的 SecretId / SecretKey（机器翻译每月有免费额度）
   - 填好后在「翻译源」里勾选，即出现在划词卡片的「对比各源」里
-- 配置保存于 `%APPDATA%\com.wordpeek.desktop\config.json`（密钥为明文，请勿外传此文件）
+- 配置保存于 `%APPDATA%\com.wordpeek.desktop\config.json`（macOS 为 `~/Library/Application Support/com.wordpeek.desktop/config.json`，密钥为明文，请勿外传此文件）
 
 ## 原理
 
 1. Rust 通过 `global-shortcut` 插件注册全局快捷键
-2. 触发时：备份剪贴板 → 写入哨兵值 → 模拟 Ctrl+C → 读取剪贴板 → 还原剪贴板
-3. `GetCursorPos` 取鼠标坐标，emit 事件给前端
+2. 触发时：备份剪贴板 → 写入哨兵值 → 模拟 Ctrl+C（macOS 为 Cmd+C）→ 读取剪贴板 → 还原剪贴板
+3. `GetCursorPos` 取鼠标坐标（macOS 为 `NSEvent.mouseLocation`），emit 事件给前端
 4. React 收到事件后：移动弹窗到鼠标旁 → show → Rust 端请求翻译接口 → 渲染词典卡片
 
 （翻译请求全部由 Rust 端发出，避免 webview CORS 限制，API 密钥不进前端。）
@@ -77,11 +93,15 @@ src/components/Popup.tsx         # 划词/输入弹窗 UI + 事件监听
 src/components/InputPage.tsx     # 输入翻译窗口（?page=input）
 src/components/ScreenshotPage.tsx  # 截图遮罩框选（?page=screenshot）
 src/components/SettingsPage.tsx  # 设置窗口
-src-tauri/src/main.rs            # 全局快捷键、模拟 Ctrl+C、截图会话、托盘
-src-tauri/src/capture.rs         # GDI 抓屏、裁剪、PNG 编码
-src-tauri/src/ocr.rs             # Windows OCR + 图像预处理择优
+src-tauri/src/main.rs            # 全局快捷键、截图会话、托盘
+src-tauri/src/platform/          # 平台差异：抓屏/鼠标坐标/剪贴板注入/权限
+src-tauri/src/platform/windows.rs  # GDI BitBlt 抓屏、GetCursorPos、权限恒为已授
+src-tauri/src/platform/macos.rs    # CoreGraphics 抓屏、NSEvent、AXIsProcessTrusted/CG 权限
+src-tauri/src/capture.rs         # 纯函数：裁剪、缩放、PNG 编码
+src-tauri/src/ocr.rs             # OCR 实现：Windows WinRT / macOS Vision + 共用图像预处理
 src-tauri/src/translate.rs       # 翻译源（有道/必应/百度/腾讯）、配置读写
 src-tauri/tauri.conf.json        # 无边框/置顶/透明弹窗 + 独立设置窗口
+src-tauri/tauri.macos.conf.json  # macOS 打包覆盖：app+dmg、icon.icns、不产出更新签名
 ```
 
 ## 许可证
@@ -97,14 +117,14 @@ src-tauri/tauri.conf.json        # 无边框/置顶/透明弹窗 + 独立设置�
 按 `Ctrl+Alt+S`(可在设置中修改)框选屏幕任意区域:
 
 1. 全屏遮罩出现并冻结当前画面，拖拽框选，ESC 或点击窗外取消
-2. Windows 系统 OCR 本地识别文字(免 Key、离线、数据不出本机)
+2. 系统 OCR 本地识别文字(免 Key、离线、数据不出本机)：Windows 为 WinRT 引擎，macOS 为 Vision 框架
 3. 识别结果自动翻译，弹出双语卡片，支持一键复制原文/译文
 
-**OCR 语言**:设置 → 截图翻译 → 识别语言(跟随系统语言 / 中文优先 / 英文优先)。语言包随 Windows 安装(设置 → 时间和语言 → 语言和区域)。
+**OCR 语言**:设置 → 截图翻译 → 识别语言(跟随系统语言 / 中文优先 / 英文优先)。Windows 语言包随系统安装(设置 → 时间和语言 → 语言和区域)；macOS 语言由 Vision 内在支持，无需下载。
 
 **注意**:单词与整句均免 Key(有道词条 + 必应整句);百度翻译密钥为可选项。
 
-**局限**：仅 Windows；混合 DPI 多屏场景尽力而为。OCR 由 Windows 系统引擎完成（离线、免 Key），已做小图放大、深底反色、分位拉伸与局部自适应二值化、多语言引擎按质量打分择优；但艺术字体、手写体、严重模糊或强烈反光的图片仍可能识别不准。
+**局限**：仅支持 Windows 与 macOS；混合 DPI 多屏场景尽力而为（macOS 按每屏 backingScaleFactor 换算物理像素）。OCR 由系统引擎完成（离线、免 Key），已做小图放大、深底反色、分位拉伸与局部自适应二值化、Windows 下多语言引擎按质量打分择优；但艺术字体、手写体、严重模糊或强烈反光的图片仍可能识别不准。
 
 | 功能 | 默认快捷键 |
 |---|---|

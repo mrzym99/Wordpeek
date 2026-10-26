@@ -7,7 +7,7 @@ edition = "2021"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", features = ["macos-private-api", "tray-icon"] }
 tauri-plugin-global-shortcut = "2.2.1"
 tauri-plugin-updater = "2"      # 自动更新：检查/下载/验签/静默安装
 serde = { version = "1", features = ["derive"] }
@@ -22,12 +22,26 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 base64 = "0.22"
 parking_lot = "0.12"
 tauri-plugin-opener = "2.7.1"
+tauri-plugin-single-instance = "2"   # 禁止多开：第二次启动只唤醒已有实例
+tauri-plugin-dialog = "2"   # 权限缺失时弹原生对话框（Rust 侧调用，前端不需要权限）
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
     "Win32_UI_WindowsAndMessaging", "Win32_Foundation", "Win32_Graphics_Gdi",
     "Foundation", "Foundation_Collections", "Globalization", "Graphics_Imaging", "Media_Ocr", "Storage_Streams",
 ] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-graphics = "0.25"   # CGDisplay 抓屏 + CGImage 像素读取
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = [
+    "NSGeometry", "NSArray", "NSString", "NSData", "NSDictionary",
+] }
+objc2-app-kit = { version = "0.3", features = ["NSScreen"] }   # NSScreen visibleFrame 工作区
+objc2-vision = { version = "0.3", features = [
+    "VNRequest", "VNRequestHandler", "VNRecognizeTextRequest",
+    "VNObservation", "VNTypes",
+] }   # 本地离线 OCR（免 Key）
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros"] }

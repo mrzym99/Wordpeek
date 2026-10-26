@@ -1,18 +1,17 @@
-# OCR 样本（人工对照用，不入库样本图）
+# OCR 样本（人工对照用）
 
 把待测 PNG 放在本目录（`src-tauri/tests/fixtures/*.png`），然后：
 
 ```bash
-# 改造后（含放大/反色/拉伸/二值化/多引擎择优）
 cd src-tauri && cargo test ocr_fixture_report -- --ignored --nocapture
-
-# 对照：跳过全部预处理（等价改造前的原始图直送）
-WORDPEEK_OCR_RAW=1 cargo test ocr_fixture_report -- --ignored --nocapture
 ```
 
-输出每个样本的 `engine / mode / score / attempts` 与识别文本，逐样本比对。
+- macOS：输出每行文本与 `[宽x高+左+上]` 物理像素坐标（图片尺寸为 PNG 真实像素）
+- Windows：输出每个样本的 `engine / mode / score / attempts` 与识别文本，逐样本比对；加 `WORDPEEK_OCR_RAW=1` 可跳过全部预处理做对照
 
-## 建议的 4 类样本（每类 1~2 张，用 Win+Shift+S 截图另存）
+> 只提交一张 `ocr_hello.png` 作为冒烟样本（macOS Vision 首次调用会加载模型，可能耗十几秒，第二次起 ~0.2s）。其余真实截图不入库。
+
+## 旧版 Windows 样本建议（未入库）
 
 | 类别 | 取材建议 | 关注点 |
 |---|---|---|

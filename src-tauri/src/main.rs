@@ -1,21 +1,20 @@
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 use arboard::Clipboard;
-use enigo::{Direction, Enigo, Key, Settings, Keyboard};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
-#[cfg(windows)]
-use windows::Win32::Foundation::POINT;
-#[cfg(windows)]
-use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
-
 mod capture;
 mod ocr;
+#[cfg(any(windows, target_os = "macos"))]
+mod platform;
 mod translate;
+
+// 平台相关实现（光标/工作区/复制注入/抓屏/权限）全在 platform/ 模块：
+// Windows → platform/windows.rs，macOS → platform/macos.rs
 
 #[derive(serde::Serialize, Clone)]
 struct Selection {
@@ -24,9 +23,8 @@ struct Selection {
     y: i32,
 }
 
-/// 模拟 Ctrl+C 抓取当前选中文本，并把原剪贴板内容还原
-fn grab_selection() -> Option<String> {
-    let mut enigo = Enigo::new(&Settings::default()).ok()?;
+/// 模拟复制键抓取当前选中文本，并把原剪贴板内容还原
+fn grab_selection(app: &AppHandle) -> Option<String> {
     let mut clipboard = Clipboard::new().ok()?;
 
     // 备份原剪贴板：文本优先；读不到文本（可能是图片/文件）就备份图片，
@@ -43,23 +41,24 @@ fn grab_selection() -> Option<String> {
     const SENTINEL: &str = "\u{200b}__pot-mini-sentinel__\u{200b}";
     clipboard.set_text(SENTINEL).ok()?;
 
-    // 快捷键是 Ctrl+Alt+T，触发时物理 Alt 键仍被按着，
-    // 直接模拟 Ctrl+C 会被应用当成 Ctrl+Alt+C 而拒绝复制。
-    // 先注入一个 Alt 松开事件，让目标应用只看到 Ctrl+C。
-    enigo.key(Key::Alt, Direction::Release).ok()?;
-    enigo.key(Key::Control, Direction::Press).ok()?;
-    enigo.key(Key::C, Direction::Click).ok()?;
-    enigo.key(Key::Control, Direction::Release).ok()?;
+    // 松开物理按着的修饰键再注入复制键（Windows: Ctrl+C；macOS: Cmd+C）
+    let injected = crate::platform::inject_copy(app);
+    let ax = crate::platform::accessibility_allowed();
+    if !injected || !ax {
+        println!("[grab] inject_copy={injected}, accessibility={ax}");
+    }
 
     // 目标应用写入选中文本有快有慢（PDF、大文档可能超过百毫秒），
     // 固定 sleep 会在慢应用上误判“没选中内容”，且恢复时可能被慢应用
     // 后写入的内容覆盖；轮询到内容不再是哨兵值为止，最多 ~600ms。
     let mut text = SENTINEL.to_string();
-    for _ in 0..30 {
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        text = clipboard.get_text().unwrap_or_default();
-        if text != SENTINEL {
-            break;
+    if injected {
+        for _ in 0..30 {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            text = clipboard.get_text().unwrap_or_default();
+            if text != SENTINEL {
+                break;
+            }
         }
     }
 
@@ -70,54 +69,18 @@ fn grab_selection() -> Option<String> {
         let _ = clipboard.set_image(img);
     }
 
-    // 剪贴板还是哨兵值说明 Ctrl+C 没有生效（目标应用没有可复制的内容）
+    // 剪贴板还是哨兵值说明复制没有生效（按键注入失败或目标应用没有可复制的内容）
     if text == SENTINEL {
+        println!("[grab] clipboard 未被替换：目标应用没响应复制键");
         return None;
     }
     let trimmed = text.trim();
     if trimmed.is_empty() {
+        println!("[grab] clipboard 被清空：选中内容为空");
         None
     } else {
         Some(trimmed.to_string())
     }
-}
-
-#[cfg(windows)]
-fn cursor_pos() -> (i32, i32) {
-    unsafe {
-        let mut p = POINT { x: 0, y: 0 };
-        let _ = GetCursorPos(&mut p);
-        (p.x, p.y)
-    }
-}
-
-#[cfg(not(windows))]
-fn cursor_pos() -> (i32, i32) {
-    (100, 100)
-}
-
-/// 光标所在显示器的工作区（物理像素，排除任务栏等应用栏）。
-/// 拿不到信息时返回 (0,0,0,0)，前端会退回用虚拟屏边界錨制。
-#[cfg(windows)]
-fn work_area_at(x: i32, y: i32) -> (i32, i32, i32, i32) {
-    use windows::Win32::Graphics::Gdi::{
-        GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST,
-    };
-    let mut info = MONITORINFO {
-        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
-        ..Default::default()
-    };
-    let hmon = unsafe { MonitorFromPoint(POINT { x, y }, MONITOR_DEFAULTTONEAREST) };
-    if unsafe { GetMonitorInfoW(hmon, &mut info) }.as_bool() {
-        let rc = info.rcWork;
-        return (rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top);
-    }
-    (0, 0, 0, 0)
-}
-
-#[cfg(not(windows))]
-fn work_area_at(_x: i32, _y: i32) -> (i32, i32, i32, i32) {
-    (0, 0, 0, 0)
 }
 
 /// 内容高度 → 窗口客户区（inner）逻辑高度：下限 60px，上限为工作区（逻辑像素）扣掉标题栏
@@ -184,13 +147,30 @@ fn clamp_to_screen(app: &AppHandle, label: &str, x: i32, y: i32) -> (i32, i32) {
     (cx, cy)
 }
 
+/// 窗口高与 webview 视口高的差值（标题栏高度），按窗口名缓存一次
+fn viewport_inset(label: &str, win_h: f64, viewport_h: f64) -> f64 {
+    static INSETS: std::sync::OnceLock<parking_lot::Mutex<std::collections::HashMap<String, f64>>> =
+        std::sync::OnceLock::new();
+    let mut cache = INSETS.get_or_init(Default::default).lock();
+    if let Some(v) = cache.get(label) {
+        return *v;
+    }
+    // 窗口还没显示时视口高不可信，先不缓存
+    if viewport_h < 50.0 {
+        return 0.0;
+    }
+    let inset = (win_h - viewport_h).clamp(0.0, 120.0);
+    cache.insert(label.to_string(), inset);
+    inset
+}
+
 /// 前端量好卡片内容高度后调用：把窗口调整到刚好包住卡片，并重新钳制位置。
 /// 只改高度——宽度保持用户当前宽度（长文本可手动拉宽）。
 /// 位置钳制用「自己算出的新外框尺寸」，不依赖 set_size 之后立刻回读（那是异步消息）。
 /// 返回实际生效的窗口高度（可能被屏幕上限钳小）：前端用它判断「内容真的
 /// 装不下了」（is-capped），没顶到上限前一律不出滚动条，避免高度动画中闪条
 #[tauri::command]
-fn fit_window(app: AppHandle, label: String, height: f64) -> Result<f64, String> {
+fn fit_window(app: AppHandle, label: String, height: f64, viewport: Option<f64>) -> Result<f64, String> {
     let win = app
         .get_webview_window(&label)
         .ok_or_else(|| format!("窗口不存在: {label}"))?;
@@ -203,10 +183,15 @@ fn fit_window(app: AppHandle, label: String, height: f64) -> Result<f64, String>
     let chrome_h = outer.height.saturating_sub(inner.height) as f64 / scale;
     // 高度上限用窗口所在屏的工作区（排除任务栏）；work_area_at 给的是物理像素，
     // 内容高度是逻辑像素，先除以缩放再钳制（多屏不同 DPI 时上限才不偏大）
-    let (_, _, _, work_h) = work_area_at(pos.x + 8, pos.y + 8);
+    let (_, _, _, work_h) = crate::platform::work_area_at(pos.x + 8, pos.y + 8);
     let inner_w = inner.width as f64 / scale;
+    // 带标题栏/边框的窗口（输入翻译窗）里，窗口高 ≠ webview 视口高：前端拿到的 100vh 少一条标题栏，
+    // 直接按内容 set_size 会被吃掉 32px。无边框弹窗（划词）差值为 0，行为不变。
+    // 差值只测一次并缓存：前端报上来的视口高可能落后于刚 set_size 的窗口，现算会把差值放大，
+    // 窗口越长越离谱（实测一次长出 200px 的空白）
+    let chrome_extra = viewport.map(|vh| viewport_inset(&label, inner.height as f64 / scale, vh)).unwrap_or(0.0);
     let inner_h = fit_height(
-        height,
+        height + chrome_extra,
         if work_h > 0 { work_h as f64 / scale } else { 0.0 },
         chrome_h,
     );
@@ -222,12 +207,10 @@ fn fit_window(app: AppHandle, label: String, height: f64) -> Result<f64, String>
     };
     win.set_position(tauri::PhysicalPosition::new(nx, ny))
         .map_err(|e| e.to_string())?;
-    println!("[fit] {label} content {height} -> inner {inner_w}x{inner_h}, pos ({nx}, {ny})");
     Ok(inner_h)
 }
 
-/// 显示独立的设置窗口（弹窗齿轮按钮 / 托盘菜单共用）。
-/// 不常驻：没建过就按需创建为隐藏态，内容就绪后由前端自己 show；
+/// 显示独立的设置窗口（弹窗齿轮按钮 / 托盘菜单共用）。/// 不常驻：没建过就按需创建为隐藏态，内容就绪后由前端自己 show；
 /// 点 ✕ 即销毁，回收它那个常驻 WebView2 renderer；一级菜单选择已存配置，
 /// 重开时设置页自动回到上次停留的菜单
 #[tauri::command]
@@ -311,6 +294,10 @@ fn status_of(app: &AppHandle, update: Option<&Update>) -> UpdateStatus {
 
 /// 检查更新并把结果缓存到应用状态
 fn check_update(app: &AppHandle) -> Result<UpdateStatus, String> {
+    // macOS 端还没有签名/公证的产物，latest.json 里也没有 darwin 平台，检查只会报错
+    if cfg!(target_os = "macos") {
+        return Err("macOS 版暂不提供自动更新，请到 GitHub Releases 手动下载".into());
+    }
     let update = tauri::async_runtime::block_on(
         app.updater()
             .map_err(|e| e.to_string())?
@@ -408,22 +395,48 @@ fn parse_code(s: &str) -> Option<Code> {
 
 /// 快捷键触发：抓取选中文本并通知弹窗
 fn handle_hotkey_trigger(app: &AppHandle) {
-    println!("[shortcut] triggered");
-    // 抓取选中文本需要模拟按键并等待剪贴板，放到独立线程，
+    println!("[shortcut] triggered");    // 抓取选中文本需要模拟按键并等待剪贴板，放到独立线程，
     // 避免阻塞主线程；且此时用户可能已松开按键。
     let app = app.clone();
     std::thread::spawn(move || {
-        match grab_selection() {
+        match grab_selection(&app) {
             Some(text) => {
-                let (cx, cy) = cursor_pos();
+                let (cx, cy) = crate::platform::cursor_pos();
                 println!("[grab] got text: {:?} at ({}, {})", text, cx, cy);
                 // 在 Rust 端钳制到屏幕内后再发事件，前端直接使用
                 let (x, y) = clamp_to_screen(&app, "main", cx + 12, cy + 16);
                 let _ = app.emit("selection", Selection { text, x, y });
             }
-            None => println!("[grab] no text captured"),
+            None => {
+                println!("[grab] no text captured");                // macOS 上抓词失败最常见原因是辅助功能权限未授予，
+                // 直接打开设置页引导授权（Windows/已授权时恒 true，静默）
+                if !crate::platform::accessibility_allowed() {
+                    open_settings(app.clone());
+                }
+            }
         }
     });
+}
+
+/// 权限缺失时弹原生对话框，一键跳到对应系统设置面板。
+/// 只在后台线程调用：blocking_show 会阻塞当前线程，主线程调用会卡住事件循环
+fn alert_permission(app: &AppHandle, message: &str, settings_url: &str) {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+
+    let jump = app
+        .dialog()
+        .message(message)
+        .title("Wordpeek 需要系统权限")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "打开系统设置".to_string(),
+            "知道了".to_string(),
+        ))
+        .blocking_show();
+    if jump {
+        use tauri_plugin_opener::OpenerExt;
+        let _ = app.opener().open_url(settings_url, None::<&str>);
+    }
 }
 
 /// 截图会话状态：触发时保存全屏快照与设置窗口可见性，finish 时再裁剪
@@ -441,7 +454,17 @@ fn handle_screenshot_trigger(app: &AppHandle) {
     println!("[screenshot] triggered");
     let app = app.clone();
     std::thread::spawn(move || {
-        let screen = match crate::capture::capture_virtual_screen() {
+        // 没权限时抓屏只会拿到桌面壁纸，必须明确告诉用户去哪开，而不是静默失败。
+        // 对话框带一个直达按钮：点一下就到「屏幕录制」面板，回来自动生效
+        if !crate::platform::screen_capture_allowed() {
+            alert_permission(
+                &app,
+                "截图翻译需要「屏幕录制」权限。\n\n系统设置 → 隐私与安全性 → 屏幕录制，勾选 Wordpeek 后重启应用。",
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+            );
+            return;
+        }
+        let screen = match crate::platform::capture_virtual_screen() {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("[screenshot] 抓屏失败: {e}");
@@ -492,6 +515,7 @@ fn handle_screenshot_trigger(app: &AppHandle) {
         );
         let _ = win.show();
         let _ = win.set_focus();
+        crate::platform::prepare_overlay(&win);
     });
 }
 
@@ -505,9 +529,9 @@ fn screenshot_finish(app: AppHandle, x: i32, y: i32, w: i32, h: i32) -> Result<(
     let win = app.get_webview_window("screenshot").ok_or("截图窗口不存在")?;
     let _ = win.hide();
     // 松手瞬间的光标位置（物理像素），结果卡片弹到鼠标旁边；OCR 完再取会被用户摌走
-    let (mx, my) = cursor_pos();
-    // 光标所在屏的工作区（排除任务栏），前端錨制用
-    let (wx, wy, ww, wh) = work_area_at(mx, my);
+    let (mx, my) = crate::platform::cursor_pos();
+    // 光标所在屏的工作区（排除任务栏），前端锚制用
+    let (wx, wy, ww, wh) = crate::platform::work_area_at(mx, my);
 
     // 钳制到快照范围内，避免越界尺寸与裁剪像素长度不符
     let cx = x.max(0).min(screen.width - 1);
@@ -659,12 +683,45 @@ pub(crate) fn register_hotkeys(app: &AppHandle, cfg: &translate::AppConfig) {
     }
 }
 
+/// 系统权限状态（设置页「系统权限」区块展示 + 跳系统设置；
+/// Windows 恒可用，macOS 实现在 platform/macos.rs）
+#[derive(serde::Serialize)]
+struct PermissionStatus {
+    accessibility: bool,
+    screen_capture: bool,
+}
+
+#[tauri::command]
+fn check_permissions() -> PermissionStatus {
+    #[cfg(any(windows, target_os = "macos"))]
+    return PermissionStatus {
+        accessibility: platform::accessibility_allowed(),
+        screen_capture: platform::screen_capture_allowed(),
+    };
+    #[cfg(not(any(windows, target_os = "macos")))]
+    PermissionStatus {
+        accessibility: true,
+        screen_capture: true,
+    }
+}
+
 fn main() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    builder
+        // 单实例：第二次启动不再起新进程，直接在已有实例里把设置窗拉到前台。
+        // 必须排在其它 plugin 之前（官方要求），否则可能先拿到已注册的系统资源
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            open_settings(app.clone());
+        }))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            // 平台初始化（macOS：Dock 策略 + 主线程缓存屏幕信息）
+            #[cfg(any(windows, target_os = "macos"))]
+            platform::init(&app.handle());
+
             // 启动时加载翻译配置（有默认值，配置文件不存在也能跑）
             let handle = app.handle().clone();
             app.manage(parking_lot::Mutex::new(translate::load_config(&handle)));
@@ -690,7 +747,7 @@ fn main() {
             std::thread::spawn(move || {
                 std::thread::sleep(std::time::Duration::from_millis(800));
                 if let (Some((ox, oy, w, h)), Some(win)) = (
-                    crate::capture::virtual_screen_bounds(),
+                    crate::platform::virtual_screen_bounds(),
                     shot_handle.get_webview_window("screenshot"),
                 ) {
                     let _ = win.set_position(tauri::PhysicalPosition::new(ox, oy));
@@ -698,14 +755,16 @@ fn main() {
                 }
             });
 
-            // 启动后延迟几秒静默检查一次更新，结果缓存供设置页查询
-            let updater_handle = handle.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_secs(6));
-                if let Err(e) = check_update(&updater_handle) {
-                    eprintln!("[updater] startup check failed: {e}");
-                }
-            });
+            // 启动后延迟几秒静默检查一次更新，结果缓存供设置页查询            // （macOS 拿不到更新产物，启动时不检查，避免每次启动一条错误日志）
+            if !cfg!(target_os = "macos") {
+                let updater_handle = handle.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(6));
+                    if let Err(e) = check_update(&updater_handle) {
+                        eprintln!("[updater] startup check failed: {e}");
+                    }
+                });
+            }
 
             // 设置窗口也改为按需创建（open_settings），点 ✕ 即销毁，
             // 不再需要关闭时隐藏的守卫
@@ -743,6 +802,7 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            check_permissions,
             open_settings,
             get_update_status,
             check_update_now,
