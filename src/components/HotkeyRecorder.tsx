@@ -1,5 +1,12 @@
 import { useEffect, useState } from "react";
 
+const IS_MAC = navigator.userAgent.includes("Macintosh");
+
+/** 存的是跨平台的 Ctrl/Alt/Shift/Super，展示时按平台换成用户键盘上的字（mac 上 Alt 是 Option、Super 是 Cmd） */
+const MAC_MOD_LABEL: Record<string, string> = { Alt: "⌥ Option", Super: "⌘ Cmd" };
+export const displayHotkey = (v: string) =>
+  IS_MAC ? v.split("+").map((p) => MAC_MOD_LABEL[p] ?? p).join("+") : v;
+
 /** 快捷键录制输入框：点击后按下组合键录制，Esc 取消。
  *  用 e.code（物理按键）而非 e.key，避免中文输入法把按键吞成 "Process" */
 export default function HotkeyRecorder({ value, onChange }: { value: string; onChange: (v: string) => void }) {
@@ -35,7 +42,7 @@ export default function HotkeyRecorder({ value, onChange }: { value: string; onC
         return;
       }
       if (parts.length === 0) {
-        setError("需要至少一个修饰键（Ctrl / Alt / Shift）");
+        setError(IS_MAC ? "需要至少一个修饰键（Control / ⌥ Option / Shift / ⌘ Cmd）" : "需要至少一个修饰键（Ctrl / Alt / Shift）");
         return;
       }
       setError("");
@@ -51,7 +58,7 @@ export default function HotkeyRecorder({ value, onChange }: { value: string; onC
       <input
         className={recording ? "recording" : ""}
         readOnly
-        value={recording ? "" : value}
+        value={recording ? "" : displayHotkey(value)}
         placeholder={recording ? "按下新的组合键（Esc 取消）" : ""}
         onClick={() => setRecording(true)}
       />

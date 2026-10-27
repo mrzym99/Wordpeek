@@ -474,7 +474,8 @@ export default function SettingsPage() {
               <HotkeyRecorder value={inputHotkey} onChange={setInputHotkey} />
             </label>
             <div className="field-hint">
-              点击输入框后按下组合键即可更换，需包含 {IS_MAC ? "Ctrl / Alt / Shift / Cmd" : "Ctrl / Alt / Shift"} 之一；划词、截图、输入翻译三个快捷键不能相同
+              点击输入框后按下组合键即可更换，需包含 {IS_MAC ? "Control / ⌥ Option / Shift / ⌘ Cmd" : "Ctrl / Alt / Shift"} 之一；划词、截图、输入翻译三个快捷键不能相同
+              {/* 存的是 Alt / Super，mac 上分别对应 ⌥ Option 和 ⌘ Cmd */}
             </div>
           </>
         )}
