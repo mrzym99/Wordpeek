@@ -871,8 +871,7 @@ fn run_engine(
 }
 
 /// macOS Vision（VNRecognizeTextRequest）：PNG → 文本行（行坐标保留，本期不使用）。
-/// Vision 对小字识别好，预处理免掉：原图直接送识别（RAW 直传）
-#[cfg(target_os = "macos")]
+/// Vision 对小字识别好，预处理免掉：原图直接送识别（RAW 直传）#[cfg(target_os = "macos")]
 pub fn recognize(png: &[u8], lang: &str) -> Result<Vec<OcrLine>, String> {
     use objc2::rc::Retained;
     use objc2::AnyThread;
@@ -910,9 +909,12 @@ pub fn recognize(png: &[u8], lang: &str) -> Result<Vec<OcrLine>, String> {
     }
 
     let reqs = NSArray::from_slice(&[&*request as &VNRequest]);
+    let t0 = std::time::Instant::now();
     handler
         .performRequests_error(&reqs)
         .map_err(|e| format!("OCR 识别失败: {e}"))?;
+    // 首次调用要加载 Vision 模型，冷启动明显慢于后续
+    let vision_ms = t0.elapsed().as_millis();
 
     let Some(results) = request.results() else {
         return Err("OCR 未返回结果".into());
@@ -933,7 +935,7 @@ pub fn recognize(png: &[u8], lang: &str) -> Result<Vec<OcrLine>, String> {
             h: (bb.size.height * h as f64).round() as i32,
         });
     }
-    println!("[ocr] macos vision: {} 行", lines.len());
+    println!("[ocr] macos vision: {} 行，{}x{}px，用时 {}ms", lines.len(), w, h, vision_ms);
     Ok(lines)
 }
 
@@ -941,3 +943,22 @@ pub fn recognize(png: &[u8], lang: &str) -> Result<Vec<OcrLine>, String> {
 pub fn recognize(_png: &[u8], _lang: &str) -> Result<Vec<OcrLine>, String> {
     Err("截图翻译仅支持 Windows 和 macOS".into())
 }
+
+/// 预热：进程内第一次调 Vision 要加载识别模型，实测冷启动 30-60s，
+/// 正好是「第一次截图翻译卡半分钟」的元凶。启动后后台先跑一次，后续识别降到百毫秒级。
+#[cfg(target_os = "macos")]
+pub fn warmup() {
+    use image::{ImageFormat, Rgba, RgbaImage};
+    // 32x32 纯白小图就够触发模型加载
+    let img = RgbaImage::from_pixel(32, 32, Rgba([255, 255, 255, 255]));
+    let mut buf = std::io::Cursor::new(Vec::new());
+    if img.write_to(&mut buf, ImageFormat::Png).is_err() {
+        return;
+    }
+    let t0 = std::time::Instant::now();
+    let _ = recognize(&buf.into_inner(), "auto"); // 白图无文字，Err 正常
+    println!("[ocr] 预热完成，用时 {}ms", t0.elapsed().as_millis());
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn warmup() {}

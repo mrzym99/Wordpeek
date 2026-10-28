@@ -447,6 +447,7 @@ struct ScreenshotState(parking_lot::Mutex<ScreenshotSession>);
 struct ScreenshotSession {
     screen: Option<crate::capture::CapturedScreen>,
     settings_was_visible: bool,
+    main_was_visible: bool,
 }
 
 /// 截图翻译触发：后台抓屏供裁剪，遮罩立即显示（透明，框选对实时桌面）
@@ -467,6 +468,26 @@ fn handle_screenshot_trigger(app: &AppHandle) {
                     "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
                 );
                 return;
+            }
+        }
+        // 抓屏前先把自家窗口藏起来：否则设置窗/上次的结果卡片会被拍进截图，
+        // 而且新遮罩弹出时旧卡片还压在屏幕上（用户看到的「卡片不消失」）
+        let was_visible = app
+            .get_webview_window("settings")
+            .map(|w| w.is_visible().unwrap_or(false))
+            .unwrap_or(false);
+        if was_visible {
+            if let Some(s) = app.get_webview_window("settings") {
+                let _ = s.hide();
+            }
+        }
+        let main_was_visible = app
+            .get_webview_window("main")
+            .map(|w| w.is_visible().unwrap_or(false))
+            .unwrap_or(false);
+        if main_was_visible {
+            if let Some(m) = app.get_webview_window("main") {
+                let _ = m.hide();
             }
         }
         let screen = match crate::platform::capture_virtual_screen() {
@@ -504,6 +525,7 @@ fn handle_screenshot_trigger(app: &AppHandle) {
             let mut session = state.0.lock();
             session.screen = Some(screen);
             session.settings_was_visible = was_visible;
+            session.main_was_visible = main_was_visible;
         }
         if was_visible {
             if let Some(s) = app.get_webview_window("settings") {
@@ -610,11 +632,12 @@ fn screenshot_finish(app: AppHandle, x: i32, y: i32, w: i32, h: i32) -> Result<(
 /// 前端按 ESC 或窗口失焦取消：丢弃会话并隐藏遮罩
 #[tauri::command]
 fn screenshot_cancel(app: AppHandle) {
-    let was_visible;
+    let (was_visible, main_was_visible);
     {
         let state = app.state::<ScreenshotState>();
         let mut session = state.0.lock();
         was_visible = session.settings_was_visible;
+        main_was_visible = session.main_was_visible;
         session.screen = None;
     }
     if let Some(win) = app.get_webview_window("screenshot") {
@@ -623,6 +646,11 @@ fn screenshot_cancel(app: AppHandle) {
     if was_visible {
         if let Some(s) = app.get_webview_window("settings") {
             let _ = s.show();
+        }
+    }
+    if main_was_visible {
+        if let Some(m) = app.get_webview_window("main") {
+            let _ = m.show();
         }
     }
     println!("[screenshot] cancelled");
@@ -758,6 +786,13 @@ fn main() {
                     let _ = win.set_position(tauri::PhysicalPosition::new(ox, oy));
                     let _ = win.set_size(tauri::PhysicalSize::new(w as u32, h as u32));
                 }
+            });
+
+            // 启动后在后台预热 OCR：进程内第一次调 Vision 要加载模型（实测 30-60s），
+            // 不预热的话「第一次截图翻译」就会卡半分钟
+            std::thread::spawn(|| {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                crate::ocr::warmup();
             });
 
             // 启动后延迟几秒静默检查一次更新，结果缓存供设置页查询            // （macOS 拿不到更新产物，启动时不检查，避免每次启动一条错误日志）
