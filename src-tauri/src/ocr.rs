@@ -871,7 +871,8 @@ fn run_engine(
 }
 
 /// macOS Vision（VNRecognizeTextRequest）：PNG → 文本行（行坐标保留，本期不使用）。
-/// Vision 对小字识别好，预处理免掉：原图直接送识别（RAW 直传）#[cfg(target_os = "macos")]
+/// Vision 对小字识别好，预处理免掉：原图直接送识别（RAW 直传）
+#[cfg(target_os = "macos")]
 pub fn recognize(png: &[u8], lang: &str) -> Result<Vec<OcrLine>, String> {
     use objc2::rc::Retained;
     use objc2::AnyThread;
