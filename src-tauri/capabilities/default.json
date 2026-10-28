@@ -18,6 +18,10 @@
     "core:window:allow-set-focus",
     "core:window:allow-outer-size",
     "opener:default",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "x-apple.systempreferences:*" }]
+    },
     "core:app:default"
   ]
 }

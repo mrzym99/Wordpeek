@@ -57,6 +57,16 @@ pub fn screen_capture_allowed() -> bool {
     macos::screen_capture_allowed()
 }
 
+/// 申请屏幕录制权限（弹系统授权框；Windows 无此概念，恒成功）
+#[cfg(windows)]
+pub fn request_screen_capture() -> bool {
+    true
+}
+#[cfg(target_os = "macos")]
+pub fn request_screen_capture() -> bool {
+    macos::request_screen_capture()
+}
+
 /// 应用启动时初始化平台状态（macOS：Dock 策略 + 主线程缓存屏幕信息）
 #[cfg(windows)]
 pub fn init(_app: &tauri::AppHandle) {}

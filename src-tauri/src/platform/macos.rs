@@ -4,7 +4,6 @@
 use std::sync::OnceLock;
 
 use core_graphics::display::CGDisplay;
-use enigo::{Direction, Enigo, Key, Keyboard};
 use objc2::rc::Retained;
 
 use crate::capture::{bgra_to_rgba, CapturedScreen};
@@ -21,6 +20,7 @@ extern "C" {
 #[link(name = "CoreGraphics", kind = "framework")]
 extern "C" {
     fn CGPreflightScreenCaptureAccess() -> bool;
+    fn CGRequestScreenCaptureAccess() -> bool;
 }
 
 /// 辅助功能权限：模拟 Cmd+C 抓词必需
@@ -46,6 +46,12 @@ pub fn request_accessibility() -> bool {
 /// 屏幕录制权限：截图翻译必需
 pub fn screen_capture_allowed() -> bool {
     unsafe { CGPreflightScreenCaptureAccess() }
+}
+
+/// 未授权时弹系统授权框，并把 Wordpeek 登记进「屏幕录制」列表。
+/// 只 preflight 不 request 的话，列表里根本没有 Wordpeek 这一项，用户无从勾选。
+pub fn request_screen_capture() -> bool {
+    unsafe { CGRequestScreenCaptureAccess() }
 }
 
 // ---------- 启动初始化 ----------
@@ -168,35 +174,32 @@ pub fn work_area_at(x: i32, y: i32) -> (i32, i32, i32, i32) {
 
 // ---------- 复制注入 ----------
 
-/// 注入 Cmd+C。快捷键触发时物理按着的修饰键要先松开。
+/// 注入 Cmd+C。
 ///
-/// 必须回到主线程调用：enigo 内部走 TSM / 输入源 API，那些接口有主队列断言，
-/// 子线程调用会 `dispatch_assert_queue_fail` → SIGTRAP 直接杀进程。
-/// 主线程无法取得结果，所以用 channel 把成功与否传回来。
-pub fn inject_copy(app: &tauri::AppHandle) -> bool {
-    let (tx, rx) = std::sync::mpsc::channel();
-    let dispatched = app
-        .run_on_main_thread(move || {
-            let ok = (|| {
-                let mut enigo = Enigo::new(&enigo::Settings::default()).ok()?;
-                // 快捷键是按下瞬间触发的，用户此时还按着 Ctrl/Alt/Shift：
-                // 不松开的话应用收到的是 Cmd+Ctrl+C（不是「复制」），什么也不会发生
-                for k in [Key::Control, Key::Alt, Key::Shift] {
-                    let _ = enigo.key(k, Direction::Release);
-                }
-                // 等目标应用处理完 key-up，否则 Cmd 会和刚松开的 Ctrl 并成一起
-                std::thread::sleep(std::time::Duration::from_millis(30));
-                enigo.key(Key::Meta, Direction::Press).ok()?;
-                std::thread::sleep(std::time::Duration::from_millis(10));
-                enigo.key(Key::Unicode('c'), Direction::Click).ok()?;
-                enigo.key(Key::Meta, Direction::Release).ok()?;
-                Some(())
-            })()
-            .is_some();
-            let _ = tx.send(ok);
-        })
-        .is_ok();
-    dispatched && rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap_or(false)
+/// 直接用 CGEvent 发键盘事件：enigo 的 Unicode 路径只设置字符、不设置物理键位，
+/// AppKit 应用匹配不到「复制」菜单命令（实测 TextEdit 里选中文本后无任何反应），
+/// 而 Cmd+C 是快捷键匹配，与字符无关。
+/// 事件自带 flags，目标应用看到的就是这里设的修饰键，不必先物理松开用户按着的 Ctrl/Alt。
+pub fn inject_copy(_app: &tauri::AppHandle) -> bool {
+    use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation};
+    use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+
+    // 8 = 物理键位 'c'（US 布局）
+    const C_KEY: u16 = 8;
+    let Ok(source) = CGEventSource::new(CGEventSourceStateID::CombinedSessionState) else {
+        return false;
+    };
+    let (Ok(down), Ok(up)) = (
+        CGEvent::new_keyboard_event(source.clone(), C_KEY, true),
+        CGEvent::new_keyboard_event(source, C_KEY, false),
+    ) else {
+        return false;
+    };
+    down.set_flags(CGEventFlags::CGEventFlagCommand);
+    up.set_flags(CGEventFlags::CGEventFlagCommand);
+    down.post(CGEventTapLocation::HID);
+    up.post(CGEventTapLocation::HID);
+    true
 }
 
 // ---------- 虚拟屏抓取 ----------

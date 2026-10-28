@@ -455,14 +455,19 @@ fn handle_screenshot_trigger(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
         // 没权限时抓屏只会拿到桌面壁纸，必须明确告诉用户去哪开，而不是静默失败。
-        // 对话框带一个直达按钮：点一下就到「屏幕录制」面板，回来自动生效
+        // 先 request：只有它会弹系统授权框并把 Wordpeek 登记进「屏幕录制」列表
+        //（只 preflight 的话列表里没有这一项，用户根本没法勾）。
+        // 用户当场勾了也常常要重启进程才生效，所以仍继续走提示。
         if !crate::platform::screen_capture_allowed() {
-            alert_permission(
-                &app,
-                "截图翻译需要「屏幕录制」权限。\n\n系统设置 → 隐私与安全性 → 屏幕录制，勾选 Wordpeek 后重启应用。",
-                "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
-            );
-            return;
+            let granted = crate::platform::request_screen_capture();
+            if !granted {
+                alert_permission(
+                    &app,
+                    "截图翻译需要「屏幕录制」权限。\n\n系统设置 → 隐私与安全性 → 屏幕录制，勾选 Wordpeek 后重启应用。",
+                    "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+                );
+                return;
+            }
         }
         let screen = match crate::platform::capture_virtual_screen() {
             Ok(s) => s,
