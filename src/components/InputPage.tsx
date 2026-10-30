@@ -7,6 +7,7 @@ import SourceCompare from "./SourceCompare";
 import type { CompareRow } from "./SourceCompare";
 import SourceBox from "./SourceBox";
 import Phonetic from "./Phonetic";
+import { ArrowRightIcon } from "./icons";
 
 /** 输入翻译窗口（?page=input）：打字/粘贴 → 默认翻译 + 勾选的额外源逐源给出译文，目标语言可智能/手动切换 */
 export default function InputPage() {
@@ -105,14 +106,14 @@ export default function InputPage() {
               title="固定译为英文"
               onClick={() => setMode("en")}
             >
-              → 英文
+              <ArrowRightIcon /> 英文
             </button>
             <button
               className={mode === "zh" ? "active" : ""}
               title="固定译为中文"
               onClick={() => setMode("zh")}
             >
-              → 中文
+              <ArrowRightIcon /> 中文
             </button>
           </span>
           <button className="save-btn" onClick={run} disabled={loading || !text.trim()}>
