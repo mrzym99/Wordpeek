@@ -94,6 +94,12 @@ fn fit_height(content_h: f64, work_h: f64, chrome_h: f64) -> f64 {
     content_h.clamp(60.0, max.max(60.0))
 }
 
+/// 逻辑像素 → 物理像素（向上语义：四舍五入，至少 1px）。显示器矩形/位置都是物理像素，
+/// 缩放 ≠100% 时钳位前必须先乘 scale，否则钳不住，窗口会伸出屏幕外
+fn to_physical(logical: f64, scale: f64) -> i32 {
+    (logical * scale).round().max(1.0) as i32
+}
+
 /// 把「左上角在 (x, y)、尺寸 win_w×win_h」的窗口钳进显示器矩形内。
 /// 窗口比屏还大时贴左上角（不弹到屏外）。
 fn clamp_rect_to_monitor(
@@ -198,9 +204,11 @@ fn fit_window(app: AppHandle, label: String, height: f64, viewport: Option<f64>)
     win.set_size(tauri::LogicalSize::new(inner_w, inner_h))
         .map_err(|e| e.to_string())?;
 
-    // 新外框尺寸 = 客户区 + 边框/标题栏，用它重新钳一次位置
-    let new_w = (inner_w + chrome_w).round().max(1.0) as i32;
-    let new_h = (inner_h + chrome_h).round().max(1.0) as i32;
+    // 新外框尺寸 = 客户区 + 边框/标题栏，用它重新钳一次位置。
+    // 逻辑尺寸必须换算成物理像素再和显示器矩形比：缩放 150% 的屏上把逻辑高当
+    // 物理高钳位，卡片会伸出屏幕底 (scale−1)×高，内容被裁掉又没滚动条，只能拖窗口（issue #8）
+    let new_w = to_physical(inner_w + chrome_w, scale);
+    let new_h = to_physical(inner_h + chrome_h, scale);
     let (nx, ny) = match monitor_rect_at(&win, pos.x + 8, pos.y + 8) {
         Some(rect) => clamp_rect_to_monitor(rect, new_w, new_h, pos.x, pos.y),
         None => (pos.x, pos.y),
@@ -899,6 +907,24 @@ mod tests {
         assert_eq!(fit_height(1100.0, 1040.0, 31.0), 969.0); // 有标题栏：上限再扣掉标题栏
         assert_eq!(fit_height(900.0, 0.0, 0.0), 800.0); // 拿不到工作区 → 退回 800
         assert_eq!(fit_height(9000.0, 50.0, 31.0), 60.0); // 工作区极小时不低于下限
+    }
+
+    #[test]
+    fn to_physical_scales_logical_size() {
+        assert_eq!(to_physical(600.0, 1.0), 600); // 100% 缩放：原样
+        assert_eq!(to_physical(600.0, 1.5), 900); // 150%：卡片真实物理高，按它钳才钳得住
+        assert_eq!(to_physical(340.0, 1.25), 425); // 125% 宽度同理
+        assert_eq!(to_physical(0.0, 1.5), 1); // 向下归零也不允许 0 尺寸
+    }
+
+    #[test]
+    fn tall_card_at_150_scale_is_pulled_inside_screen() {
+        // 光标在屏底附近（物理 y=950，屏高 1080）：逻辑 600px 的卡片物理高 900
+        let (x, y) = clamp_rect_to_monitor((0, 0, 1920, 1080), to_physical(340.0, 1.5), to_physical(600.0, 1.5), 100, 950 + 16);
+        // 修复前：按逻辑高 600 钳位，y 保持 966，底边 1866 伸出屏幕 786px；
+        // 修复后：整卡收进屏内，底边贴屏底
+        assert_eq!(y, 1080 - 900, "卡片底边应贴屏幕下沿而不是伸出屏幕");
+        assert_eq!(x, 100);
     }
 
     #[test]
