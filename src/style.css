@@ -668,6 +668,7 @@ html:not(.is-capped) .shot-text::-webkit-scrollbar {
 /* max-height 用 100vh（= 窗口高）− chrome，窗口长到屏幕上限后剩下的内容才能框内滚动， */
 /* 而不是溢出到窗口外被切掉（chrome 与调用方传给 useAutoFitWindow 的一致） */
 .card-body {
+  position: relative; /* 划词小卡的包含块：小卡绝对定位在内，溢出计入 scrollHeight → 窗口长高包住 */
   flex: 0 1 auto;
   min-height: 0;
   max-height: calc(100vh - 67px); /* padding+border 35 + header 32，与 Popup 传给 hook 的 chrome 一致 */
@@ -817,4 +818,47 @@ html:not(.is-capped) .shot-text::-webkit-scrollbar {
 .config-form {
   flex: 1;
   min-width: 0;
+}
+
+/* ===== 划词小释义卡（issue #7）===== */
+/* 绝对定位在 .card-body 内、单词正下方：超出卡片底部时会计入 scrollHeight，
+   窗口自适应随之长高包住小卡 → 不被窗口边框裁切，也不用翻到单词上方盖住它 */
+.pop-card {
+  position: absolute;
+  z-index: 50;
+  width: 250px;
+  max-height: 210px;
+  overflow: hidden;
+  padding: 10px 12px;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow:
+    0 0 0 1px rgba(15, 15, 15, 0.05),
+    0 3px 6px rgba(15, 15, 15, 0.1),
+    0 9px 24px rgba(15, 15, 15, 0.2);
+  font-size: 12.5px;
+  line-height: 1.55;
+  user-select: text;
+}
+.pop-head {
+  display: flex;
+  align-items: baseline;
+}
+.pop-word {
+  font-size: 15px;
+  font-weight: 600;
+}
+.pop-senses {
+  margin-top: 4px;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.pop-loading {
+  color: var(--text-faint);
+}
+.pop-more {
+  margin-top: 6px;
 }

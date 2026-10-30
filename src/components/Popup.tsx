@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -7,6 +7,7 @@ import { PhysicalPosition } from "@tauri-apps/api/dpi";
 import { savePopupWidth } from "../lib/config";
 import type { AppConfig, Selection, ShotResult, SourceResult, WordInfo } from "../types";
 import SenseList from "./SenseList";
+import DictPop from "./DictPop";
 import SourceCompare from "./SourceCompare";
 import ContentBox from "./ContentBox";
 import SourceBox from "./SourceBox";
@@ -36,6 +37,22 @@ export default function Popup() {
   const seqRef = useRef(0);
   const [info, setInfo] = useState<WordInfo | null>(null);
   const [error, setError] = useState("");
+  // 划词小释义卡整体封装在 DictPop 组件里（选词检测/定位/查词/渲染），
+  // 宿主只需挂容器 ref + 把「详细释义」接回 lookup
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  // 小卡的锚定/测量容器：绝对定位在 .card-body 内，溢出底部时计入 scrollHeight，
+  // 窗口自适应长高包住小卡（不被窗口边框裁切）
+  const cardBodyRef = useRef<HTMLDivElement | null>(null);
+  // 自适应 hook 与 DictPop 共用同一 DOM：一个存 state 启动测量，一个存 ref 当锚点。
+  // 必须 useCallback 稳定引用：内联函数每次 render 换新 ref，React 会 null/el 来回卸载重挂，
+  // setBody 跟着翻转 → 无限重渲染
+  const bindBody = useCallback(
+    (el: HTMLDivElement | null) => {
+      cardBodyRef.current = el;
+      setBody(el);
+    },
+    [setBody]
+  );
   // 多源对比：开启时在卡片底部追加各源译文（不隐藏原有内容）
   const [compareOpen, setCompareOpen] = useState(false);
   // 已勾选的额外源个数：0 时隐藏「对比各源」按钮（persist 保证 sources 里
@@ -351,7 +368,7 @@ export default function Popup() {
   ) ?? null;
 
   return (
-    <div className="card">
+    <div className="card" ref={cardRef}>
       {/* 顶部 padding 区是隐形拖拽热区：按住可移动窗口；窗口边缘仍可拉伸 */}
       <div className="drag-strip" data-tauri-drag-region />
       {/* header 固定不随内容滚动；body 才是滚动区 */}
@@ -381,7 +398,7 @@ export default function Popup() {
         </div>
       </div>
 
-      <div className="card-body" ref={setBody}>
+      <div className="card-body" ref={bindBody}>
       {error && <div className="error">{error}</div>}
       {!inShot && !info && !error && <div className="loading">翻译中...</div>}
 
@@ -549,6 +566,15 @@ export default function Popup() {
         </>
       )}
 
+      {/* 划词小释义卡：必须在 .card-body 内——绝对定位坐标以其为基准，
+          且弹出/收起要计入窗口自适应的 scrollHeight（不被窗口裁切） */}
+      <DictPop
+        rootRef={cardRef}
+        anchorRef={cardBodyRef}
+        resetKey={`${word}|${shotResult?.text ?? ""}`}
+        onOpenDetail={lookup}
+        onPlay={playVoice}
+      />
       </div>
     </div>
   );
