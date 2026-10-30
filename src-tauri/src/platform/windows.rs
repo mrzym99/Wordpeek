@@ -12,10 +12,48 @@ pub fn inject_copy(_app: &tauri::AppHandle) -> bool {
     let Ok(mut enigo) = Enigo::new(&enigo::Settings::default()) else {
         return false;
     };
-    enigo.key(Key::Alt, Direction::Release).is_ok()
+    // C 用 Unicode('c') 而不是 Key::C：Key::C 走 VK 路径（wScan=0），
+    // 部分 App（Chromium、IME 激活时）会忽略无扫描码的注入键导致复制失效；
+    // Unicode 路径带 KEYEVENTF_SCANCODE，与真实键盘事件一致。
+    let ok = enigo.key(Key::Alt, Direction::Release).is_ok()
         && enigo.key(Key::Control, Direction::Press).is_ok()
-        && enigo.key(Key::C, Direction::Click).is_ok()
-        && enigo.key(Key::Control, Direction::Release).is_ok()
+        && enigo.key(Key::Unicode('c'), Direction::Click).is_ok()
+        && enigo.key(Key::Control, Direction::Release).is_ok();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    ok
+}
+
+/// 前台窗口所属进程名（诊断用，取不到返回空串）
+pub fn foreground_app() -> String {
+    unsafe {
+        use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
+        let hwnd = GetForegroundWindow();
+        if hwnd.0.is_null() {
+            return String::new();
+        }
+        let mut pid: u32 = 0;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        if pid == 0 {
+            return String::new();
+        }
+        // 取进程名：快照法太重，用 OpenProcess+QueryFullProcessImageNameW
+        let handle = windows::Win32::System::Threading::OpenProcess(
+            windows::Win32::System::Threading::PROCESS_QUERY_LIMITED_INFORMATION,
+            false,
+            pid,
+        );
+        if let Ok(h) = handle {
+            let mut buf = [0u16; 512];
+            let mut len = buf.len() as u32;
+            let ok = windows::Win32::System::Threading::QueryFullProcessImageNameW(h, windows::Win32::System::Threading::PROCESS_NAME_WIN32, windows::core::PWSTR(buf.as_mut_ptr()), &mut len);
+            let _ = windows::Win32::Foundation::CloseHandle(h);
+            if ok.is_ok() {
+                let path = String::from_utf16_lossy(&buf[..len as usize]);
+                return path.rsplit(['/', '\\']).next().unwrap_or(&path).to_string();
+            }
+        }
+        format!("pid={pid}")
+    }
 }
 
 pub fn cursor_pos() -> (i32, i32) {

@@ -16,6 +16,8 @@ pub use macos::inject_copy;
 /// 光标位置（物理像素）
 #[cfg(windows)]
 pub use windows::cursor_pos;
+#[cfg(windows)]
+pub use windows::foreground_app;
 #[cfg(target_os = "macos")]
 pub use macos::cursor_pos;
 

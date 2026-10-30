@@ -25,6 +25,7 @@ struct Selection {
 
 /// 模拟复制键抓取当前选中文本，并把原剪贴板内容还原
 fn grab_selection(app: &AppHandle) -> Option<String> {
+    println!("[grab] foreground app: {}", crate::platform::foreground_app());
     let mut clipboard = Clipboard::new().ok()?;
 
     // 备份原剪贴板：文本优先；读不到文本（可能是图片/文件）就备份图片，
