@@ -51,13 +51,27 @@ fn grab_selection(app: &AppHandle) -> Option<String> {
     // 目标应用写入选中文本有快有慢（PDF、大文档可能超过百毫秒），
     // 固定 sleep 会在慢应用上误判“没选中内容”，且恢复时可能被慢应用
     // 后写入的内容覆盖；轮询到内容不再是哨兵值为止，最多 ~600ms。
+    // 首轮没等到就再注入一次复制键再等 ~300ms：偶发目标应用吞掉第一次 Ctrl+C
+    // （焦点刚切回来/输入法吞键），重试一次能救回来。
     let mut text = SENTINEL.to_string();
     if injected {
-        for _ in 0..30 {
-            std::thread::sleep(std::time::Duration::from_millis(20));
-            text = clipboard.get_text().unwrap_or_default();
+        for attempt in 0..2 {
+            let rounds = if attempt == 0 { 30 } else { 15 };
+            for _ in 0..rounds {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+                text = clipboard.get_text().unwrap_or_default();
+                if text != SENTINEL {
+                    break;
+                }
+            }
             if text != SENTINEL {
                 break;
+            }
+            if attempt == 0 {
+                println!("[grab] 首轮复制未生效，重试注入一次");
+                if !crate::platform::inject_copy(app) {
+                    break;
+                }
             }
         }
     }
@@ -551,6 +565,40 @@ fn handle_screenshot_trigger(app: &AppHandle) {
         let _ = win.show();
         let _ = win.set_focus();
         crate::platform::prepare_overlay(&win);
+
+        // 双屏不同 DPI：set_position 跨屏移动会触发 WM_DPICHANGED，tao 在事件循环里
+        // 异步按「保持逻辑尺寸」重设窗口，覆盖刚设的虚拟屏尺寸 → 首次遮罩只盖一块屏
+        //（第二次触发 DPI 已稳定不再触发，所以正常）。显示后校验几何，被 churn 改动
+        // 就重设，直到连续两次读数稳定。
+        let mut stable = 0;
+        for _ in 0..30 {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            let ok_size = win
+                .outer_size()
+                .map(|s| s.width == sw as u32 && s.height == sh as u32)
+                .unwrap_or(true);
+            let ok_pos = win
+                .outer_position()
+                .map(|p| p.x == sx && p.y == sy)
+                .unwrap_or(true);
+            if ok_size && ok_pos {
+                stable += 1;
+                if stable >= 2 {
+                    break;
+                }
+            } else {
+                stable = 0;
+                if !ok_pos {
+                    let _ = win.set_position(tauri::PhysicalPosition::new(sx, sy));
+                }
+                if !ok_size {
+                    let _ = win.set_size(tauri::PhysicalSize::new(sw, sh));
+                }
+                println!(
+                    "[screenshot] 遮罩几何被 DPI churn 改动，已重设（size_ok={ok_size} pos_ok={ok_pos}）"
+                );
+            }
+        }
     });
 }
 

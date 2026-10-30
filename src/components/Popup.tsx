@@ -252,7 +252,20 @@ export default function Popup() {
         const { text, x, y } = e.payload;
         setShotResult(null); // 新的划词到达，退出截图模式
         setCompareOpen(false);
+        // 双屏不同 DPI：跨屏 setPosition 会触发 WM_DPICHANGED，tao 异步按「保持逻辑尺寸」
+        // 重设窗口，会覆盖随后 refit 设的尺寸 → 卡片尺寸/位置错乱看似划词没反应。
+        // 同屏时 scale 不变直接过；scale 变了就等窗口尺寸稳定再 show+refit
+        const sf0 = await win.scaleFactor();
         await win.setPosition(new PhysicalPosition(x, y));
+        if ((await win.scaleFactor()) !== sf0) {
+          let prev = await win.outerSize();
+          for (let i = 0; i < 25; i++) {
+            await new Promise((r) => setTimeout(r, 20));
+            const cur = await win.outerSize();
+            if (cur.width === prev.width && cur.height === prev.height) break;
+            prev = cur;
+          }
+        }
         await win.show();
         await win.setFocus();
         refit(); // 不依赖焦点事件：窗口重开时残留的拖拽高度立刻按内容纠正
