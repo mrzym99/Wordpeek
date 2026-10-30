@@ -446,11 +446,6 @@ export default function SettingsPage() {
                           onChange={(e) => setSecret(e.target.value)}
                         />
                       </label>
-                      <div className="source-actions">
-                        <button className="save-btn" onClick={saveBaiduKeys} disabled={loadFailed}>
-                          保存密钥
-                        </button>
-                      </div>
                     </>
                   ) : (
                     <>
@@ -472,11 +467,6 @@ export default function SettingsPage() {
                           onChange={(e) => setTcKey(e.target.value)}
                         />
                       </label>
-                      <div className="source-actions">
-                        <button className="save-btn" onClick={saveTencentKeys} disabled={loadFailed}>
-                          保存密钥
-                        </button>
-                      </div>
                     </>
                   )}
                 </div>
@@ -708,12 +698,21 @@ export default function SettingsPage() {
         <div className="settings-footer">
           {saveError && <span className="save-error">{saveError}</span>}
           {saved && !saveError && <span className="saved-tip">已保存</span>}
-          {/* 翻译/关于/其他：无表单或即时生效，无需全局保存 */}
-          {section !== "translate" && section !== "about" && section !== "other" && (
+          {/* 源配置：密钥表单的保存按钮也走底栏，与其他页一样落在右下角 */}
+          {section === "translate" && srcTab === "config" ? (
+            <button
+              className="save-btn"
+              onClick={cfgSrc === "baidu" ? saveBaiduKeys : saveTencentKeys}
+              disabled={loadFailed}
+            >
+              保存
+            </button>
+          ) : section !== "translate" && section !== "about" && section !== "other" ? (
+            // 翻译/关于/其他：无表单或即时生效，无需全局保存
             <button className="save-btn" onClick={save}>
               保存
             </button>
-          )}
+          ) : null}
         </div>
       </div>
     </div>

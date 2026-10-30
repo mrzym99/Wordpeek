@@ -59,13 +59,17 @@ export default function InputPage() {
         invoke<WordInfo>("translate", { text: q, to: target }),
         invoke<SourceResult[]>("translate_all", { text: q, to: target, includeBuiltin: false }),
       ]);
-      setDefaultInfo(d.status === "fulfilled" ? d.value : null);
+      if (d.status === "fulfilled") {
+        setDefaultInfo(d.value);
+      } else {
+        // 默认源失败也要把原因露出来，否则界面上只剩「没有可用的翻译源」，看不出是谁挂了
+        setError(String(d.reason));
+      }
       if (rs.status === "fulfilled") {
         setRows(rs.value);
-      } else {
-        // 额外源整体失败（如没勾任何源）：有默认结果就不报错，否则给出原因
-        if (d.status === "fulfilled") setRows([]);
-        else setError(String(rs.reason));
+      } else if (d.status === "fulfilled") {
+        // 额外源整体失败（如没勾任何源）但有默认结果：不报错
+        setRows([]);
       }
     } catch (err) {
       setError(String(err));

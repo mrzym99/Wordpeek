@@ -503,6 +503,7 @@ export default function Popup() {
             </div>
           )}
           {shotLoading && <div className="shot-loading">翻译中…</div>}
+          {shotResult.error && <div className="error">{shotResult.error}</div>}
           {shotResult.info && (
             <ContentBox
               label="译文"

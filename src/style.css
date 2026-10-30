@@ -506,11 +506,6 @@ button,
 }
 
 /* 保存密钥 / 启用开关行 */
-.source-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
 
 .switch {
   display: inline-flex;
@@ -777,10 +772,12 @@ textarea.shot-text {
   display: block;
   width: 100%;
   box-sizing: border-box;
-  border: none;
+  /* 未聚焦时也要能看出这是个输入框：外壳面与框底色相近，只靠底色分不出边界 */
+  border: 1px solid var(--line);
   outline: none;
   resize: vertical;
   min-height: 56px;
+  padding: 7px 11px;
   font-family: inherit;
 }
 textarea.shot-text:focus {
