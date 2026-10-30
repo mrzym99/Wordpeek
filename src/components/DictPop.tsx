@@ -44,20 +44,26 @@ export default function DictPop({
     const onMouseUp = (e: MouseEvent) => {
       const t = e.target as HTMLElement;
       if (popRef.current?.contains(t)) return; // 小卡内部的选择/点击不重置小卡
-      if (t.closest("input, textarea, button, .phonetic")) return;
+      // 单词框（单行 input）、按钮、音标不触发；原文 textarea 要触发（原文框划词也是常见查词手势）
+      if (t.closest("input, button, .phonetic")) return;
+      // textarea 的选区不进 window.getSelection，得读 selectionStart/End；
+      // 也没有选区 range rect，改用鼠标坐标锚定小卡位置
+      const ta = t.closest("textarea");
       const sel = window.getSelection();
-      const w = (sel?.toString() ?? "").trim().replace(/^[\p{P}\p{S}]+|[\p{P}\p{S}]+$/gu, "");
+      const raw = ta ? ta.value.slice(ta.selectionStart, ta.selectionEnd) : (sel?.toString() ?? "");
+      const w = raw.trim().replace(/^[\p{P}\p{S}]+|[\p{P}\p{S}]+$/gu, "");
       // 只认单个词：空白（普通单击）或含空白的整句选中 → 收起小卡
       if (!w || w.length > 30 || /\s/.test(w)) {
         setPop(null);
         return;
       }
-      const rect = sel && sel.rangeCount ? sel.getRangeAt(0).getBoundingClientRect() : null;
+      const rect = !ta && sel && sel.rangeCount ? sel.getRangeAt(0).getBoundingClientRect() : null;
+      const r = rect ?? { left: e.clientX, top: e.clientY, bottom: e.clientY + 4 };
       const vw = window.innerWidth;
       const vh = window.innerHeight;
-      const x = Math.min(Math.max(8, rect?.left ?? 8), vw - POP_W - 8);
-      let y = (rect?.bottom ?? vh) + 6;
-      if (y + POP_H > vh - 8) y = Math.max(8, (rect?.top ?? vh) - POP_H - 6);
+      const x = Math.min(Math.max(8, r.left), vw - POP_W - 8);
+      let y = r.bottom + 6;
+      if (y + POP_H > vh - 8) y = Math.max(8, r.top - POP_H - 6);
       if (w !== wordRef.current) {
         wordRef.current = w;
         const seq = ++seqRef.current;
