@@ -19,7 +19,7 @@ function isSentenceText(t: string) {
   return /[\s，。！？；,.!?;:]/.test(s) || (s.match(/[\u4e00-\u9fff]/g)?.length ?? 0) > 2;
 }
 
-/** 划词/截图统一弹窗：同一张卡片，标题行 = 可编辑原文 + 「对比各源」/设置按钮 */
+/** 划词/截图统一弹窗：同一张卡片，标题行 = 可编辑原文 + 「对比各源」按钮 */
 export default function Popup() {
   // 卡片内容高度上报给 Rust，窗口按内容收缩（防止透明区域吞掉下层窗口的点击）
   // padding+border 35 + header 32；最小高度防查词时塌成一条，上限交给 Rust 按屏幕钳制
@@ -377,7 +377,7 @@ export default function Popup() {
           Wordpeek<span className="app-beta">beta</span>
           {appVersion && <span className="app-version">v{appVersion}</span>}
         </div>
-        {/* 对比各源 + 设置：固定标题行右上角，两种模式都有 */}
+        {/* 对比各源：固定标题行右上角，两种模式都有（设置入口在托盘菜单，不占弹窗标题行） */}
         <div className="head-actions">
           {activeText && extrasCount !== 0 && (
             <button
@@ -395,9 +395,6 @@ export default function Popup() {
               {compareOpen ? "收起对比" : "对比各源"}
             </button>
           )}
-          <button className="icon-btn gear" title="设置" onClick={() => invoke("open_settings")}>
-            ⚙
-          </button>
         </div>
       </div>
 
