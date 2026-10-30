@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import type { MouseEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -358,6 +359,20 @@ export default function Popup() {
     audio.play();
   };
 
+  // 双击卡片正文任意单词（释义/例句/对比译文）跳转查该词，类似百度词典：
+  // 双击时浏览器按分词选中那个词（.card 开了 user-select: text），直接取选区文本。
+  // 输入框/按钮里跳过：那里双击是编辑选词/连点功能，不是查词
+  const onCardDoubleClick = (e: MouseEvent<HTMLDivElement>) => {
+    const t = e.target as HTMLElement;
+    if (t.closest("input, textarea, button, .phonetic")) return;
+    const w =
+      window.getSelection()?.toString().trim().replace(/^[\p{P}\p{S}]+|[\p{P}\p{S}]+$/gu, "") ?? "";
+    // 只查单个词：含空白/超长（整句选中）不动
+    if (!w || w.length > 30 || /\s/.test(w)) return;
+    if (w === lastLooked.current) return; // 同义词单点已查过同一个词，不重发请求
+    lookup(w);
+  };
+
   // 截图重新翻译进行中：info/error 均空且原文存在
   const shotLoading = inShot && !!shotResult!.text && !shotResult!.info && !shotResult!.error;
   // 对比区只列勾选的额外源：默认翻译就是上方卡片内容，不重复展示；
@@ -368,7 +383,7 @@ export default function Popup() {
   ) ?? null;
 
   return (
-    <div className="card">
+    <div className="card" onDoubleClick={onCardDoubleClick}>
       {/* 顶部 padding 区是隐形拖拽热区：按住可移动窗口；窗口边缘仍可拉伸 */}
       <div className="drag-strip" data-tauri-drag-region />
       {/* header 固定不随内容滚动；body 才是滚动区 */}
