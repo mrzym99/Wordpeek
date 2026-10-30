@@ -1,9 +1,13 @@
+import type { ReactNode } from "react";
 import type { SourceResult } from "../types";
 import SenseList from "./SenseList";
 import { CheckIcon, CopyIcon } from "./icons";
 
+/** 对比行：额外源就是纯 SourceResult；默认翻译行可附单词音标行（仅 InputPage 用） */
+export type CompareRow = SourceResult & { wordLine?: ReactNode };
+
 interface SourceCompareProps {
-  rows: SourceResult[];
+  rows: CompareRow[];
   /** 复制反馈标记：命中的行显示对勾 */
   copied: string;
   onCopy: (source: string, text: string) => void;
@@ -26,6 +30,7 @@ export default function SourceCompare({ rows, copied, onCopy }: SourceComparePro
               {copied === r.source ? <CheckIcon /> : <CopyIcon />}
             </button>
           </div>
+          {r.wordLine}
           {r.ok ? (
             <SenseList senses={r.senses} />
           ) : (
