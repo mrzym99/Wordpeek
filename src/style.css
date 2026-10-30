@@ -139,8 +139,12 @@ html, body, #root {
   box-shadow: inset 0 -1.5px 0 var(--accent);
 }
 
-.phonetic { cursor: pointer; }
+.phonetic { cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+.phonetic svg { flex-shrink: 0; }
 .phonetic:hover { color: var(--accent); }
+/* 文字+Lucide图标行内组合（已授权/已复制/Star 按钮） */
+.i-txt { display: inline-flex; align-items: center; gap: 4px; }
+button svg { vertical-align: -2px; }
 
 .badges { margin-top: 6px; }
 .badge {

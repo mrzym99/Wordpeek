@@ -824,13 +824,18 @@ fn main() {
                 MenuItem::with_id(app, "settings", "设置", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
             let tray_menu = Menu::with_items(app, &[&input, &settings, &quit])?;
+            // 托盘图标：macOS 用白色单色模板图（菜单栏随深浅色自动反色），其它平台用应用图标
+            let tray_image = if cfg!(target_os = "macos") {
+                tauri::include_image!("icons/tray-template.png")
+            } else {
+                app.default_window_icon()
+                    .expect("缺少应用图标 icons/icon.ico")
+                    .clone()
+            };
             TrayIconBuilder::with_id("main")
                 .tooltip("Wordpeek 划词翻译")
-                .icon(
-                    app.default_window_icon()
-                        .expect("缺少应用图标 icons/icon.ico")
-                        .clone(),
-                )
+                .icon(tray_image)
+                .icon_as_template(cfg!(target_os = "macos"))
                 .menu(&tray_menu)
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "input" => open_input_window(app),

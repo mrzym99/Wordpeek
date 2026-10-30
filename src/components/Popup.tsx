@@ -12,7 +12,8 @@ import SourceCompare from "./SourceCompare";
 import ContentBox from "./ContentBox";
 import SourceBox from "./SourceBox";
 import Phonetic from "./Phonetic";
-import { CheckIcon, CopyIcon } from "./icons";
+import { playVoice } from "../lib/voice";
+import { ArrowRightIcon, CheckIcon, CopyIcon } from "./icons";
 import { useAutoFitWindow } from "../lib/autofit";
 
 /** 句子判定：英文看空格/标点，中文没空格所以看汉字数（超过两个当句子） */
@@ -477,7 +478,7 @@ export default function Popup() {
                   title="固定译为英文"
                   onClick={() => pickTo("en")}
                 >
-                  → 英文
+                  <ArrowRightIcon /> 英文
                 </button>
                 <button
                   className={shotTo === "zh" ? "active" : ""}
@@ -485,7 +486,7 @@ export default function Popup() {
                   title="固定译为中文"
                   onClick={() => pickTo("zh")}
                 >
-                  → 中文
+                  <ArrowRightIcon /> 中文
                 </button>
               </span>
               <button className="text-btn" disabled={shotLoading} onClick={() => retranslate(draft)}>

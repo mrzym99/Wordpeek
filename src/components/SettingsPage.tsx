@@ -5,6 +5,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import type { AppConfig, PermissionStatus, UpdateStatus } from "../types";
 import { saveBaidu, saveTencent, saveSources, saveSettings, saveSettingsSection } from "../lib/config";
 import HotkeyRecorder from "./HotkeyRecorder";
+import { CheckIcon, StarIcon } from "./icons";
 
 type SettingsSection = "translate" | "hotkey" | "shot" | "perm" | "about" | "other";
 
@@ -511,7 +512,7 @@ export default function SettingsPage() {
             </div>
             <div className="update-tip">
               <span className="tip-text">
-                辅助功能：{perms?.accessibility ? "已授权 ✓" : "未授权"}
+                辅助功能：{perms?.accessibility ? <span className="i-txt">已授权 <CheckIcon /></span> : "未授权"}
               </span>
               <div className="tip-actions">
                 <button
@@ -528,7 +529,7 @@ export default function SettingsPage() {
             </div>
             <div className="update-tip">
               <span className="tip-text">
-                屏幕录制：{perms?.screen_capture ? "已授权 ✓" : "未授权"}
+                屏幕录制：{perms?.screen_capture ? <span className="i-txt">已授权 <CheckIcon /></span> : "未授权"}
               </span>
               <div className="tip-actions">
                 <button
@@ -622,13 +623,13 @@ export default function SettingsPage() {
                     )
                   }
                 >
-                  {copied === "text" ? "已复制 ✓" : "复制推荐语"}
+                  {copied === "text" ? <span className="i-txt">已复制 <CheckIcon /></span> : "复制推荐语"}
                 </button>
                 <button
                   className="update-btn"
                   onClick={() => copyShare("link", REPO_URL)}
                 >
-                  {copied === "link" ? "已复制 ✓" : "复制链接"}
+                  {copied === "link" ? <span className="i-txt">已复制 <CheckIcon /></span> : "复制链接"}
                 </button>
               </div>
             </div>
@@ -638,7 +639,7 @@ export default function SettingsPage() {
                 className="update-btn"
                 onClick={() => openUrl(REPO_URL).catch((e) => setSaveError(String(e)))}
               >
-                去 GitHub 点 Star ⭐
+                <span className="i-txt">去 GitHub 点 Star <StarIcon /></span>
               </button>
               <button
                 className="update-btn"
