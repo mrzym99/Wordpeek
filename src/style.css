@@ -668,6 +668,7 @@ html:not(.is-capped) .shot-text::-webkit-scrollbar {
 /* max-height 用 100vh（= 窗口高）− chrome，窗口长到屏幕上限后剩下的内容才能框内滚动， */
 /* 而不是溢出到窗口外被切掉（chrome 与调用方传给 useAutoFitWindow 的一致） */
 .card-body {
+  position: relative; /* 划词小卡的包含块：小卡绝对定位在内，溢出计入 scrollHeight → 窗口长高包住 */
   flex: 0 1 auto;
   min-height: 0;
   max-height: calc(100vh - 67px); /* padding+border 35 + header 32，与 Popup 传给 hook 的 chrome 一致 */
@@ -820,10 +821,10 @@ html:not(.is-capped) .shot-text::-webkit-scrollbar {
 }
 
 /* ===== 划词小释义卡（issue #7）===== */
-/* fixed 用视口坐标浮动在选区旁，不参与 .card-body 高度，窗口自适应不受影响；
-   位置钳位/上下翻转在 Popup.tsx onCardMouseUp 里算 */
+/* 绝对定位在 .card-body 内、单词正下方：超出卡片底部时会计入 scrollHeight，
+   窗口自适应随之长高包住小卡 → 不被窗口边框裁切，也不用翻到单词上方盖住它 */
 .pop-card {
-  position: fixed;
+  position: absolute;
   z-index: 50;
   width: 250px;
   max-height: 210px;
@@ -847,16 +848,6 @@ html:not(.is-capped) .shot-text::-webkit-scrollbar {
 .pop-word {
   font-size: 15px;
   font-weight: 600;
-}
-.pop-close {
-  margin-left: auto;
-  border: 0;
-  background: none;
-  color: var(--text-faint);
-  font-size: 15px;
-  line-height: 1;
-  cursor: pointer;
-  padding: 0 2px;
 }
 .pop-senses {
   margin-top: 4px;

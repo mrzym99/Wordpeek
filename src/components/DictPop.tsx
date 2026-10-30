@@ -3,26 +3,29 @@ import type { RefObject } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { WordInfo } from "../types";
 
-const POP_W = 262; // 小卡宽 + 边距：横向钳位用
-const POP_H = 220; // 小卡估算高：下方放不下时翻到选区上方
+const POP_W = 252; // 小卡宽：横向钳位用
 
 /**
  * 划词小释义卡（类似百度词典划词）：监听 rootRef 容器内松手，
- * 选中单个单词（拖动选词或双击选词）时在选区旁浮动迷你词典卡，
+ * 选中单个单词（拖动选词或双击选词）时在单词下方弹迷你词典卡，
  * 主内容不变；点「详细释义」把词交给宿主（onOpenDetail）做整卡跳转。
  *
  * - onPlay：发音交给宿主（复用宿主的 Audio 实例）
  * - resetKey：宿主主内容变化（换词/关窗清空）时收起，避免残留旧锚点
- * - 小卡用 position:fixed 视口坐标，不参与宿主内容高度测量（窗口自适应不受影响）；
- *   下方放不下自动翻到选区上方，横向钳位不出窗；任意滚动即收起
+ * - 小卡绝对定位在 anchorRef（滚动内容容器）内：溢出容器底部时会计入
+ *   scrollHeight，宿主的窗口自适应随之长高包住小卡 —— 不被窗口边框裁切，
+ *   也不需要把小卡扣回窗口内盖住单词；收起/展开由 childList 变动自动触发重测
  */
 export default function DictPop({
   rootRef,
+  anchorRef,
   resetKey,
   onOpenDetail,
   onPlay,
 }: {
   rootRef: RefObject<HTMLElement | null>;
+  /** 锚定容器（绝对定位坐标系 + 参与窗口自适应测量的滚动容器） */
+  anchorRef: RefObject<HTMLElement | null>;
   resetKey: unknown;
   onOpenDetail: (w: string) => void;
   onPlay: (w: string, type: 1 | 2) => void;
@@ -58,12 +61,13 @@ export default function DictPop({
         return;
       }
       const rect = !ta && sel && sel.rangeCount ? sel.getRangeAt(0).getBoundingClientRect() : null;
-      const r = rect ?? { left: e.clientX, top: e.clientY, bottom: e.clientY + 4 };
-      const vw = window.innerWidth;
-      const vh = window.innerHeight;
-      const x = Math.min(Math.max(8, r.left), vw - POP_W - 8);
-      let y = r.bottom + 6;
-      if (y + POP_H > vh - 8) y = Math.max(8, r.top - POP_H - 6);
+      // 鼠标锚点兼容 textarea（无 range rect）；坐标换成 anchorRef 容器内相对坐标
+      const vp = rect ?? { left: e.clientX, top: e.clientY, bottom: e.clientY + 4 };
+      const anchor = anchorRef.current;
+      const aRect = anchor?.getBoundingClientRect();
+      if (!anchor || !aRect) return;
+      const x = Math.min(Math.max(4, vp.left - aRect.left), aRect.width - POP_W);
+      const y = vp.bottom - aRect.top + anchor.scrollTop + 6;
       if (w !== wordRef.current) {
         wordRef.current = w;
         const seq = ++seqRef.current;
@@ -78,6 +82,8 @@ export default function DictPop({
           });
       }
       setPop({ word: w, x, y });
+      // shortcut: 同一词在不同位置重复选中时只变 style 属性，MutationObserver(childList) 不触发重测；
+      // 需新位置比旧位置更靠下才会裁到，概率极低；升级方案：暴露 refit 给本组件在 setPop 后调用
     };
     // scroll 不冒泡：捕获阶段挂 document，一个监听覆盖所有滚动容器
     const onScroll = () => setPop(null);
@@ -87,16 +93,13 @@ export default function DictPop({
       root.removeEventListener("mouseup", onMouseUp);
       document.removeEventListener("scroll", onScroll, true);
     };
-  }, [rootRef]);
+  }, [rootRef, anchorRef]);
 
   if (!pop) return null;
   return (
     <div className="pop-card" ref={popRef} style={{ left: pop.x, top: pop.y }}>
       <div className="pop-head">
         <span className="pop-word">{pop.word}</span>
-        <button className="pop-close" title="关闭" onClick={() => setPop(null)}>
-          ×
-        </button>
       </div>
       {info?.usphone && (
         <span className="phonetic" title="播放美音" onClick={() => onPlay(pop.word, 2)}>
