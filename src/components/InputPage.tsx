@@ -21,7 +21,9 @@ export default function InputPage() {
   const [loading, setLoading] = useState(false);
   const [copiedKey, setCopiedKey] = useState("");
   // .input-layout 上下 padding 14×2 + 1px 余量；min 只防塌，空态窗口贴着内容走，避免底部大片空白
-  const { setBody, refit } = useAutoFitWindow("input", 29, 180);
+  // macOS 比 Windows 多一条 28px 自绘头部（Overlay 标题栏），窗口高度要一起加
+  const headHeight = document.documentElement.dataset.os === "mac" ? 28 : 0;
+  const { setBody, refit } = useAutoFitWindow("input", 29 + headHeight, 180);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
@@ -83,6 +85,8 @@ export default function InputPage() {
 
   return (
     <div className="input-layout">
+      {/* macOS 把页面画到标题栏下面了，这条是自绘的头部（拖拽 + 底色），Windows 下隐藏 */}
+      <div className="win-head" data-tauri-drag-region />
       <div className="card-body" ref={setBody}>
         <SourceBox
           value={text}

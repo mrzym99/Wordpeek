@@ -3,11 +3,19 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { AppConfig, PermissionStatus, UpdateStatus } from "../types";
-import { saveBaidu, saveTencent, saveSources, saveSettings, saveSettingsSection } from "../lib/config";
+import {
+  saveBaidu,
+  saveTencent,
+  saveSources,
+  saveSettings,
+  saveSettingsSection,
+  saveTheme,
+} from "../lib/config";
+import { applyTheme, type Theme } from "../lib/theme";
 import HotkeyRecorder from "./HotkeyRecorder";
 import { CheckIcon, StarIcon } from "./icons";
 
-type SettingsSection = "translate" | "hotkey" | "shot" | "perm" | "about" | "other";
+type SettingsSection = "translate" | "hotkey" | "shot" | "appearance" | "perm" | "about" | "other";
 
 /** macOS 需要在系统设置里手动授权；Windows 无此概念，菜单也不显示 */
 const IS_MAC = navigator.userAgent.includes("Macintosh");
@@ -16,9 +24,17 @@ const SECTIONS: { id: SettingsSection; label: string }[] = [
   { id: "translate", label: "翻译" },
   { id: "hotkey", label: "快捷键" },
   { id: "shot", label: "截图翻译" },
+  { id: "appearance", label: "外观" },
   ...(IS_MAC ? [{ id: "perm" as const, label: "系统权限" }] : []),
   { id: "about", label: "关于" },
   { id: "other", label: "其他" },
+];
+
+/** 外观主题三档（顺序即显示顺序） */
+const THEMES: { id: Theme; label: string }[] = [
+  { id: "system", label: "跟随系统" },
+  { id: "light", label: "亮色" },
+  { id: "dark", label: "暗色" },
 ];
 
 /** 项目仓库地址，推荐/反馈共用 */
@@ -68,6 +84,7 @@ export default function SettingsPage() {
   const [screenshotHotkey, setScreenshotHotkey] = useState("Ctrl+Alt+S");
   const [inputHotkey, setInputHotkey] = useState("Ctrl+Alt+I");
   const [ocrLang, setOcrLang] = useState("auto");
+  const [theme, setTheme] = useState<Theme>("system");
   const [saveError, setSaveError] = useState("");
   // get_config 重试耗尽：表单停在默认值，此时绝不能允许保存（会把默认值覆盖到真配置上）
   const [loadFailed, setLoadFailed] = useState(false);
@@ -164,6 +181,7 @@ export default function SettingsPage() {
           setScreenshotHotkey(cfg.screenshot_hotkey || "Ctrl+Alt+S");
           setInputHotkey(cfg.input_hotkey || "Ctrl+Alt+I");
           setOcrLang(cfg.ocr_lang || "auto");
+          setTheme(cfg.theme ?? "system");
           // 回到上次停留的一级菜单（切页时已落盘；配置里没有/非法就留在默认）
           const saved = SECTIONS.find((s) => s.id === cfg.settings_section)?.id;
           if (saved) setSection(saved);
@@ -290,10 +308,13 @@ export default function SettingsPage() {
 
   return (
     <div className="settings-layout">
+      {/* macOS 自绘头部：与左侧菜单同色，Windows 下隐藏（原生标题栏还在） */}
+      <div className="win-head" data-tauri-drag-region />
       <div className="settings-nav">
         {SECTIONS.map((s) => (
-          <div
+          <button
             key={s.id}
+            type="button"
             className={`nav-item ${section === s.id ? "active" : ""}`}
             onClick={() => {
               setSection(s.id);
@@ -302,7 +323,7 @@ export default function SettingsPage() {
             }}
           >
             {s.label}
-          </div>
+          </button>
         ))}
       </div>
 
@@ -393,14 +414,15 @@ export default function SettingsPage() {
               <div className="config-split">
                 <div className="config-menu">
                   {SOURCE_ITEMS.map((s) => (
-                    <div
+                    <button
                       key={s.id}
+                      type="button"
                       className={"config-menu-item" + (cfgSrc === s.id ? " active" : "")}
                       onClick={() => setCfgSrc(s.id as "baidu" | "tencent")}
                     >
                       {s.label.replace("（需密钥）", "")}
                       {ready(s.id) && <span className="config-dot" title="已配置" />}
-                    </div>
+                    </button>
                   ))}
                 </div>
                 <div className="config-form">
@@ -543,6 +565,35 @@ export default function SettingsPage() {
                   打开设置
                 </button>
               </div>
+            </div>
+          </>
+        )}
+
+        {section === "appearance" && (
+          <>
+            <div className="section-heading">外观</div>
+            <div className="field">
+              主题
+              <div className="lang-toggle">
+                {THEMES.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    className={theme === t.id ? "active" : ""}
+                    onClick={() => {
+                      setTheme(t.id);
+                      // 设置窗口自己先变，其它窗口下次获得焦点时按配置跟上
+                      applyTheme(t.id);
+                      saveTheme(t.id).catch(() => {});
+                    }}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="field-hint">
+              跟随系统时，系统切换深浅色后弹窗立即跟着变；手动指定则固定不变。
             </div>
           </>
         )}

@@ -36,3 +36,8 @@ export function savePopupWidth(width: number) {
 export function saveSettingsSection(section: string) {
   return invoke("save_settings_section", { section });
 }
+
+/** 外观主题（外观 tab）：system | light | dark */
+export function saveTheme(theme: "system" | "light" | "dark") {
+  return invoke("save_theme", { theme });
+}

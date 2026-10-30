@@ -55,6 +55,9 @@ pub struct AppConfig {
     /// 设置窗口上次停留的一级菜单：切页即落盘，重开设置窗口时回到上次页
     #[serde(default = "default_settings_section")]
     pub settings_section: String,
+    /// 外观主题："system"（跟随系统）| "light" | "dark"
+    #[serde(default = "default_theme")]
+    pub theme: String,
     #[serde(default)]
     pub baidu: BaiduConfig,
     #[serde(default)]
@@ -91,6 +94,10 @@ fn default_popup_width() -> f64 {
 
 fn default_settings_section() -> String {
     "translate".into()
+}
+
+fn default_theme() -> String {
+    "system".into()
 }
 
 /// 默认无额外源：主翻译内置（单词→有道、句子→必应），额外源由用户自己勾选
@@ -144,6 +151,7 @@ impl Default for AppConfig {
             builtin_sources: default_builtin_sources(),
             popup_width: default_popup_width(),
             settings_section: default_settings_section(),
+            theme: default_theme(),
             baidu: BaiduConfig::default(),
             tencent: TencentConfig::default(),
         }
@@ -537,6 +545,22 @@ pub fn save_settings_section(
         return Ok(());
     }
     guard.settings_section = section;
+    write_config(&path, &guard)
+}
+
+/// 外观主题：system / light / dark。直接写盘不走 persist（不碰快捷键，不发 config-changed），
+/// 各窗口下次加载/获得焦点时自己按 get_config 重新落地
+#[tauri::command]
+pub fn save_theme(app: AppHandle, state: State<SharedConfig>, theme: String) -> Result<(), String> {
+    if !matches!(theme.as_str(), "system" | "light" | "dark") {
+        return Err(format!("未知主题: {theme}"));
+    }
+    let path = config_path(&app).ok_or("无法定位配置目录")?;
+    let mut guard = state.lock();
+    if guard.theme == theme {
+        return Ok(());
+    }
+    guard.theme = theme;
     write_config(&path, &guard)
 }
 

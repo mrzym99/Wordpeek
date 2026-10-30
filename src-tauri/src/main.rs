@@ -25,6 +25,8 @@ struct Selection {
 
 /// 模拟复制键抓取当前选中文本，并把原剪贴板内容还原
 fn grab_selection(app: &AppHandle) -> Option<String> {
+    // 诊断打印：foreground_app 只有 Windows 实现（macOS 要走 NSWorkspace，暂不缺）
+    #[cfg(windows)]
     println!("[grab] foreground app: {}", crate::platform::foreground_app());
     let mut clipboard = Clipboard::new().ok()?;
 
@@ -246,17 +248,24 @@ fn open_settings(app: AppHandle) {
     let for_builder = app.clone();
     // Windows 上 webview 窗口必须在事件循环线程创建，托盘/齿轮回调不保证在主线程
     let spawn = app.run_on_main_thread(move || {
-        if let Err(e) = tauri::WebviewWindowBuilder::new(
+        let mut builder = tauri::WebviewWindowBuilder::new(
             &for_builder,
             "settings",
             tauri::WebviewUrl::App("/?page=settings".into()),
         )
         .title("Wordpeek 设置")
-        .inner_size(500.0, 360.0)
+        .inner_size(600.0, 440.0)
         .resizable(false)
         .visible(false)
-        .disable_drag_drop_handler()
-        .build()
+        .disable_drag_drop_handler();
+        // macOS：页面画到标题栏下面（Overlay），头部那条底色由前端画，交通灯浮在上面
+        #[cfg(target_os = "macos")]
+        {
+            builder = builder
+                .title_bar_style(tauri::TitleBarStyle::Overlay)
+                .hidden_title(true);
+        }
+        if let Err(e) = builder.build()
         {
             eprintln!("[settings] 创建窗口失败: {e}");
         }
@@ -278,7 +287,7 @@ fn open_input_window(app: &AppHandle) {
     let for_builder = app.clone();
     // Windows 上 webview 窗口必须在事件循环线程创建，快捷键/托盘回调不保证在主线程
     let spawn = app.run_on_main_thread(move || {
-        if let Err(e) = tauri::WebviewWindowBuilder::new(
+        let mut builder = tauri::WebviewWindowBuilder::new(
             &for_builder,
             "input",
             tauri::WebviewUrl::App("/?page=input".into()),
@@ -286,8 +295,15 @@ fn open_input_window(app: &AppHandle) {
         .title("Wordpeek 输入翻译")
         .inner_size(460.0, 240.0)
         .resizable(true)
-        .visible(false)
-        .build()
+        .visible(false);
+        // macOS：同设置窗口，头部底色由前端画
+        #[cfg(target_os = "macos")]
+        {
+            builder = builder
+                .title_bar_style(tauri::TitleBarStyle::Overlay)
+                .hidden_title(true);
+        }
+        if let Err(e) = builder.build()
         {
             eprintln!("[input] 创建窗口失败: {e}");
         }
@@ -921,7 +937,8 @@ fn main() {
             translate::save_tencent,
             translate::save_settings,
             translate::save_popup_width,
-            translate::save_settings_section
+            translate::save_settings_section,
+            translate::save_theme
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

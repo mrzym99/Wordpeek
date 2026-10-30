@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { getVersion } from "@tauri-apps/api/app";
 import { PhysicalPosition } from "@tauri-apps/api/dpi";
 import { savePopupWidth } from "../lib/config";
 import type { AppConfig, Selection, ShotResult, SourceResult, WordInfo } from "../types";
@@ -27,10 +26,6 @@ export default function Popup() {
   // 卡片内容高度上报给 Rust，窗口按内容收缩（防止透明区域吞掉下层窗口的点击）
   // padding+border 35 + header 32；最小高度防查词时塌成一条，上限交给 Rust 按屏幕钳制
   const { setBody, refit } = useAutoFitWindow("main", 67, 190);
-  const [appVersion, setAppVersion] = useState("");
-  useEffect(() => {
-    getVersion().then(setAppVersion).catch(() => {});
-  }, []);
   const [word, setWord] = useState("");
   // 最近一次实际发起查词的词：改词框失焦时只在真正变化后才重查，避免回车+失焦查两次
   const lastLooked = useRef("");
@@ -387,9 +382,9 @@ export default function Popup() {
       <div className="drag-strip" data-tauri-drag-region />
       {/* header 固定不随内容滚动；body 才是滚动区 */}
       <div className="word-head">
+        {/* 品牌独占标题行左侧；版本号留在设置 → 关于，弹窗里只留名字 */}
         <div className="app-title">
           Wordpeek<span className="app-beta">beta</span>
-          {appVersion && <span className="app-version">v{appVersion}</span>}
         </div>
         {/* 对比各源：固定标题行右上角，两种模式都有（设置入口在托盘菜单，不占弹窗标题行） */}
         <div className="head-actions">
@@ -543,7 +538,10 @@ export default function Popup() {
               <div className="word-forms">
                 {info.word_forms.map((f, i) => (
                   <span key={i} className="word-form">
-                    {f.name} <b onClick={() => lookup(f.value)}>{f.value}</b>
+                    {f.name}{" "}
+                    <button type="button" className="link-btn" onClick={() => lookup(f.value)}>
+                      {f.value}
+                    </button>
                   </span>
                 ))}
               </div>
@@ -557,9 +555,14 @@ export default function Popup() {
               </div>
               <div className="synos">
                 {g.words.map((w) => (
-                  <span key={w} className="syno" onClick={() => lookup(w)}>
+                  <button
+                    key={w}
+                    type="button"
+                    className="syno"
+                    onClick={() => lookup(w)}
+                  >
                     {w}
-                  </span>
+                  </button>
                 ))}
               </div>
             </div>

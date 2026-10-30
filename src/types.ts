@@ -27,6 +27,8 @@ export interface AppConfig {
   builtin_sources: boolean;
   /** 设置窗口上次停留的一级菜单，重开时恢复 */
   settings_section?: string;
+  /** 外观主题：跟随系统 / 强制亮 / 强制暗 */
+  theme?: "system" | "light" | "dark";
   baidu: BaiduConfig;
   tencent: TencentConfig;
 }
