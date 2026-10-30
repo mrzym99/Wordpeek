@@ -818,3 +818,56 @@ html:not(.is-capped) .shot-text::-webkit-scrollbar {
   flex: 1;
   min-width: 0;
 }
+
+/* ===== 划词小释义卡（issue #7）===== */
+/* fixed 用视口坐标浮动在选区旁，不参与 .card-body 高度，窗口自适应不受影响；
+   位置钳位/上下翻转在 Popup.tsx onCardMouseUp 里算 */
+.pop-card {
+  position: fixed;
+  z-index: 50;
+  width: 250px;
+  max-height: 210px;
+  overflow: hidden;
+  padding: 10px 12px;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow:
+    0 0 0 1px rgba(15, 15, 15, 0.05),
+    0 3px 6px rgba(15, 15, 15, 0.1),
+    0 9px 24px rgba(15, 15, 15, 0.2);
+  font-size: 12.5px;
+  line-height: 1.55;
+  user-select: text;
+}
+.pop-head {
+  display: flex;
+  align-items: baseline;
+}
+.pop-word {
+  font-size: 15px;
+  font-weight: 600;
+}
+.pop-close {
+  margin-left: auto;
+  border: 0;
+  background: none;
+  color: var(--text-faint);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.pop-senses {
+  margin-top: 4px;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.pop-loading {
+  color: var(--text-faint);
+}
+.pop-more {
+  margin-top: 6px;
+}

@@ -36,6 +36,12 @@ export default function Popup() {
   const seqRef = useRef(0);
   const [info, setInfo] = useState<WordInfo | null>(null);
   const [error, setError] = useState("");
+  // 划词小释义卡（issue #7）：选中正文单词后贴近选区浮动的迷你词典卡，主卡不变
+  const [pop, setPop] = useState<{ word: string; x: number; y: number } | null>(null);
+  const [popInfo, setPopInfo] = useState<WordInfo | null>(null);
+  const popRef = useRef<HTMLDivElement | null>(null);
+  // 小卡查词序号：丢弃晚到的旧结果；小卡自身不走主卡的 seqRef/lastLooked
+  const popSeq = useRef(0);
   // 多源对比：开启时在卡片底部追加各源译文（不隐藏原有内容）
   const [compareOpen, setCompareOpen] = useState(false);
   // 已勾选的额外源个数：0 时隐藏「对比各源」按钮（persist 保证 sources 里
@@ -219,6 +225,8 @@ export default function Popup() {
           setCompareLoading(false);
           setCompareError("");
           setCopied("");
+          setPop(null);
+          setPopInfo(null);
         }
       }, 150);
     };
@@ -324,6 +332,7 @@ export default function Popup() {
   // 点击同义词 / 词形变化：在弹窗内继续查词，不重新定位窗口
   // seq 计数保证慢的旧请求不会覆盖新查询的结果
   const lookup = async (w: string) => {
+    setPop(null); // 主卡换词时收起旧的划词小卡
     lastLooked.current = w;
     setWord(w);
     setInfo(null);
@@ -359,18 +368,41 @@ export default function Popup() {
     audio.play();
   };
 
-  // 双击卡片正文任意单词（释义/例句/对比译文）跳转查该词，类似百度词典：
-  // 双击时浏览器按分词选中那个词（.card 开了 user-select: text），直接取选区文本。
-  // 输入框/按钮里跳过：那里双击是编辑选词/连点功能，不是查词
-  const onCardDoubleClick = (e: MouseEvent<HTMLDivElement>) => {
+  // 划词触发（同百度词典）：在卡片正文拖动选词或双击选词后松手，选中单词则
+  // 在选区旁弹小释义卡；空选区/整句选中则收起。小卡用 position:fixed 视口坐标，
+  // 不参与 .card-body 高度测量，不会干扰窗口自适应
+  const POP_W = 262; // 小卡宽 + 边距：横向钳位用
+  const POP_H = 220; // 小卡估算高：下方放不下时翻到选区上方
+  const onCardMouseUp = (e: MouseEvent<HTMLDivElement>) => {
     const t = e.target as HTMLElement;
+    if (popRef.current?.contains(t)) return; // 小卡内部的选择/点击不重置小卡
     if (t.closest("input, textarea, button, .phonetic")) return;
-    const w =
-      window.getSelection()?.toString().trim().replace(/^[\p{P}\p{S}]+|[\p{P}\p{S}]+$/gu, "") ?? "";
-    // 只查单个词：含空白/超长（整句选中）不动
-    if (!w || w.length > 30 || /\s/.test(w)) return;
-    if (w === lastLooked.current) return; // 同义词单点已查过同一个词，不重发请求
-    lookup(w);
+    const sel = window.getSelection();
+    const w = (sel?.toString() ?? "").trim().replace(/^[\p{P}\p{S}]+|[\p{P}\p{S}]+$/gu, "");
+    // 只认单个词：空白（普通单击）或含空白的整句选中 → 收起小卡
+    if (!w || w.length > 30 || /\s/.test(w)) {
+      setPop(null);
+      return;
+    }
+    const rect = sel && sel.rangeCount ? sel.getRangeAt(0).getBoundingClientRect() : null;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const x = Math.min(Math.max(8, rect?.left ?? 8), vw - POP_W - 8);
+    let y = (rect?.bottom ?? vh) + 6;
+    if (y + POP_H > vh - 8) y = Math.max(8, (rect?.top ?? vh) - POP_H - 6);
+    if (w !== pop?.word) {
+      const seq = ++popSeq.current;
+      setPopInfo(null);
+      invoke<WordInfo>("translate", { text: w })
+        .then((res) => {
+          if (popSeq.current === seq) setPopInfo(res);
+        })
+        .catch(() => {
+          // 查不到就静默收起（非词文本、网络错都走这里）
+          if (popSeq.current === seq) setPop(null);
+        });
+    }
+    setPop({ word: w, x, y });
   };
 
   // 截图重新翻译进行中：info/error 均空且原文存在
@@ -383,7 +415,7 @@ export default function Popup() {
   ) ?? null;
 
   return (
-    <div className="card" onDoubleClick={onCardDoubleClick}>
+    <div className="card" onMouseUp={onCardMouseUp} onScroll={() => setPop(null)}>
       {/* 顶部 padding 区是隐形拖拽热区：按住可移动窗口；窗口边缘仍可拉伸 */}
       <div className="drag-strip" data-tauri-drag-region />
       {/* header 固定不随内容滚动；body 才是滚动区 */}
@@ -413,7 +445,7 @@ export default function Popup() {
         </div>
       </div>
 
-      <div className="card-body" ref={setBody}>
+      <div className="card-body" ref={setBody} onScroll={() => setPop(null)}>
       {error && <div className="error">{error}</div>}
       {!inShot && !info && !error && <div className="loading">翻译中...</div>}
 
@@ -591,6 +623,39 @@ export default function Popup() {
       )}
 
       </div>
+
+      {/* 划词小释义卡：fixed 定位在选区旁，只显前几条释义；「详细释义」才把主卡切到该词 */}
+      {pop && (
+        <div className="pop-card" ref={popRef} style={{ left: pop.x, top: pop.y }}>
+          <div className="pop-head">
+            <span className="pop-word">{pop.word}</span>
+            <button className="pop-close" title="关闭" onClick={() => setPop(null)}>
+              ×
+            </button>
+          </div>
+          {popInfo?.usphone && (
+            <span className="phonetic" title="播放美音" onClick={() => playVoice(pop.word, 2)}>
+              🔊 {popInfo.usphone}
+            </span>
+          )}
+          <div className="pop-senses">
+            {popInfo ? (
+              popInfo.senses.slice(0, 3).map((s, i) => <div key={i}>{s}</div>)
+            ) : (
+              <div className="pop-loading">查询中…</div>
+            )}
+          </div>
+          <button
+            className="text-btn pop-more"
+            onClick={() => {
+              const w = pop.word;
+              lookup(w);
+            }}
+          >
+            详细释义
+          </button>
+        </div>
+      )}
     </div>
   );
 }
