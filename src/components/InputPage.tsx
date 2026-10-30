@@ -4,7 +4,9 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { SourceResult, WordInfo } from "../types";
 import { useAutoFitWindow } from "../lib/autofit";
 import SourceCompare from "./SourceCompare";
+import type { CompareRow } from "./SourceCompare";
 import SourceBox from "./SourceBox";
+import Phonetic from "./Phonetic";
 
 /** 输入翻译窗口（?page=input）：打字/粘贴 → 默认翻译 + 勾选的额外源逐源给出译文，目标语言可智能/手动切换 */
 export default function InputPage() {
@@ -123,9 +125,27 @@ export default function InputPage() {
           // 默认源一行排最前（有道/必应看成一个源，各司其职），额外源跟在后面；
           // 主翻译本身就是某个额外源时跳过该行避免重复
           if (!rows) return null;
-          const all: SourceResult[] = [
+          const all: CompareRow[] = [
             ...(defaultInfo
-              ? [{ source: "default", label: "默认翻译", ok: true, senses: defaultInfo.senses, error: null }]
+              ? [{
+                  source: "default",
+                  label: "默认翻译",
+                  ok: true,
+                  senses: defaultInfo.senses,
+                  error: null,
+                  // 查到音标＝有道单词条目：在默认翻译行内补上与划词同款的「单词 + 音标」行，句子无音标不显示
+                  wordLine:
+                    defaultInfo.usphone || defaultInfo.ukphone ? (
+                      <div className="word-line">
+                        <span className="word-big">{defaultInfo.word}</span>
+                        <Phonetic
+                          word={defaultInfo.word}
+                          usphone={defaultInfo.usphone}
+                          ukphone={defaultInfo.ukphone}
+                        />
+                      </div>
+                    ) : undefined,
+                }]
               : []),
             ...rows.filter((r) => r.source !== defaultInfo?.source),
           ];

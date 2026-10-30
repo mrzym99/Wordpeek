@@ -10,6 +10,7 @@ import SenseList from "./SenseList";
 import SourceCompare from "./SourceCompare";
 import ContentBox from "./ContentBox";
 import SourceBox from "./SourceBox";
+import Phonetic from "./Phonetic";
 import { CheckIcon, CopyIcon } from "./icons";
 import { useAutoFitWindow } from "../lib/autofit";
 
@@ -339,24 +340,6 @@ export default function Popup() {
     }
   };
 
-  // 播放有道词典发音，只按单词字符串取音，与当前翻译源无关。
-  // 复用同一个 Audio：每次 new 会各留一份解码器等 GC，高频点发音会堆内存
-  // type=2 美音 / type=1 英音 / type=0 通用 TTS 兜底
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const playVoice = (w: string, type: 1 | 2) => {
-    const url = (t: number) =>
-      `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(w)}&type=${t}`;
-    const audio = audioRef.current ?? new Audio();
-    audioRef.current = audio;
-    audio.src = url(type);
-    // 个别词条缺指定音色录音（接口返回 500），退回通用发音
-    audio.onerror = () => {
-      audio.onerror = null;
-      audio.src = url(0);
-      audio.play();
-    };
-    audio.play();
-  };
 
   // 截图重新翻译进行中：info/error 均空且原文存在
   const shotLoading = inShot && !!shotResult!.text && !shotResult!.info && !shotResult!.error;
@@ -420,17 +403,8 @@ export default function Popup() {
               if (w && w !== lastLooked.current) lookup(w);
             }}
           />
-          {/* 点击播放有道词典发音（type=2 美音 / type=1 英音），与翻译源无关 */}
-          {info.usphone && (
-            <span className="phonetic" title="播放美音" onClick={() => playVoice(info.word, 2)}>
-              🔊 美 {info.usphone}
-            </span>
-          )}
-          {info.ukphone && (
-            <span className="phonetic" title="播放英音" onClick={() => playVoice(info.word, 1)}>
-              🔊 英 {info.ukphone}
-            </span>
-          )}
+          {/* 点击播放有道词典发音（美音/英音），与翻译源无关 */}
+          <Phonetic word={info.word} usphone={info.usphone} ukphone={info.ukphone} />
         </div>
       )}
       {!inShot && info && info.source !== "youdao" && (
