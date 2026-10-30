@@ -48,7 +48,7 @@ html, body, #root {
   height: 24px;
   margin-bottom: 8px;
 }
-/* 右上角按钮组：对比各源 + 设置，两种模式都固定在标题行右上 */
+/* 右上角按钮组：对比各源，两种模式都固定在标题行右上 */
 .head-actions {
   position: absolute;
   right: 0;
@@ -241,11 +241,6 @@ html, body, #root {
 .icon-btn { display: inline-flex; align-items: center; justify-content: center; padding: 0; }
 .icon-btn.ok { color: #22a06b; }
 .icon-btn:hover { color: var(--text); }
-.icon-btn.gear {
-  z-index: 1; /* 盖过顶部拖拽热区，保证可点击（定位由 .word-head 内规则控制） */
-  font-size: 18px; /* 比其他图标按钮大一号，更好点按 */
-  padding: 2px;
-}
 
 /* 独立设置窗口：左侧菜单 + 右侧内容，保存按钮贴底 */
 .settings-layout {
