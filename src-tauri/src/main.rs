@@ -145,13 +145,34 @@ fn monitor_rect_at(win: &tauri::WebviewWindow, x: i32, y: i32) -> Option<(i32, i
     Some((p.x, p.y, s.width as i32, s.height as i32))
 }
 
+/// 位置钳制矩形：优先工作区（macOS 排除菜单栏与 Dock，Windows 排除任务栏），
+/// 拿不到工作区（全 0）才退回显示器整块。用整块钳会让贴底的卡片钻到 Dock 下面。
+fn clamp_rect_prefer_work(
+    work: (i32, i32, i32, i32),
+    monitor: Option<(i32, i32, i32, i32)>,
+) -> Option<(i32, i32, i32, i32)> {
+    if work.2 > 0 && work.3 > 0 {
+        Some(work)
+    } else {
+        monitor
+    }
+}
+
+/// 光标所在处的位置钳制矩形（见 clamp_rect_prefer_work）
+fn usable_rect_at(win: &tauri::WebviewWindow, x: i32, y: i32) -> Option<(i32, i32, i32, i32)> {
+    clamp_rect_prefer_work(
+        crate::platform::work_area_at(x, y),
+        monitor_rect_at(win, x, y),
+    )
+}
+
 /// 把弹窗位置钳制在光标所在屏幕内，避免边缘选词时弹窗伸出屏幕外。
 /// 任一步骤拿不到信息（找不到窗口/显示器）就原样返回，不钳制。
 fn clamp_to_screen(app: &AppHandle, label: &str, x: i32, y: i32) -> (i32, i32) {
     let Some(win) = app.get_webview_window(label) else {
         return (x, y);
     };
-    let Some(rect) = monitor_rect_at(&win, x, y) else {
+    let Some(rect) = usable_rect_at(&win, x, y) else {
         return (x, y);
     };
     let Ok(win_size) = win.outer_size() else {
@@ -165,7 +186,7 @@ fn clamp_to_screen(app: &AppHandle, label: &str, x: i32, y: i32) -> (i32, i32) {
         y,
     );
     println!(
-        "[pos] cursor ({x}, {y}) -> clamped ({cx}, {cy}); monitor {rect:?}, window {win_size:?}"
+        "[pos] cursor ({x}, {y}) -> clamped ({cx}, {cy}); work area {rect:?}, window {win_size:?}"
     );
     (cx, cy)
 }
@@ -226,13 +247,34 @@ fn fit_window(app: AppHandle, label: String, height: f64, viewport: Option<f64>)
     // 物理高钳位，卡片会伸出屏幕底 (scale−1)×高，内容被裁掉又没滚动条，只能拖窗口（issue #8）
     let new_w = to_physical(inner_w + chrome_w, scale);
     let new_h = to_physical(inner_h + chrome_h, scale);
-    let (nx, ny) = match monitor_rect_at(&win, pos.x + 8, pos.y + 8) {
+    let (nx, ny) = match usable_rect_at(&win, pos.x + 8, pos.y + 8) {
         Some(rect) => clamp_rect_to_monitor(rect, new_w, new_h, pos.x, pos.y),
         None => (pos.x, pos.y),
     };
     win.set_position(tauri::PhysicalPosition::new(nx, ny))
         .map_err(|e| e.to_string())?;
     Ok(inner_h)
+}
+
+/// 把窗口摆到主屏工作区中央（macOS 上 Dock / 菜单栏、Windows 上任务栏不会遮住它）。
+/// 不用 win.center()：它按整块屏幕居中，而且窗口还隐藏时可能取不到屏幕直接 no-op。
+fn center_window(win: &tauri::WebviewWindow) {
+    let Ok(Some(mon)) = win.primary_monitor() else {
+        return;
+    };
+    let p = mon.position();
+    let s = mon.size();
+    let full = (p.x, p.y, s.width as i32, s.height as i32);
+    let rect = clamp_rect_prefer_work(
+        crate::platform::work_area_at(p.x + full.2 / 2, p.y + full.3 / 2),
+        Some(full),
+    );
+    let (Some(rect), Ok(os)) = (rect, win.outer_size()) else {
+        return;
+    };
+    let x = rect.0 + (rect.2 - os.width as i32) / 2;
+    let y = rect.1 + (rect.3 - os.height as i32) / 2;
+    let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
 }
 
 /// 显示独立的设置窗口（弹窗齿轮按钮 / 托盘菜单共用）。/// 不常驻：没建过就按需创建为隐藏态，内容就绪后由前端自己 show；
@@ -265,9 +307,10 @@ fn open_settings(app: AppHandle) {
                 .title_bar_style(tauri::TitleBarStyle::Overlay)
                 .hidden_title(true);
         }
-        if let Err(e) = builder.build()
-        {
-            eprintln!("[settings] 创建窗口失败: {e}");
+        // 首次创建摆到屏幕中央；已打开时只 show，尊重用户拖到的位置
+        match builder.build() {
+            Ok(win) => center_window(&win),
+            Err(e) => eprintln!("[settings] 创建窗口失败: {e}"),
         }
     });
     if let Err(e) = spawn {
@@ -303,9 +346,9 @@ fn open_input_window(app: &AppHandle) {
                 .title_bar_style(tauri::TitleBarStyle::Overlay)
                 .hidden_title(true);
         }
-        if let Err(e) = builder.build()
-        {
-            eprintln!("[input] 创建窗口失败: {e}");
+        match builder.build() {
+            Ok(win) => center_window(&win),
+            Err(e) => eprintln!("[input] 创建窗口失败: {e}"),
         }
     });
     if let Err(e) = spawn {
@@ -383,7 +426,7 @@ fn install_update(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// 解析 "Ctrl+Alt+T" 形式的快捷键字符串
+/// 解析 "Alt+Z" 形式的快捷键字符串
 pub(crate) fn parse_hotkey(s: &str) -> Result<Shortcut, String> {
     let mut mods = Modifiers::empty();
     let mut key: Option<Code> = None;
@@ -978,6 +1021,20 @@ mod tests {
         assert_eq!(fit_height(1100.0, 1040.0, 31.0), 969.0); // 有标题栏：上限再扣掉标题栏
         assert_eq!(fit_height(900.0, 0.0, 0.0), 800.0); // 拿不到工作区 → 退回 800
         assert_eq!(fit_height(9000.0, 50.0, 31.0), 60.0); // 工作区极小时不低于下限
+    }
+
+    #[test]
+    fn clamp_rect_prefers_work_area_so_dock_does_not_cover_card() {
+        // macOS 屏 1512×982，Dock 在底部：工作区高 871（差 111）
+        let monitor = (0, 0, 1512, 982);
+        let work = (0, 25, 1512, 871);
+        assert_eq!(clamp_rect_prefer_work(work, Some(monitor)), Some(work));
+        // 卡片贴底：整屏钳会停在 y=682（底边 982，被 Dock 盖住），工作区钳停在 596（底边 896）
+        assert_eq!(clamp_rect_to_monitor(monitor, 340, 300, 100, 900), (100, 682));
+        assert_eq!(clamp_rect_to_monitor(work, 340, 300, 100, 900), (100, 596));
+        // 拿不到工作区（全 0）时退回整屏，不能不钳制
+        assert_eq!(clamp_rect_prefer_work((0, 0, 0, 0), Some(monitor)), Some(monitor));
+        assert_eq!(clamp_rect_prefer_work((0, 0, 0, 0), None), None);
     }
 
     #[test]

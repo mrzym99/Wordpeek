@@ -80,9 +80,9 @@ export default function SettingsPage() {
   const [tcKey, setTcKey] = useState("");
   // 源配置 tab 当前在编辑哪个源的密钥
   const [cfgSrc, setCfgSrc] = useState<"baidu" | "tencent">("baidu");
-  const [hotkey, setHotkey] = useState("Ctrl+Alt+T");
-  const [screenshotHotkey, setScreenshotHotkey] = useState("Ctrl+Alt+S");
-  const [inputHotkey, setInputHotkey] = useState("Ctrl+Alt+I");
+  const [hotkey, setHotkey] = useState("Alt+Z");
+  const [screenshotHotkey, setScreenshotHotkey] = useState("Alt+S");
+  const [inputHotkey, setInputHotkey] = useState("Alt+X");
   const [ocrLang, setOcrLang] = useState("auto");
   const [theme, setTheme] = useState<Theme>("system");
   const [saveError, setSaveError] = useState("");
@@ -177,9 +177,9 @@ export default function SettingsPage() {
           setTcKey(cfg.tencent?.secret_key ?? "");
           // 配置里勾着需密钥的源但密钥为空：本地显示为未勾选（下次保存会真正剥掉）
           setSources((cfg.sources ?? []).filter((s) => sourceReady(s, cfg)));
-          setHotkey(cfg.hotkey || "Ctrl+Alt+T");
-          setScreenshotHotkey(cfg.screenshot_hotkey || "Ctrl+Alt+S");
-          setInputHotkey(cfg.input_hotkey || "Ctrl+Alt+I");
+          setHotkey(cfg.hotkey || "Alt+Z");
+          setScreenshotHotkey(cfg.screenshot_hotkey || "Alt+S");
+          setInputHotkey(cfg.input_hotkey || "Alt+X");
           setOcrLang(cfg.ocr_lang || "auto");
           setTheme(cfg.theme ?? "system");
           // 回到上次停留的一级菜单（切页时已落盘；配置里没有/非法就留在默认）

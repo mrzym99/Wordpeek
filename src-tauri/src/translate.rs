@@ -34,10 +34,10 @@ pub struct AppConfig {
     /// 参与翻译的源，按优先级排序（空 = 未设置过，加载时迁移补默认）
     #[serde(default)]
     pub sources: Vec<String>,
-    /// 划词快捷键，如 "Ctrl+Alt+T"
+    /// 划词快捷键，如 "Alt+Z"
     #[serde(default = "default_hotkey")]
     pub hotkey: String,
-    /// 截图翻译快捷键，如 "Ctrl+Alt+S"
+    /// 截图翻译快捷键，如 "Alt+S"
     #[serde(default = "default_screenshot_hotkey")]
     pub screenshot_hotkey: String,
     /// 截图 OCR 识别语言："auto" | "zh" | "en"
@@ -46,7 +46,7 @@ pub struct AppConfig {
     /// 内置默认源（有道词典/必应翻译）是否启用；关闭后仅用勾选的额外源
     #[serde(default = "default_builtin_sources")]
     pub builtin_sources: bool,
-    /// 输入翻译窗口的唤出快捷键，如 "Ctrl+Alt+I"
+    /// 输入翻译窗口的唤出快捷键，如 "Alt+X"
     #[serde(default = "default_input_hotkey")]
     pub input_hotkey: String,
     /// 划词弹窗宽度（逻辑像素）：用户拖拽后落盘，重启恢复；高度自适应不存
@@ -69,11 +69,11 @@ fn default_source() -> String {
 }
 
 fn default_hotkey() -> String {
-    "Ctrl+Alt+T".into()
+    "Alt+Z".into()
 }
 
 fn default_screenshot_hotkey() -> String {
-    "Ctrl+Alt+S".into()
+    "Alt+S".into()
 }
 
 fn default_ocr_lang() -> String {
@@ -85,7 +85,7 @@ fn default_builtin_sources() -> bool {
 }
 
 fn default_input_hotkey() -> String {
-    "Ctrl+Alt+I".into()
+    "Alt+X".into()
 }
 
 fn default_popup_width() -> f64 {
@@ -1008,7 +1008,7 @@ mod tests {
     fn config_defaults_fill_screenshot_fields() {
         // 旧配置文件没有这两个新字段，serde 默认值必须兜底
         let cfg: AppConfig = serde_json::from_str("{}").unwrap();
-        assert_eq!(cfg.screenshot_hotkey, "Ctrl+Alt+S");
+        assert_eq!(cfg.screenshot_hotkey, "Alt+S");
         assert_eq!(cfg.ocr_lang, "auto");
     }
 
@@ -1140,7 +1140,7 @@ mod tests {
     fn config_defaults_fill_input_hotkey() {
         // 旧配置文件没有这个字段，serde 默认值必须兜底
         let cfg: AppConfig = serde_json::from_str("{}").unwrap();
-        assert_eq!(cfg.input_hotkey, "Ctrl+Alt+I");
+        assert_eq!(cfg.input_hotkey, "Alt+X");
         assert_eq!(cfg.popup_width, 400.0);
         assert_eq!(cfg.settings_section, "translate");
     }
@@ -1227,7 +1227,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn full_sentence_reports_baidu_guidance() {
-        // 有道免费整句接口已下线：整句应报引导配置百度的错误（translate_text 会自动降级百度）
+        // 有道免费整句接口已下线：有道整句直接报错，由 translate_text 的降级链兜底
         let r = translate_youdao("The quick brown fox jumps over the lazy dog").await;
         let msg = r.expect_err("整句应报引导性错误");
         assert!(msg.contains("整句"), "错误信息应说明整句原因: {msg}");
