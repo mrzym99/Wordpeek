@@ -709,14 +709,6 @@ input.recording {
 }
 
 /* 内容框下方的操作行（如截图原文的「重新翻译」） */
-.box-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  margin: -2px 0 10px;
-}
-
 /* 译文框复制按钮：hover 内容框时才浮现（复制过的对勾恒显） */
 .content-box .icon-btn.copy-btn {
   opacity: 0;
@@ -852,12 +844,19 @@ textarea.shot-text:focus {
   margin-top: 6px;
 }
 
-.input-actions {
+/* 目标语言切换 + 执行按钮：左边切换、右边执行（输入窗口与截图卡片共用） */
+.action-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-top: 10px;
   gap: 10px;
+  margin: -2px 0 10px;
+}
+/* 执行按钮与左侧分段控件同高、同一颗边框胶囊；比正文里的 .text-btn 再重一点 */
+.action-bar .text-btn {
+  padding: 4px 14px;
+  font-weight: 600;
+  color: var(--ink);
 }
 
 /* 内容区滚动条：细条浅色 */

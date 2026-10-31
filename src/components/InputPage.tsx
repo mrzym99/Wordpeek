@@ -6,8 +6,8 @@ import { useAutoFitWindow } from "../lib/autofit";
 import SourceCompare from "./SourceCompare";
 import type { CompareRow } from "./SourceCompare";
 import SourceBox from "./SourceBox";
+import TranslateBar from "./TranslateBar";
 import Phonetic from "./Phonetic";
-import { ArrowRightIcon } from "./icons";
 
 /** 输入翻译窗口（?page=input）：打字/粘贴 → 默认翻译 + 勾选的额外源逐源给出译文，目标语言可智能/手动切换 */
 export default function InputPage() {
@@ -100,34 +100,13 @@ export default function InputPage() {
           onEnter={run}
           placeholder="输入或粘贴要翻译的文本（Enter 翻译，Shift+Enter 换行，右上角可切换目标语言）"
         />
-        <div className="input-actions">
-          <span className="lang-toggle" role="group" aria-label="目标语言">
-            <button
-              className={mode === "auto" ? "active" : ""}
-              title="自动检测：中文译为英文，其它译为中文"
-              onClick={() => setMode("auto")}
-            >
-              智能
-            </button>
-            <button
-              className={mode === "en" ? "active" : ""}
-              title="固定译为英文"
-              onClick={() => setMode("en")}
-            >
-              <ArrowRightIcon /> 英文
-            </button>
-            <button
-              className={mode === "zh" ? "active" : ""}
-              title="固定译为中文"
-              onClick={() => setMode("zh")}
-            >
-              <ArrowRightIcon /> 中文
-            </button>
-          </span>
-          <button className="save-btn" onClick={run} disabled={loading || !text.trim()}>
-            {loading ? "翻译中…" : "翻译"}
-          </button>
-        </div>
+        <TranslateBar
+          to={mode}
+          onPick={setMode}
+          onRun={run}
+          busy={loading}
+          disabled={!text.trim()}
+        />
         {error && <div className="error">{error}</div>}
         {loading && <div className="loading">翻译中…</div>}
         {(() => {

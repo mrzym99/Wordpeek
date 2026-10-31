@@ -10,9 +10,10 @@ import DictPop from "./DictPop";
 import SourceCompare from "./SourceCompare";
 import ContentBox from "./ContentBox";
 import SourceBox from "./SourceBox";
+import TranslateBar from "./TranslateBar";
 import Phonetic from "./Phonetic";
 import { playVoice } from "../lib/voice";
-import { ArrowRightIcon, CheckIcon, CopyIcon } from "./icons";
+import { CheckIcon, CopyIcon } from "./icons";
 import { useAutoFitWindow } from "../lib/autofit";
 
 /** 句子判定：英文看空格/标点，中文没空格所以看汉字数（超过两个当句子） */
@@ -470,37 +471,12 @@ export default function Popup() {
             />
           )}
           {shotResult.text && (
-            <div className="box-actions">
-              <span className="lang-toggle" role="group" aria-label="目标语言">
-                <button
-                  className={shotTo === "auto" ? "active" : ""}
-                  disabled={shotLoading}
-                  title="自动检测：按汉字与英文词比例判定方向"
-                  onClick={() => pickTo("auto")}
-                >
-                  智能
-                </button>
-                <button
-                  className={shotTo === "en" ? "active" : ""}
-                  disabled={shotLoading}
-                  title="固定译为英文"
-                  onClick={() => pickTo("en")}
-                >
-                  <ArrowRightIcon /> 英文
-                </button>
-                <button
-                  className={shotTo === "zh" ? "active" : ""}
-                  disabled={shotLoading}
-                  title="固定译为中文"
-                  onClick={() => pickTo("zh")}
-                >
-                  <ArrowRightIcon /> 中文
-                </button>
-              </span>
-              <button className="text-btn" disabled={shotLoading} onClick={() => retranslate(draft)}>
-                {shotLoading ? "翻译中…" : "重新翻译"}
-              </button>
-            </div>
+            <TranslateBar
+              to={shotTo}
+              onPick={pickTo}
+              onRun={() => retranslate(draft)}
+              busy={shotLoading}
+            />
           )}
           {shotLoading && <div className="shot-loading">翻译中…</div>}
           {shotResult.error && <div className="error">{shotResult.error}</div>}

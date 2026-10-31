@@ -406,7 +406,7 @@ export default function SettingsPage() {
                   ))}
                 </div>
                 <div className="field-hint">
-                  默认源：单词用有道、句子用必应。其他源配置后可选择。
+                  默认源：单词用有道、句子用必应，两者都失败时自动降级到有道翻译（免 Key）。其他源配置后可选择。
                 </div>
               </>
             ) : (
@@ -508,7 +508,7 @@ export default function SettingsPage() {
                 <option value="en">英文优先</option>
               </select>
             </label>
-            <div className="field-hint">按截图快捷键框选屏幕区域即可识别并翻译；整句翻译自动使用必应（免 Key），无需额外配置</div>
+            <div className="field-hint">按截图快捷键框选屏幕区域即可识别并翻译；整句翻译自动使用必应（免 Key，失败自动降级到有道），无需额外配置</div>
           </>
         )}
 

@@ -160,18 +160,11 @@ impl Default for AppConfig {
 
 type SharedConfig = Mutex<AppConfig>;
 
-/// 必应翻译的缓存凭证：从 cn.bing.com/translator 首页解析，有效期约 1 小时
-#[derive(Clone)]
-struct BingToken {
-    /// 首页 _G.IG，32 位十六进制
-    ig: String,
-    /// params_AbusePreventionHelper 的时间戳（key 字段）
-    key: String,
-    /// params_AbusePreventionHelper 的 token 字段
-    token: String,
-    /// 过期时刻（毫秒），留 5 分钟余量提前刷新
-    expires_at: u64,
-}
+/// 网页端免 Key 接口都按浏览器 UA 放行
+const WEB_UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15";
+
+/// 降级源单独给短超时：境外端点不通时会挂到 15s，把整条链拖死
+const FALLBACK_TIMEOUT: Duration = Duration::from_secs(6);
 
 /// 全局共享的 HTTP 客户端：连接池 + TLS 配置只建一次。
 /// 之前每次请求都 Client::new()，翻译/对比高频调用时池子来不及回收，内存缓慢上涨
@@ -186,97 +179,19 @@ fn http() -> &'static reqwest::Client {
     })
 }
 
-static BING_TOKEN: parking_lot::Mutex<Option<BingToken>> = parking_lot::Mutex::new(None);
-
-/// 拉取/复用必应翻译凭证；过期前 5 分钟刷新，失败时丢弃旧缓存强制重取
-async fn bing_token() -> Result<BingToken, String> {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64;
-    if let Some(t) = BING_TOKEN.lock().as_ref() {
-        if now < t.expires_at {
-            return Ok(BingToken {
-                ig: t.ig.clone(),
-                key: t.key.clone(),
-                token: t.token.clone(),
-                expires_at: t.expires_at,
-            });
-        }
-    }
-
-    // 首页 HTML 里包含 IG 与 AbusePrevention 参数，无需正则，直接字符串切片
-    let html = http()
-        .get("https://cn.bing.com/translator")
-        .header("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-        .send()
-        .await
-        .map_err(|e| format!("请求失败: {e}"))?
-        .text()
-        .await
-        .map_err(|e| format!("响应解析失败: {e}"))?;
-
-    let (ig, key, token) = parse_bing_token(&html)?;
-    let tok = BingToken {
-        ig,
-        key,
-        token,
-        expires_at: now + 3_600_000 - 300_000,
-    };
-    *BING_TOKEN.lock() = Some(tok.clone());
-    Ok(tok)
-}
-
-/// 从必应翻译首页 HTML 抽出凭证（IG / key / token）。
-/// 纯函数：格式是必应说了算，随时会变，这里必须用 checked 切片，
-/// 格式异常时返回 Err（弹窗显示错误），绝不能 panic。
-fn parse_bing_token(html: &str) -> Result<(String, String, String), String> {
-    let err = |m: &str| format!("必应页面格式异常：{m}（可能已改版）");
-    let i = html.find("IG:\"").ok_or_else(|| err("缺少 IG"))?;
-    let rest = html.get(i + 4..).ok_or_else(|| err("缺少 IG"))?;
-    // IG 固定 32 位且紧跟收尾引号：不校验的话会把后面的标签一起吞进凭证
-    if rest.as_bytes().get(32) != Some(&b'"') {
-        return Err(err("IG 长度不足"));
-    }
-    let ig = rest.get(..32).ok_or_else(|| err("IG 长度不足"))?.to_string();
-    let ap = html
-        .find("params_AbusePreventionHelper")
-        .ok_or_else(|| err("缺少防滥用参数"))?;
-    let rest = &html[ap..];
-    let open = rest.find('[').ok_or_else(|| err("防滥用参数格式异常"))?;
-    let rest = &rest[open + 1..];
-    let comma = rest.find(',').ok_or_else(|| err("防滥用参数格式异常"))?;
-    let key = rest[..comma].to_string();
-    // 逗号后预期是 ", "，但别对空格做硬假设：找到下一个引号内的内容当 token
-    let tail = rest.get(comma + 1..).ok_or_else(|| err("防滥用参数格式异常"))?;
-    let tail = tail.trim_start();
-    let tail = tail.strip_prefix('"').ok_or_else(|| err("防滥用参数格式异常"))?;
-    let token = tail.split('"').next().unwrap_or_default().to_string();
-    if ig.is_empty() || key.is_empty() || token.is_empty() {
-        return Err(err("凭证为空"));
-    }
-    Ok((ig, key, token))
-}
-
-/// 必应翻译（免 Key）：从 cn.bing.com 取临时凭证后调 ttranslatev3
+/// 微软翻译（免 Key）：Edge 浏览器内部的 translate/translatetext 端点，无需凭证。
+/// 老的 cn.bing.com/ttranslatev3 仍在，但对非浏览器客户端一律回 200 + 空 body，已不可用
 async fn translate_bing(text: &str, to: &str) -> Result<WordInfo, String> {
-    let t = bing_token().await?;
-    let form = [
-        ("fromLang", "auto-detect".to_string()),
-        ("to", bing_target(to).to_string()),
-        ("text", text.to_string()),
-        ("token", t.token),
-        ("key", t.key),
-    ];
     let url = format!(
-        "https://cn.bing.com/ttranslatev3?IG={}&IID=translator.5023",
-        t.ig
+        "https://edge.microsoft.com/translate/translatetext?from=&to={}&isEnterpriseClient=false",
+        bing_target(to)
     );
+    // body 是纯字符串数组，一次可译多条；这里一次一条，返回也是同序数组
     let resp: serde_json::Value = http()
         .post(url)
-        .header("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-        .header("referer", "https://cn.bing.com/translator")
-        .form(&form)
+        .header("content-type", "application/json")
+        .header("user-agent", WEB_UA)
+        .body(serde_json::json!([text]).to_string())
         .send()
         .await
         .map_err(|e| format!("请求失败: {e}"))?
@@ -284,25 +199,47 @@ async fn translate_bing(text: &str, to: &str) -> Result<WordInfo, String> {
         .await
         .map_err(|e| format!("响应解析失败: {e}"))?;
 
-    // 凭证失效（statusCode 非零）时清缓存，让下次调用重取
-    if let Some(code) = resp["statusCode"].as_i64() {
-        *BING_TOKEN.lock() = None;
-        return Err(format!("必应接口错误 {code}"));
-    }
-    // 长文本会被分段，返回数组每段各含一个 translations
-    let items = resp.as_array().cloned().unwrap_or_default();
-    let senses: Vec<String> = items
-        .iter()
+    let senses: Vec<String> = resp
+        .as_array()
+        .into_iter()
+        .flatten()
         .filter_map(|i| i["translations"][0]["text"].as_str().map(str::to_string))
         .collect();
     if senses.is_empty() {
-        *BING_TOKEN.lock() = None;
-        return Err("必应未返回译文".into());
+        return Err("微软未返回译文".into());
     }
     Ok(WordInfo {
         word: text.to_string(),
         source: "bing".into(),
         senses: vec![senses.join(" ")],
+        ..Default::default()
+    })
+}
+
+/// 有道翻译（免 Key）：有道智云的公开 demo 端点，form 表单直传。
+/// 是开放 demo，有频率限制，所以只当降级用
+async fn translate_youdao_ai(text: &str, to: &str) -> Result<WordInfo, String> {
+    let to = if to == "en" { "en" } else { "zh-CHS" };
+    let resp: serde_json::Value = http()
+        .post("https://aidemo.youdao.com/trans")
+        .header("user-agent", WEB_UA)
+        .timeout(FALLBACK_TIMEOUT)
+        .form(&[("q", text), ("from", "Auto"), ("to", to)])
+        .send()
+        .await
+        .map_err(|e| format!("请求失败: {e}"))?
+        .json()
+        .await
+        .map_err(|e| format!("响应解析失败: {e}"))?;
+    let sense = resp["translation"][0].as_str().unwrap_or_default();
+    if sense.trim().is_empty() {
+        let code = resp["errorCode"].as_str().unwrap_or("未知");
+        return Err(format!("有道接口错误 {code}"));
+    }
+    Ok(WordInfo {
+        word: text.to_string(),
+        source: "youdaoai".into(),
+        senses: vec![sense.to_string()],
         ..Default::default()
     })
 }
@@ -834,8 +771,11 @@ pub(crate) fn baidu_target(to: &str) -> &'static str {
     if to == "en" { "en" } else { "zh" }
 }
 
+/// 仅作降级用的免 Key 源：不进「对比各源」列表，避免白名单外多跑几个开放 demo 端点
+pub(crate) const FALLBACK_SOURCES: [&str; 1] = ["youdaoai"];
+
 /// 翻译/对比顺序：内置默认源（单词→有道，句子自动落到必应）在前，
-/// 用户勾选的额外源排在其后。内置源关闭后只剩额外源。
+/// 必应之后接免 Key 降级源；用户勾选的额外源排在最后。内置源关闭后只剩额外源。
 pub(crate) fn build_order(cfg: &AppConfig, to: &str) -> Vec<String> {
     let mut order: Vec<String> = Vec::new();
     if cfg.builtin_sources {
@@ -843,6 +783,9 @@ pub(crate) fn build_order(cfg: &AppConfig, to: &str) -> Vec<String> {
             order.push("youdao".into()); // 有道 jsonapi 只支持英→中
         }
         order.push("bing".into());
+        for s in FALLBACK_SOURCES {
+            order.push(s.into());
+        }
     }
     for s in enabled_sources(cfg) {
         if !order.contains(&s) {
@@ -864,6 +807,7 @@ async fn try_translate(
                 .await
         }
         "bing" => translate_bing(text, to).await,
+        "youdaoai" => translate_youdao_ai(text, to).await,
         // 腾讯云机器翻译双向都支持
         "tencent" => translate_tencent(text, to, &cfg.tencent).await,
         // 有道 jsonapi 只能英→中（词典 + 已下线的整句节点），译为其它语言交给降级链
@@ -958,6 +902,7 @@ pub(crate) fn source_label(source: &str) -> &'static str {
     match source {
         "youdao" => "有道词典",
         "bing" => "必应翻译",
+        "youdaoai" => "有道翻译",
         "baidu" => "百度翻译",
         "tencent" => "腾讯翻译",
         _ => "未知源",
@@ -967,6 +912,9 @@ pub(crate) fn source_label(source: &str) -> &'static str {
 /// 参与对比的源：默认翻译的源排第一，勾选的额外源跟在后面
 pub(crate) fn compare_sources(cfg: &AppConfig, to: &str) -> Vec<String> {
     build_order(cfg, to)
+        .into_iter()
+        .filter(|s| !FALLBACK_SOURCES.contains(&s.as_str()))
+        .collect()
 }
 
 /// 并发请求各源并逐源收集结果：整体不失败，单个源出错只影响它自己那一行。
@@ -1121,16 +1069,16 @@ mod tests {
     fn build_order_puts_builtin_first() {
         let mut cfg = AppConfig::default();
         // 内置源开启：默认翻译在前，额外源在后
-        assert_eq!(build_order(&cfg, "zh"), vec!["youdao", "bing"]);
-        assert_eq!(build_order(&cfg, "en"), vec!["bing"]);
+        assert_eq!(build_order(&cfg, "zh"), vec!["youdao", "bing", "youdaoai"]);
+        assert_eq!(build_order(&cfg, "en"), vec!["bing", "youdaoai"]);
         cfg.sources = vec!["baidu".into()];
         // 百度需密钥：没配密钥时进不了队列
-        assert_eq!(build_order(&cfg, "zh"), vec!["youdao", "bing"]);
+        assert_eq!(build_order(&cfg, "zh"), vec!["youdao", "bing", "youdaoai"]);
         cfg.baidu = BaiduConfig {
             appid: "a".into(),
             secret: "b".into(),
         };
-        assert_eq!(build_order(&cfg, "zh"), vec!["youdao", "bing", "baidu"]);
+        assert_eq!(build_order(&cfg, "zh"), vec!["youdao", "bing", "youdaoai", "baidu"]);
         // 内置源关闭：只剩额外源
         cfg.builtin_sources = false;
         assert_eq!(build_order(&cfg, "zh"), vec!["baidu"]);
@@ -1154,34 +1102,7 @@ mod tests {
         assert_eq!(compare_sources(&cfg, "zh"), vec!["tencent"]);
     }
 
-    #[test]
-    fn parse_bing_token_happy_path() {
-        let ig = "A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6"; // 32 位
-        let html = format!(
-            "<script>var params_AbusePreventionHelper = [1234567890,\"TOKENABC\",3600000];</script> IG:\"{ig}\";"
-        );
-        let (g, key, token) = parse_bing_token(&html).expect("完整页面应能抽出凭证");
-        assert_eq!(g, ig);
-        assert_eq!(key, "1234567890");
-        assert_eq!(token, "TOKENABC");
-    }
-
-    #[test]
-    fn parse_bing_token_rejects_malformed_pages() {
-        // 缺 IG
-        assert!(parse_bing_token("params_AbusePreventionHelper=[1,\"t\"]").is_err());
-        // 缺防滥用参数
-        assert!(parse_bing_token("IG:\"A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6\"").is_err());
-        // IG 不足 32 位
-        assert!(parse_bing_token("IG:\"short\"params_AbusePreventionHelper=[1,\"t\"]").is_err());
-        // 防滥用参数无逗号
-        assert!(parse_bing_token("IG:\"A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6\"params_AbusePreventionHelper=[1").is_err());
-        // 空页面 / 纯乱文本不 panic，返回 Err
-        assert!(parse_bing_token("").is_err());
-        assert!(parse_bing_token("随机网页内容").is_err());
-    }
-
-    #[test]
+            #[test]
     fn source_labels_are_human_readable() {
         assert_eq!(source_label("youdao"), "有道词典");
         assert_eq!(source_label("bing"), "必应翻译");
@@ -1347,4 +1268,5 @@ mod tests {
         assert_eq!(info.source, "bing");
     }
 }
+
 
