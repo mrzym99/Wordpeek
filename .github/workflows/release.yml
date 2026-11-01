@@ -83,7 +83,8 @@ jobs:
   build-macos:
     needs: build # 等 Windows job 建好 Release，避免两个 job 抢着创建
     # 明确要 Apple Silicon：产物是 aarch64 dmg（macos-latest 可能随 GitHub 调整架构）
-    runs-on: macos-14
+    # macos-14 于 2026-11-02 退役（brownout 直接把 job 取消），改用 macos-latest
+    runs-on: macos-latest
     permissions:
       contents: write
     steps:
