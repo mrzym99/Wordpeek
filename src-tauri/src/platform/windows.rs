@@ -3,6 +3,7 @@
 
 use enigo::{Direction, Enigo, Key, Keyboard};
 use windows::Win32::Foundation::POINT;
+use windows::Win32::UI::Accessibility::IUIAutomation;
 use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
 
 /// 注入「复制」按键。快捷键触发时物理按着的修饰键要先松开：
@@ -240,7 +241,7 @@ pub fn focused_selection() -> Option<String> {
     use windows::Win32::System::Com::{
         CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
     };
-    use windows::Win32::UI::Accessibility::{CUIAutomation, IUIAutomation};
+    use windows::Win32::UI::Accessibility::CUIAutomation;
 
     unsafe {
         // UIA 客户端用 STA；反复初始化只是加引用计数，无需配对 Uninitialize（线程随进程退出）
