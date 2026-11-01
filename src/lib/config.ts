@@ -41,3 +41,8 @@ export function saveSettingsSection(section: string) {
 export function saveTheme(theme: "system" | "light" | "dark") {
   return invoke("save_theme", { theme });
 }
+
+/** 划词图标开关（快捷键 tab）：选中文字后在光标旁弹翻译按钮 */
+export function saveSelectionIcon(enabled: boolean) {
+  return invoke("save_selection_icon", { enabled });
+}

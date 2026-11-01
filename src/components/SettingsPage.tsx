@@ -10,6 +10,7 @@ import {
   saveSettings,
   saveSettingsSection,
   saveTheme,
+  saveSelectionIcon,
 } from "../lib/config";
 import { applyTheme, type Theme } from "../lib/theme";
 import HotkeyRecorder from "./HotkeyRecorder";
@@ -85,6 +86,8 @@ export default function SettingsPage() {
   const [inputHotkey, setInputHotkey] = useState("Alt+X");
   const [ocrLang, setOcrLang] = useState("auto");
   const [theme, setTheme] = useState<Theme>("system");
+  // 选中文字后在光标旁弹翻译按钮（默认开）
+  const [selectionIcon, setSelectionIcon] = useState(true);
   const [saveError, setSaveError] = useState("");
   // get_config 重试耗尽：表单停在默认值，此时绝不能允许保存（会把默认值覆盖到真配置上）
   const [loadFailed, setLoadFailed] = useState(false);
@@ -182,6 +185,7 @@ export default function SettingsPage() {
           setInputHotkey(cfg.input_hotkey || "Alt+X");
           setOcrLang(cfg.ocr_lang || "auto");
           setTheme(cfg.theme ?? "system");
+          setSelectionIcon(cfg.selection_icon ?? true);
           // 回到上次停留的一级菜单（切页时已落盘；配置里没有/非法就留在默认）
           const saved = SECTIONS.find((s) => s.id === cfg.settings_section)?.id;
           if (saved) setSection(saved);
@@ -263,6 +267,13 @@ export default function SettingsPage() {
     const next = !builtin;
     setBuiltin(next);
     saveSources(sources, next).catch((e) => setSaveError(String(e)));
+  };
+
+  // 划词图标开关：即时生效（Rust 端每次探测现读配置）
+  const toggleSelectionIcon = () => {
+    const next = !selectionIcon;
+    setSelectionIcon(next);
+    saveSelectionIcon(next).catch((e) => setSaveError(String(e)));
   };
 
   // 额外源勾选/取消：默认源已关闭时，不能取消最后一个额外源
@@ -482,7 +493,16 @@ export default function SettingsPage() {
               划词快捷键
               <HotkeyRecorder value={hotkey} onChange={setHotkey} />
             </label>
-            <label className="field">
+            <div className="source-item">
+              <label className="switch">
+                <input type="checkbox" checked={selectionIcon} onChange={toggleSelectionIcon} />
+                选中文字后在光标旁显示翻译按钮
+              </label>
+            </div>
+            <div className="field-hint">
+              鼠标选中文字后，光标旁会出现一个小按钮，点一下直接翻译；终端、VS Code 这类不向系统暴露选区文本的应用里不会出现
+            </div>
+            <label className="field" style={{ marginTop: 12 }}>
               输入翻译快捷键
               <HotkeyRecorder value={inputHotkey} onChange={setInputHotkey} />
             </label>

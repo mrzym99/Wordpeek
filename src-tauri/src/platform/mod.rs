@@ -86,3 +86,16 @@ pub fn prepare_overlay(_win: &tauri::WebviewWindow) {}
 pub fn prepare_overlay(win: &tauri::WebviewWindow) {
     macos::prepare_overlay(win);
 }
+
+/// 全局鼠标监听：左键按下 → on_down，左键松开 → on_up。
+/// 回调可能很频繁，必须立刻返回（耗时工作自己丢线程）。
+#[cfg(windows)]
+pub use windows::start_mouse_watch;
+#[cfg(target_os = "macos")]
+pub use macos::start_mouse_watch;
+
+/// 焦点控件里被选中的文本（系统 AX/UIA 接口，不碰剪贴板；不支持的应用返回 None）
+#[cfg(windows)]
+pub use windows::focused_selection;
+#[cfg(target_os = "macos")]
+pub use macos::focused_selection;

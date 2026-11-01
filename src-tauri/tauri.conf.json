@@ -23,6 +23,20 @@
         "resizable": true
       },
       {
+        "label": "icon",
+        "url": "/?page=icon",
+        "width": 40,
+        "height": 40,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "shadow": false,
+        "resizable": false,
+        "acceptFirstMouse": true
+      },
+      {
         "label": "screenshot",
         "url": "/?page=screenshot",
         "width": 100,

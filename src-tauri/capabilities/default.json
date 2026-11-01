@@ -4,6 +4,7 @@
   "description": "弹窗需要的基本窗口操作权限",
   "windows": [
     "main",
+    "icon",
     "screenshot",
     "settings",
     "input"

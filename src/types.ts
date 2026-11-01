@@ -29,6 +29,8 @@ export interface AppConfig {
   settings_section?: string;
   /** 外观主题：跟随系统 / 强制亮 / 强制暗 */
   theme?: "system" | "light" | "dark";
+  /** 选中文字后在光标旁弹翻译按钮（默认开） */
+  selection_icon?: boolean;
   baidu: BaiduConfig;
   tencent: TencentConfig;
 }

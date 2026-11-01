@@ -58,6 +58,9 @@ pub struct AppConfig {
     /// 外观主题："system"（跟随系统）| "light" | "dark"
     #[serde(default = "default_theme")]
     pub theme: String,
+    /// 选中文字后在光标旁弹翻译按钮（默认开）
+    #[serde(default = "default_selection_icon")]
+    pub selection_icon: bool,
     #[serde(default)]
     pub baidu: BaiduConfig,
     #[serde(default)]
@@ -98,6 +101,10 @@ fn default_settings_section() -> String {
 
 fn default_theme() -> String {
     "system".into()
+}
+
+fn default_selection_icon() -> bool {
+    true
 }
 
 /// 默认无额外源：主翻译内置（单词→有道、句子→必应），额外源由用户自己勾选
@@ -151,6 +158,7 @@ impl Default for AppConfig {
             builtin_sources: default_builtin_sources(),
             popup_width: default_popup_width(),
             settings_section: default_settings_section(),
+            selection_icon: default_selection_icon(),
             theme: default_theme(),
             baidu: BaiduConfig::default(),
             tencent: TencentConfig::default(),
@@ -499,6 +507,30 @@ pub fn save_theme(app: AppHandle, state: State<SharedConfig>, theme: String) -> 
     }
     guard.theme = theme;
     write_config(&path, &guard)
+}
+
+/// 划词图标开关：直接写盘不走 persist（不碰快捷键，不发 config-changed）；
+/// 鼠标监听一直在跑，后台探测时每次现读这个字段，所以改完立即生效
+#[tauri::command]
+pub fn save_selection_icon(
+    app: AppHandle,
+    state: State<SharedConfig>,
+    enabled: bool,
+) -> Result<(), String> {
+    let path = config_path(&app).ok_or("无法定位配置目录")?;
+    let mut guard = state.lock();
+    if guard.selection_icon == enabled {
+        return Ok(());
+    }
+    guard.selection_icon = enabled;
+    write_config(&path, &guard)?;
+    // 关闭时顺手把可能还显着的图标收掉
+    if !enabled {
+        if let Some(win) = app.get_webview_window("icon") {
+            let _ = win.hide();
+        }
+    }
+    Ok(())
 }
 
 /// tr 节点里的 "l.i" 可能是字符串，也可能是字符串数组

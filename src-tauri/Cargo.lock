@@ -5881,6 +5881,8 @@ version = "1.0.3"
 dependencies = [
  "arboard",
  "base64 0.22.1",
+ "block2 0.6.2",
+ "core-foundation 0.10.1",
  "core-graphics 0.25.0",
  "enigo",
  "hmac",

@@ -1,6 +1,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 use arboard::Clipboard;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager};
@@ -475,9 +476,106 @@ fn parse_code(s: &str) -> Option<Code> {
     None
 }
 
+/// 划词图标最近一次探测到的选中文本：点图标时直接用。
+/// 点击会把焦点转给我们的窗口，那时候再去读源应用的选区已经读不到了
+#[derive(Default)]
+struct IconSelection(parking_lot::Mutex<Option<String>>);
+
+/// 刚点过图标的时刻（毫秒）。点击的那一下会先收起图标，紧接着的鼠标松开事件
+/// 还会触发一次探测——那时源应用的选区还在（点我们自己的窗口不会取消选区），
+/// 图标就会立刻又弹回来。所以点完图标 400ms 内的探测直接跳过
+static ICON_CLICKED_AT: AtomicU64 = AtomicU64::new(0);
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn hide_selection_icon(app: &AppHandle) {
+    if let Some(win) = app.get_webview_window("icon") {
+        let _ = win.hide();
+    }
+}
+
+/// 在光标旁显示图标（窗口已在 tauri.conf.json 里预建，这里只是挪位置 + show）
+fn show_selection_icon(app: &AppHandle, text: String) {
+    *app.state::<IconSelection>().0.lock() = Some(text);
+    let (cx, cy) = crate::platform::cursor_pos();
+    let app = app.clone();
+    let inner = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(win) = inner.get_webview_window("icon") {
+            let (x, y) = clamp_to_screen(&inner, "icon", cx + 8, cy + 12);
+            let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
+            let _ = win.show();
+        }
+    });
+}
+
+/// 划词图标：鼠标松开后读一次系统选区（不碰剪贴板、不注入按键），有选中文字就在
+/// 光标旁弹按钮，点一下走热键同一套翻译链路。读不到选区（终端、Electron 等
+/// 不实现 AX/UIA 文本接口的应用）就什么都不做，用户照旧用划词快捷键。
+fn start_selection_icon(app: &AppHandle) {
+    let (tx, rx) = std::sync::mpsc::sync_channel::<()>(1);
+    let down_app = app.clone();
+    let watch = crate::platform::start_mouse_watch(
+        Box::new(move || hide_selection_icon(&down_app)),
+        Box::new(move || {
+            // 队列里只留一个待处理的探测：连点鼠标时不堆积，也不会每点一下就开条线程
+            let _ = tx.try_send(());
+        }),
+    );
+    println!(
+        "[icon] 鼠标监听已装，辅助功能={}",
+        crate::platform::accessibility_allowed()
+    );
+    if !watch {
+        eprintln!("[icon] 鼠标监听装不上，划词图标不可用");
+        return;
+    }
+    let worker = app.clone();
+    std::thread::spawn(move || {
+        while rx.recv().is_ok() {
+            // 开关每次现读配置：设置里一关就立即生效，不用重装监听
+            let enabled = worker
+                .state::<parking_lot::Mutex<translate::AppConfig>>()
+                .lock()
+                .selection_icon;
+            if !enabled || now_ms().saturating_sub(ICON_CLICKED_AT.load(Ordering::Relaxed)) < 400 {
+                hide_selection_icon(&worker);
+                continue;
+            }
+            match crate::platform::focused_selection() {
+                Some(text) => show_selection_icon(&worker, text),
+                None => hide_selection_icon(&worker),
+            }
+        }
+    });
+}
+
+/// 点划词图标：把上次探测到的选区交给弹窗卡片（与热键同一个 selection 事件）
+#[tauri::command]
+fn translate_selection_icon(app: AppHandle) -> Result<(), String> {
+    ICON_CLICKED_AT.store(now_ms(), Ordering::Relaxed);
+    hide_selection_icon(&app);
+    let text = app
+        .state::<IconSelection>()
+        .0
+        .lock()
+        .take()
+        .ok_or("没有缓存的选中文本")?;
+    let (cx, cy) = crate::platform::cursor_pos();
+    let (x, y) = clamp_to_screen(&app, "main", cx + 12, cy + 16);
+    app.emit("selection", Selection { text, x, y })
+        .map_err(|e| e.to_string())
+}
+
 /// 快捷键触发：抓取选中文本并通知弹窗
 fn handle_hotkey_trigger(app: &AppHandle) {
-    println!("[shortcut] triggered");    // 抓取选中文本需要模拟按键并等待剪贴板，放到独立线程，
+    println!("[shortcut] triggered");
+    // 抓取选中文本需要模拟按键并等待剪贴板，放到独立线程，
     // 避免阻塞主线程；且此时用户可能已松开按键。
     let app = app.clone();
     std::thread::spawn(move || {
@@ -487,10 +585,12 @@ fn handle_hotkey_trigger(app: &AppHandle) {
                 println!("[grab] got text: {:?} at ({}, {})", text, cx, cy);
                 // 在 Rust 端钳制到屏幕内后再发事件，前端直接使用
                 let (x, y) = clamp_to_screen(&app, "main", cx + 12, cy + 16);
+                hide_selection_icon(&app);
                 let _ = app.emit("selection", Selection { text, x, y });
             }
             None => {
-                println!("[grab] no text captured");                // macOS 上抓词失败最常见原因是辅助功能权限未授予，
+                println!("[grab] no text captured");
+                // macOS 上抓词失败最常见原因是辅助功能权限未授予，
                 // 直接打开设置页引导授权（Windows/已授权时恒 true，静默）
                 if !crate::platform::accessibility_allowed() {
                     open_settings(app.clone());
@@ -889,6 +989,10 @@ fn main() {
 
             app.manage(UpdateState::default());
             app.manage(ScreenshotState::default());
+            app.manage(IconSelection::default());
+
+            // 划词图标：全局鼠标监听（跟设置里的开关无关，开关在探测时现读）
+            start_selection_icon(&handle);
 
             // 启动后后台把截图遮罩窗口预铺到虚拟屏尺寸（常驻隐藏），
             // 首次截图时窗口无需 resize，避免闪动
@@ -972,6 +1076,7 @@ fn main() {
             screenshot_cancel,
             fit_window,
             copy_text,
+            translate_selection_icon,
             translate::translate,
             translate::translate_all,
             translate::get_config,
@@ -981,7 +1086,8 @@ fn main() {
             translate::save_settings,
             translate::save_popup_width,
             translate::save_settings_section,
-            translate::save_theme
+            translate::save_theme,
+            translate::save_selection_icon
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

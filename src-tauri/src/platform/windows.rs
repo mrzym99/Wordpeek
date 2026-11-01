@@ -174,3 +174,113 @@ pub fn virtual_screen_bounds() -> Option<(i32, i32, i32, i32)> {
         (w > 0 && h > 0).then_some((ox, oy, w, h))
     }
 }
+
+// ---------- 划词图标：全局鼠标监听 + 系统选区 ----------
+
+/// 鼠标事件回调（进程内只装一次，钩子函数从静态里取）
+type MouseCallback = Box<dyn Fn() + Send + Sync>;
+static MOUSE_ON_DOWN: std::sync::OnceLock<MouseCallback> = std::sync::OnceLock::new();
+static MOUSE_ON_UP: std::sync::OnceLock<MouseCallback> = std::sync::OnceLock::new();
+
+/// 低级鼠标钩子：回调必须立刻返回（它在系统的输入线程上跑，慢了整个系统的鼠标都卡）
+unsafe extern "system" fn mouse_hook(
+    code: i32,
+    wparam: windows::Win32::Foundation::WPARAM,
+    lparam: windows::Win32::Foundation::LPARAM,
+) -> windows::Win32::Foundation::LRESULT {
+    use windows::Win32::UI::WindowsAndMessaging::{WM_LBUTTONDOWN, WM_LBUTTONUP};
+    if code >= 0 {
+        match wparam.0 as u32 {
+            WM_LBUTTONDOWN => {
+                if let Some(cb) = MOUSE_ON_DOWN.get() {
+                    cb()
+                }
+            }
+            WM_LBUTTONUP => {
+                if let Some(cb) = MOUSE_ON_UP.get() {
+                    cb()
+                }
+            }
+            _ => {}
+        }
+    }
+    windows::Win32::UI::WindowsAndMessaging::CallNextHookEx(None, code, wparam, lparam)
+}
+
+/// 装全局鼠标监听：左键按下/松开各回调一次。低级钩子必须装在自带消息循环的线程上，
+/// 所以这里起一个常驻线程把它跑起来。
+pub fn start_mouse_watch(on_down: MouseCallback, on_up: MouseCallback) -> bool {
+    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetMessageW, SetWindowsHookExW, MSG, WH_MOUSE_LL,
+    };
+
+    let _ = MOUSE_ON_DOWN.set(on_down);
+    let _ = MOUSE_ON_UP.set(on_up);
+    std::thread::spawn(move || unsafe {
+        let hmod = GetModuleHandleW(None).unwrap_or_default();
+        let hook = match SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook), hmod, 0) {
+            Ok(h) => h,
+            Err(e) => {
+                eprintln!("[mouse] 装低级鼠标钩子失败: {e}");
+                return;
+            }
+        };
+        println!("[mouse] 低级鼠标钩子已装");
+        let mut msg = MSG::default();
+        while GetMessageW(&mut msg, None, 0, 0).as_bool() {}
+        let _ = windows::Win32::UI::WindowsAndMessaging::UnhookWindowsHookEx(hook);
+    });
+    true
+}
+
+/// 读焦点控件里被选中的文本（UI Automation 文本模式，不碰剪贴板也不注入按键）。
+/// 终端、部分 Electron 应用不实现文本模式，返回 None——那时不弹图标，用户照旧用热键。
+pub fn focused_selection() -> Option<String> {
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
+    };
+    use windows::Win32::UI::Accessibility::{CUIAutomation, IUIAutomation};
+
+    unsafe {
+        // UIA 客户端用 STA；反复初始化只是加引用计数，无需配对 Uninitialize（线程随进程退出）
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let automation: IUIAutomation =
+            CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
+        // Chromium / Electron 的 UIA 树是懒建的，第一次常拿到空节点，隔一小会儿重试一次
+        for attempt in 0..2 {
+            if attempt == 1 {
+                std::thread::sleep(std::time::Duration::from_millis(120));
+            }
+            if let Some(text) = selection_of(&automation) {
+                return Some(text);
+            }
+        }
+        None
+    }
+}
+
+unsafe fn selection_of(automation: &IUIAutomation) -> Option<String> {
+    use windows::Win32::UI::Accessibility::{IUIAutomationTextPattern, UIA_TextPatternId};
+
+    let element = automation.GetFocusedElement().ok()?;
+    let pattern: IUIAutomationTextPattern = element.GetCurrentPatternAs(UIA_TextPatternId).ok()?;
+    let ranges = pattern.GetSelection().ok()?;
+    let count = ranges.Length().ok()?;
+    let mut text = String::new();
+    for i in 0..count {
+        let Ok(range) = ranges.GetElement(i) else {
+            continue;
+        };
+        // -1 = 取全部长度
+        if let Ok(bstr) = range.GetText(-1) {
+            text.push_str(&bstr.to_string());
+        }
+    }
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
