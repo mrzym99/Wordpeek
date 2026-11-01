@@ -881,9 +881,14 @@ pub fn recognize(png: &[u8], lang: &str) -> Result<Vec<OcrLine>, String> {
         VNImageRequestHandler, VNRecognizeTextRequest, VNRequest, VNRequestTextRecognitionLevel,
     };
 
+    // 只读 PNG 头拿尺寸：整幅解码（3024x1964 约 18MB）在截图链路里纯属浪费
     let (w, h) = {
-        let img = image::load_from_memory(png).map_err(|e| format!("PNG 解码失败: {e}"))?;
-        (img.width(), img.height())
+        let reader = image::ImageReader::new(std::io::Cursor::new(png))
+            .with_guessed_format()
+            .map_err(|e| format!("PNG 解码失败: {e}"))?;
+        reader
+            .into_dimensions()
+            .map_err(|e| format!("PNG 解码失败: {e}"))?
     };
     if w == 0 || h == 0 {
         return Err("图像尺寸非法".into());

@@ -563,46 +563,78 @@ pub fn capture_virtual_screen() -> Result<CapturedScreen, String> {
     for &id in &displays {
         let d = CGDisplay::new(id);
         let b = d.bounds();
-        let Some(img) = d.image() else {
-            return Err(format!("抓取显示器 {} 失败", id));
-        };
-        let (iw, ih) = (img.width() as i32, img.height() as i32);
-        // CGImage 每行可能有对齐填充（bytesPerRow > width*4），按行重排成紧凑 RGBA，
-        // 否则整幅图会斜着错位、OCR 一行都认不出
-        let bpr = img.bytes_per_row();
-        let data = img.data();
-        let raw = data.bytes();
-        let stride = (iw as usize) * 4;
-        if bpr < stride || raw.len() < bpr * ih as usize {
-            return Err("抓屏像素不完整".into());
-        }
-        let mut disp = Vec::with_capacity(stride * ih as usize);
-        for row in 0..ih as usize {
-            disp.extend_from_slice(&raw[row * bpr..row * bpr + stride]);
-        }
-        bgra_to_rgba(&mut disp);
+        // CGDisplayCreateImage 返回的是 autorelease 对象：worker 线程没有 autorelease pool，
+        // 不自己圈一块就会攒到线程结束，连拍十几张能把 RSS 顶到几百 MB
+        objc2::rc::autoreleasepool(|_| {
+            let Some(img) = d.image() else {
+                return Err(format!("抓取显示器 {} 失败", id));
+            };
+            let (iw, ih) = (img.width() as i32, img.height() as i32);
+            // CGImage 每行可能有对齐填充（bytesPerRow > width*4），按行重排成紧凑 RGBA，
+            // 否则整幅图会斜着错位、OCR 一行都认不出
+            let bpr = img.bytes_per_row();
+            let data = img.data();
+            let raw = data.bytes();
+            let stride = (iw as usize) * 4;
+            if bpr < stride || raw.len() < bpr * ih as usize {
+                return Err("抓屏像素不完整".into());
+            }
 
-        // 该屏在画布上的位置与目标尺寸（物理像素，统一缩放到画布 scale）
-        let dw = ((b.size.width * scale).round() as i32).max(1);
-        let dh = ((b.size.height * scale).round() as i32).max(1);
-        let dx = ((b.origin.x - min_x) * scale).round() as i32;
-        let dy = ((b.origin.y - min_y) * scale).round() as i32;
-        let piece = scale_rgba(&disp, iw, ih, dw, dh);
-        // 逐行拷入画布，越界部分裁掉
-        for row in 0..dh {
-            let cy = dy + row;
-            if cy < 0 || cy >= ch as i32 {
-                continue;
+            // 该屏在画布上的位置与目标尺寸（物理像素，统一缩放到画布 scale）
+            let dw = ((b.size.width * scale).round() as i32).max(1);
+            let dh = ((b.size.height * scale).round() as i32).max(1);
+            let dx = ((b.origin.x - min_x) * scale).round() as i32;
+            let dy = ((b.origin.y - min_y) * scale).round() as i32;
+
+            // 常见情况（单屏 / 各屏缩放一致）：不需要重采样，直接逐行转 BGRA→RGBA 写进画布，
+            // 省掉 disp 与 scale_rgba 两份全屏缓冲（3024x1964 各约 24MB）
+            if dw == iw && dh == ih {
+                for row in 0..dh {
+                    let cy = dy + row;
+                    if cy < 0 || cy >= ch as i32 {
+                        continue;
+                    }
+                    let copy_w = dw.min(cw as i32 - dx).max(0) as usize;
+                    if copy_w == 0 {
+                        continue;
+                    }
+                    let src_row = (row as usize) * bpr;
+                    let dst = (cy as usize * cw + dx as usize) * 4;
+                    for col in 0..copy_w {
+                        let s = src_row + col * 4;
+                        let o = dst + col * 4;
+                        rgba[o] = raw[s + 2];
+                        rgba[o + 1] = raw[s + 1];
+                        rgba[o + 2] = raw[s];
+                        rgba[o + 3] = 255;
+                    }
+                }
+                return Ok(());
             }
-            let copy_w = dw.min(cw as i32 - dx);
-            if copy_w <= 0 {
-                continue;
+
+            let mut disp = Vec::with_capacity(stride * ih as usize);
+            for row in 0..ih as usize {
+                disp.extend_from_slice(&raw[row * bpr..row * bpr + stride]);
             }
-            let src = (row * dw * 4) as usize;
-            let dst = (cy as usize * cw + dx as usize) * 4;
-            rgba[dst..dst + copy_w as usize * 4]
-                .copy_from_slice(&piece[src..src + copy_w as usize * 4]);
-        }
+            bgra_to_rgba(&mut disp);
+            let piece = scale_rgba(&disp, iw, ih, dw, dh);
+            // 逐行拷入画布，越界部分裁掉
+            for row in 0..dh {
+                let cy = dy + row;
+                if cy < 0 || cy >= ch as i32 {
+                    continue;
+                }
+                let copy_w = dw.min(cw as i32 - dx);
+                if copy_w <= 0 {
+                    continue;
+                }
+                let src = (row * dw * 4) as usize;
+                let dst = (cy as usize * cw + dx as usize) * 4;
+                rgba[dst..dst + copy_w as usize * 4]
+                    .copy_from_slice(&piece[src..src + copy_w as usize * 4]);
+            }
+            Ok(())
+        })?;
     }
 
     Ok(CapturedScreen {
