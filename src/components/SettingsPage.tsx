@@ -576,6 +576,14 @@ export default function SettingsPage() {
                 </button>
               </div>
             </div>
+            <div className="update-tip">
+              <span className="tip-text">勾选完成后重启应用，新权限才会生效</span>
+              <div className="tip-actions">
+                <button className="update-btn" onClick={() => invoke("restart_app").catch(() => {})}>
+                  重启应用
+                </button>
+              </div>
+            </div>
           </>
         )}
 

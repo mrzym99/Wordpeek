@@ -406,6 +406,13 @@ fn check_update_now(app: AppHandle) -> Result<UpdateStatus, String> {
     check_update(&app)
 }
 
+/// 重启自己。改完系统权限后必须换进程才生效，而 macOS 那个「退出并重新打开」
+/// 只对 .app 包有效——从终端起的进程被关掉就没了，所以给个应用内按钮。
+#[tauri::command]
+fn restart_app(app: AppHandle) {
+    app.restart();
+}
+
 /// 下载并静默安装已缓存的更新，完成后重启应用（后台线程执行）
 #[tauri::command]
 fn install_update(app: AppHandle) -> Result<(), String> {
@@ -1109,6 +1116,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             check_permissions,
+            restart_app,
             open_settings,
             get_update_status,
             check_update_now,

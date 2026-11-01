@@ -32,9 +32,23 @@ macOS 不允许应用静默读屏/模拟按键，首次使用需在「系统设�
 | 辅助功能 | 模拟 Cmd+C 读取选中文本 | 隐私与安全性 → 辅助功能 |
 | 屏幕录制 | 截图翻译抓取屏幕像素 | 隐私与安全性 → 屏幕录制 |
 
-设置 → 系统权限 里有当前状态和一键跳转按钮；**授权后需退出并重启应用**（系统只对新进程生效）。
+设置 → 系统权限 里有当前状态、一键跳转按钮和「重启应用」；**授权后必须换进程才生效**。系统弹的「退出并重新打开」对未签名的包常常只退出不重开，用应用里那个按钮，或者自己再打开一次。
 
 首次按截图快捷键时，应用会主动向系统申请屏幕录制权限（列表里才会出现 Wordpeek）。**升级版本后如果快捷键没反应，去权限页把 Wordpeek 的开关关掉再打开一次**——ad-hoc 签名每次构建都会变，系统会因此判定旧授权失效。
+
+不想点开系统设置、或者权限勾了却怎么都不生效时，终端里这两条最省事：
+
+```sh
+# 去隔离（跳过 Gatekeeper 拦截）+ 启动 + 直接跳到「辅助功能」面板
+xattr -dr com.apple.quarantine /Applications/Wordpeek.app && open -a Wordpeek \
+  && open "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+
+# 授权状态卡住时先重置记录，再重新勾一次（勾选本身必须手动点，命令行改不了 TCC）
+tccutil reset Accessibility com.wordpeek.desktop
+tccutil reset ScreenCapture com.wordpeek.desktop
+```
+
+面板打开后勾选 `Wordpeek` 还是要手动点一下——macOS 的 TCC 数据库受 SIP 保护，命令行只能打开面板和重置记录，不能代你授权。
 
 ### ⚠️ 安装时的安全提示
 
