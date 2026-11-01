@@ -1,4 +1,6 @@
-html, body, #root {
+html,
+body,
+#root {
   margin: 0;
   height: 100%;
   background: transparent;
@@ -41,8 +43,7 @@ html, body, #root {
   --r-pill: 999px;
 
   --shadow-card: 0 0 0 1px rgba(38, 36, 70, 0.06), 0 1px 2px rgba(38, 36, 70, 0.05);
-  --shadow-pop: 0 0 0 1px rgba(38, 36, 70, 0.06), 0 2px 6px rgba(38, 36, 70, 0.06),
-    0 10px 28px rgba(38, 36, 70, 0.1);
+  --shadow-pop: 0 0 0 1px rgba(38, 36, 70, 0.06), 0 2px 6px rgba(38, 36, 70, 0.06), 0 10px 28px rgba(38, 36, 70, 0.1);
 
   --ease: cubic-bezier(0.2, 0.7, 0.3, 1);
   --dur: 140ms;
@@ -68,8 +69,7 @@ html, body, #root {
   --danger: #f48771; /* 6.7:1 */
 
   --shadow-card: 0 0 0 1px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.4);
-  --shadow-pop: 0 0 0 1px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.4),
-    0 10px 28px rgba(0, 0, 0, 0.5);
+  --shadow-pop: 0 0 0 1px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.4), 0 10px 28px rgba(0, 0, 0, 0.5);
 }
 
 .card {
@@ -184,6 +184,12 @@ html, body, #root {
 }
 .word-input:focus {
   box-shadow: inset 0 -1.5px 0 var(--accent);
+}
+
+.phonetic-container {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
 }
 
 /* 音标：词典惯例是衬线斜体，不用等宽 */
@@ -382,8 +388,11 @@ button,
 .update-btn,
 .syno,
 .link-btn {
-  transition: color var(--dur) var(--ease), background-color var(--dur) var(--ease),
-    border-color var(--dur) var(--ease), opacity var(--dur) var(--ease);
+  transition:
+    color var(--dur) var(--ease),
+    background-color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease),
+    opacity var(--dur) var(--ease);
 }
 
 /* ===== macOS 自绘标题栏（Overlay）：头部与左菜单同一层，内容更浅 =====
@@ -1044,13 +1053,16 @@ html:not(.is-capped) .shot-text::-webkit-scrollbar {
 }
 
 /* ===== 划词小释义卡（issue #7）===== */
-/* 绝对定位在 .card-body 内、单词正下方：超出卡片底部时计入 scrollHeight，
-   窗口自适应随之长高包住小卡（不被窗口边框裁切） */
+/* fixed 定位挂视口坐标（落位逻辑在 DictPop.tsx）：不在文档流里，不撑大父容器，
+   窗口自适应不会因为划过单词而长高。宽度跟着可被拖窄的窗口走 */
 .pop-card {
-  position: absolute;
+  position: fixed;
   z-index: 50;
-  width: 250px;
-  max-height: 210px;
+  box-sizing: border-box;
+  /* 随内容收缩，最多 220；实际宽度由 DictPop 按视口实测后写 inline style */
+  width: max-content;
+  max-width: 220px;
+  max-height: min(140px, calc(100vh - 8px));
   overflow: hidden;
   padding: 12px 14px;
   background: var(--paper-raised);
@@ -1075,22 +1087,40 @@ html:not(.is-capped) .shot-text::-webkit-scrollbar {
 .pop-head {
   display: flex;
   align-items: baseline;
+  min-width: 0;
+}
+/* 音标单独一行（复用 Phonetic 组件，美/英都在这行）；放不下时只在 美 / 英 之间折行 */
+.pop-phon {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 14px;
+  margin-top: 1px;
+  font-size: var(--t-small);
+}
+/* 单词和音标都不许折行：折在中途读不出来 */
+.pop-phon .phonetic {
+  margin: 0;
+  white-space: nowrap;
 }
 .pop-word {
   font-family: var(--font-read);
   font-size: 16px;
   font-weight: 600;
   color: var(--ink);
+  white-space: nowrap;
 }
 .pop-senses {
   margin-top: 6px;
   display: -webkit-box;
-  -webkit-line-clamp: 4;
+  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  font-size: var(--t-body);
-  line-height: 1.6;
+  font-size: var(--t-small);
+  line-height: 1.5;
   color: var(--ink);
+}
+.pop-senses .pop-loading {
+  color: var(--ink-3);
 }
 .pop-loading {
   color: var(--ink-3);

@@ -12,7 +12,6 @@ import ContentBox from "./ContentBox";
 import SourceBox from "./SourceBox";
 import TranslateBar from "./TranslateBar";
 import Phonetic from "./Phonetic";
-import { playVoice } from "../lib/voice";
 import { CheckIcon, CopyIcon } from "./icons";
 import { useAutoFitWindow } from "../lib/autofit";
 
@@ -560,14 +559,11 @@ export default function Popup() {
         </>
       )}
 
-      {/* 划词小释义卡：必须在 .card-body 内——绝对定位坐标以其为基准，
-          且弹出/收起要计入窗口自适应的 scrollHeight（不被窗口裁切） */}
+      {/* 划词小释义卡：fixed 定位挂在视口上，不参与窗口自适应的 scrollHeight 测量 */}
       <DictPop
         rootRef={cardRef}
-        anchorRef={cardBodyRef}
         resetKey={`${word}|${shotResult?.text ?? ""}`}
         onOpenDetail={lookup}
-        onPlay={playVoice}
       />
       </div>
     </div>

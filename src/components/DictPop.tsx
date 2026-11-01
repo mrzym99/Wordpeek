@@ -1,45 +1,88 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import Phonetic from "./Phonetic";
 import type { WordInfo } from "../types";
 
-const POP_W = 252; // 小卡宽：横向钳位用
+/** 小卡离视口边缘的最小间距 / 离选中词的距离 */
+const GAP = 6;
+const EDGE = 4;
+/** 小卡宽度上限：够放下一行「美 + 英」音标，再宽就压在卡片上了，长释义交给两行截断 */
+const MAX_W = 220;
+/** 落位时按小卡的最大高度估算：加载中先矮后高，用同一高度判断上下方向，卡片才不会先落下方再翻到上方 */
+const PLACE_H = 140;
 
 /**
  * 划词小释义卡（类似百度词典划词）：监听 rootRef 容器内松手，
  * 选中单个单词（拖动选词或双击选词）时在单词下方弹迷你词典卡，
  * 主内容不变；点「详细释义」把词交给宿主（onOpenDetail）做整卡跳转。
  *
- * - onPlay：发音交给宿主（复用宿主的 Audio 实例）
  * - resetKey：宿主主内容变化（换词/关窗清空）时收起，避免残留旧锚点
- * - 小卡绝对定位在 anchorRef（滚动内容容器）内：溢出容器底部时会计入
- *   scrollHeight，宿主的窗口自适应随之长高包住小卡 —— 不被窗口边框裁切，
- *   也不需要把小卡扣回窗口内盖住单词；收起/展开由 childList 变动自动触发重测
+ * - 小卡用 fixed 定位挂视口坐标：不在文档流里，不参与父容器 scrollHeight，
+ *   宿主的窗口自适应完全不受它影响（窗口尺寸不会因为划过单词而变）
+ * - 下方放不下就翻到单词上方，横向按实测宽度钳进视口（窗口可被拖得比小卡还窄）
  */
 export default function DictPop({
   rootRef,
-  anchorRef,
   resetKey,
   onOpenDetail,
-  onPlay,
 }: {
   rootRef: RefObject<HTMLElement | null>;
-  /** 锚定容器（绝对定位坐标系 + 参与窗口自适应测量的滚动容器） */
-  anchorRef: RefObject<HTMLElement | null>;
   resetKey: unknown;
   onOpenDetail: (w: string) => void;
-  onPlay: (w: string, type: 1 | 2) => void;
 }) {
-  const [pop, setPop] = useState<{ word: string; x: number; y: number } | null>(null);
+  // at：选中词在视口里的矩形（小卡落位以它为锚）
+  const [pop, setPop] = useState<{
+    word: string;
+    at: { left: number; top: number; bottom: number };
+  } | null>(null);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   const [info, setInfo] = useState<WordInfo | null>(null);
   const popRef = useRef<HTMLDivElement | null>(null);
+  // 记住已算好的落位：内容变化只重算宽度，位置保持不动
+  const posRef = useRef<{ left: number; top: number } | null>(null);
   // 小卡查词独立序号/词缓存，不干扰宿主主卡的请求竞态与去重
   const seqRef = useRef(0);
   const wordRef = useRef("");
 
   useEffect(() => {
+    posRef.current = null;
     setPop(null);
+    setPos(null);
   }, [resetKey]);
+
+  // 宽度必须跟着内容重算：加载中只有「查询中…」，比出结果后窄得多，只量一次会把音标和释义切掉。
+  // 位置只在弹出时算一次（resize 例外），否则出结果变高又会翻到上方，看起来跳一下。
+  // useLayoutEffect 在绘制前跑，不会闪一帧错误位置。
+  useLayoutEffect(() => {
+    if (!pop) return;
+    const place = (reposition: boolean) => {
+      const el = popRef.current;
+      if (!el) return;
+      // 宽度随内容收缩（短词不铺满 MAX_W），且不超过视口
+      // 先量内容宽再定宽：窗口能被拖得比小卡还窄，横向钳位才有解
+      el.style.width = "max-content";
+      const vw = window.innerWidth;
+      const w = Math.min(el.offsetWidth, MAX_W, vw - EDGE * 2);
+      el.style.width = `${w}px`;
+      if (!reposition && posRef.current) return;
+      // 高度按上限算：加载中的矮卡和出结果后的高卡落在同一位置，不会跳一下
+      const h = Math.max(el.offsetHeight, PLACE_H);
+      const vh = window.innerHeight;
+      let top = pop.at.bottom + GAP;
+      if (top + h > vh - EDGE) top = pop.at.top - h - GAP;
+      const next = {
+        left: Math.min(Math.max(EDGE, pop.at.left), vw - w - EDGE),
+        top: Math.min(Math.max(EDGE, top), vh - h - EDGE),
+      };
+      posRef.current = next;
+      setPos(next);
+    };
+    place(false);
+    const onResize = () => place(true);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [pop, info]);
 
   useEffect(() => {
     const root = rootRef.current;
@@ -61,13 +104,8 @@ export default function DictPop({
         return;
       }
       const rect = !ta && sel && sel.rangeCount ? sel.getRangeAt(0).getBoundingClientRect() : null;
-      // 鼠标锚点兼容 textarea（无 range rect）；坐标换成 anchorRef 容器内相对坐标
+      // 鼠标锚点兼容 textarea（它没有 range rect）
       const vp = rect ?? { left: e.clientX, top: e.clientY, bottom: e.clientY + 4 };
-      const anchor = anchorRef.current;
-      const aRect = anchor?.getBoundingClientRect();
-      if (!anchor || !aRect) return;
-      const x = Math.min(Math.max(4, vp.left - aRect.left), aRect.width - POP_W);
-      const y = vp.bottom - aRect.top + anchor.scrollTop + 6;
       if (w !== wordRef.current) {
         wordRef.current = w;
         const seq = ++seqRef.current;
@@ -81,9 +119,9 @@ export default function DictPop({
             if (seqRef.current === seq) setPop(null);
           });
       }
-      setPop({ word: w, x, y });
-      // shortcut: 同一词在不同位置重复选中时只变 style 属性，MutationObserver(childList) 不触发重测；
-      // 需新位置比旧位置更靠下才会裁到，概率极低；升级方案：暴露 refit 给本组件在 setPop 后调用
+      posRef.current = null;
+      setPos(null);
+      setPop({ word: w, at: { left: vp.left, top: vp.top, bottom: vp.bottom } });
     };
     // scroll 不冒泡：捕获阶段挂 document，一个监听覆盖所有滚动容器
     const onScroll = () => setPop(null);
@@ -93,25 +131,26 @@ export default function DictPop({
       root.removeEventListener("mouseup", onMouseUp);
       document.removeEventListener("scroll", onScroll, true);
     };
-  }, [rootRef, anchorRef]);
+  }, [rootRef]);
 
   if (!pop) return null;
   return (
-    <div className="pop-card" ref={popRef} style={{ left: pop.x, top: pop.y }}>
+    <div
+      className="pop-card"
+      ref={popRef}
+      style={pos ?? { left: pop.at.left, top: pop.at.bottom + GAP }}
+    >
       <div className="pop-head">
         <span className="pop-word">{pop.word}</span>
       </div>
-      {info?.usphone && (
-        <span className="phonetic" title="播放美音" onClick={() => onPlay(pop.word, 2)}>
-          🔊 {info.usphone}
-        </span>
+      {(info?.usphone || info?.ukphone) && (
+        <div className="pop-phon">
+          <Phonetic word={pop.word} usphone={info.usphone} ukphone={info.ukphone} />
+        </div>
       )}
+      {/* 只留第一条释义一行：小卡要够矮，否则会盖住整张卡片 */}
       <div className="pop-senses">
-        {info ? (
-          info.senses.slice(0, 3).map((s, i) => <div key={i}>{s}</div>)
-        ) : (
-          <div className="pop-loading">查询中…</div>
-        )}
+        {info ? info.senses[0] : <span className="pop-loading">查询中…</span>}
       </div>
       <button
         className="text-btn pop-more"

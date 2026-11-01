@@ -2,7 +2,9 @@
 
 在任意窗口选中单词，按下快捷键，鼠标旁弹出翻译卡片；点击窗外自动隐藏。
 
-![](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-blue) ![](https://img.shields.io/badge/license-MIT-green)
+![](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-blue) ![](https://img.shields.io/badge/license-MIT-green) [![](https://img.shields.io/github/stars/mrzym99/Wordpeek?style=flat&label=star)](https://github.com/mrzym99/Wordpeek/stargazers)
+
+> 如果 Wordpeek 帮你省了点时间，欢迎在右上角点个 ⭐ **Star** —— 那是这个项目唯一的「收入」，也能让更多人找到它。
 
 ## 功能
 
@@ -145,10 +147,10 @@ src-tauri/tauri.macos.conf.json  # macOS 打包覆盖：app+dmg、icon.icns、ad
 | 功能 | 默认快捷键 |
 |---|---|
 | 划词翻译 | `Alt+Z` |
-| 划词图标 | 无（选中文字自动出现，可在设置里关闭） |
+| 划词图标 | 无（拖选或双击选中文字后自动出现，可在设置里关闭） |
 | 截图翻译 | `Alt+S` |
 | 输入翻译 | `Alt+X` |
 
-划词图标只在被选中的那个应用通过系统辅助功能接口把选区交出来时才出现：浏览器（Chrome、Edge）、原生编辑器、备忘录、PDF 阅读器都可以。VS Code 这类 Electron 应用第一次可能弹一句「检测到读屏软件，是否启用无障碍支持」，选「是」之后也能用，选「否」就退回 **Alt+Z**；终端不向系统暴露选区，同样用快捷键。macOS 首次使用需要给 Wordpeek 打开「辅助功能」权限（也可以在设置 → 系统权限里点一下直接跳到对应面板）；Windows 不需要额外授权。
+划词图标只在「拖选」或「双击选词」后出现，单击、点光标不算，免得平时打字也弹。它取决于被选中的那个应用是否通过系统辅助功能接口把选区交出来：浏览器（Chrome、Edge）、原生编辑器、备忘录、PDF 阅读器都可以。VS Code 这类 Electron 应用第一次可能弹一句「检测到读屏软件，是否启用无障碍支持」，选「是」之后也能用，选「否」就退回 **Alt+Z**；终端不向系统暴露选区，同样用快捷键。macOS 首次使用需要给 Wordpeek 打开「辅助功能」权限（也可以在设置 → 系统权限里点一下直接跳到对应面板）；Windows 不需要额外授权。
 
 macOS 上 `Alt` 就是 `Option`，即 `⌥ Option+Z / S / X`；在设置里录制新组合键时也可以用 `Cmd`。所有快捷键都在托盘菜单 →「设置」→「快捷键」里改。

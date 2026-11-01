@@ -1,7 +1,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 use arboard::Clipboard;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager};
@@ -486,6 +486,40 @@ struct IconSelection(parking_lot::Mutex<Option<String>>);
 /// 图标就会立刻又弹回来。所以点完图标 400ms 内的探测直接跳过
 static ICON_CLICKED_AT: AtomicU64 = AtomicU64::new(0);
 
+/// 左键按下的位置与时刻（物理像素, 毫秒）：用来区分「选词手势」和普通单击
+static MOUSE_DOWN: std::sync::OnceLock<parking_lot::Mutex<(i32, i32, u64)>> =
+    std::sync::OnceLock::new();
+/// 上一次松手的位置与时刻（同上），双击/三击判定用
+static MOUSE_UP: std::sync::OnceLock<parking_lot::Mutex<(i32, i32, u64)>> =
+    std::sync::OnceLock::new();
+/// 本次松手是否值得探测选区；mouse-up 回调里算好，worker 直接读
+static PROBE_INTENT: AtomicBool = AtomicBool::new(false);
+
+fn record_mouse_down() {
+    let (x, y) = crate::platform::cursor_pos();
+    *MOUSE_DOWN.get_or_init(Default::default).lock() = (x, y, now_ms());
+}
+
+/// 只有真的做了选词手势才探测：拖动（位移 ≥ 6 物理像素）或连击（350ms 内同一点再松手，
+/// 双击选词/三击选行）。普通单击不算——很多应用会记住上一次选区，单击后
+/// AXSelectedText 照样返回旧文本，不拦就会出现「随便点一下也冒图标」。
+fn mouse_gesture_selects() -> bool {
+    let (x, y) = crate::platform::cursor_pos();
+    let (dx, dy, down_at) = { *MOUSE_DOWN.get_or_init(Default::default).lock() };
+    let (px, py, prev_at) = {
+        let mut up = MOUSE_UP.get_or_init(Default::default).lock();
+        let prev = *up;
+        *up = (x, y, now_ms());
+        prev
+    };
+    let moved = (x - dx).abs() + (y - dy).abs() >= 6;
+    // 本次按下紧跟上一次松手（350ms 内、同一点）= 连击：双击选词/三击选行
+    let repeated = prev_at != 0
+        && down_at.saturating_sub(prev_at) < 350
+        && (dx - px).abs() + (dy - py).abs() < 8;
+    moved || repeated
+}
+
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -521,8 +555,12 @@ fn start_selection_icon(app: &AppHandle) {
     let (tx, rx) = std::sync::mpsc::sync_channel::<()>(1);
     let down_app = app.clone();
     let watch = crate::platform::start_mouse_watch(
-        Box::new(move || hide_selection_icon(&down_app)),
         Box::new(move || {
+            record_mouse_down();
+            hide_selection_icon(&down_app);
+        }),
+        Box::new(move || {
+            PROBE_INTENT.store(mouse_gesture_selects(), Ordering::Relaxed);
             // 队列里只留一个待处理的探测：连点鼠标时不堆积，也不会每点一下就开条线程
             let _ = tx.try_send(());
         }),
@@ -543,7 +581,10 @@ fn start_selection_icon(app: &AppHandle) {
                 .state::<parking_lot::Mutex<translate::AppConfig>>()
                 .lock()
                 .selection_icon;
-            if !enabled || now_ms().saturating_sub(ICON_CLICKED_AT.load(Ordering::Relaxed)) < 400 {
+            if !enabled
+                || !PROBE_INTENT.load(Ordering::Relaxed)
+                || now_ms().saturating_sub(ICON_CLICKED_AT.load(Ordering::Relaxed)) < 400
+            {
                 hide_selection_icon(&worker);
                 continue;
             }

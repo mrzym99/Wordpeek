@@ -13,16 +13,18 @@ export default function Phonetic({
 }) {
   return (
     <>
-      {usphone && (
-        <span className="phonetic" title="播放美音" onClick={() => playVoice(word, 2)}>
-          <VolumeIcon /> 美 {usphone}
-        </span>
-      )}
-      {ukphone && (
-        <span className="phonetic" title="播放英音" onClick={() => playVoice(word, 1)}>
-          <VolumeIcon /> 英 {ukphone}
-        </span>
-      )}
+      <span className="phonetic-container">
+        {usphone && (
+          <span className="phonetic" title="播放美音" onClick={() => playVoice(word, 2)}>
+            <VolumeIcon /> 美 {usphone}
+          </span>
+        )}
+        {ukphone && (
+          <span className="phonetic" title="播放英音" onClick={() => playVoice(word, 1)}>
+            <VolumeIcon /> 英 {ukphone}
+          </span>
+        )}
+      </span>
     </>
   );
 }
