@@ -206,6 +206,9 @@ pub fn inject_copy(_app: &tauri::AppHandle) -> bool {
 
 /// 鼠标事件回调（进程内只装一次，装在静态里给 block 用）
 type MouseCallback = Box<dyn Fn() + Send + Sync>;
+/// 鼠标移动回调（macOS 未用：远离图标自动隐藏目前只在 Windows 实现，
+/// 全局监视器加 mouseMoved 会每帧唤醒主线程，不值得）
+type MoveCallback = Box<dyn Fn(i32, i32) + Send + Sync>;
 static MOUSE_ON_DOWN: OnceLock<MouseCallback> = OnceLock::new();
 static MOUSE_ON_UP: OnceLock<MouseCallback> = OnceLock::new();
 
@@ -214,7 +217,11 @@ static MOUSE_ON_UP: OnceLock<MouseCallback> = OnceLock::new();
 /// 用 AppKit 的全局监视器，不用 CGEventTap：鼠标事件不需要额外授权，也不会
 /// 让全系统的鼠标事件排队等我们的回调。监视器必须在主线程注册，返回的 token
 /// 一旦释放监视器就失效——泄漏掉最省心（进程活多久它就活多久）。
-pub fn start_mouse_watch(on_down: MouseCallback, on_up: MouseCallback) -> bool {
+pub fn start_mouse_watch(
+    on_down: MouseCallback,
+    on_up: MouseCallback,
+    _on_move: MoveCallback,
+) -> bool {
     use objc2_app_kit::{NSEvent, NSEventMask};
     use std::ptr::NonNull;
 

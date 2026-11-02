@@ -201,9 +201,13 @@ pub fn virtual_screen_bounds() -> Option<(i32, i32, i32, i32)> {
 // ---------- 划词图标：全局鼠标监听 + 系统选区 ----------
 
 /// 鼠标事件回调（进程内只装一次，钩子函数从静态里取）
+/// 鼠标事件回调（进程内只装一次，装在静态里给 block 用）
 type MouseCallback = Box<dyn Fn() + Send + Sync>;
+/// 鼠标移动回调：参数是钩子自带的光标物理像素坐标（不额外调 GetCursorPos）
+type MoveCallback = Box<dyn Fn(i32, i32) + Send + Sync>;
 static MOUSE_ON_DOWN: std::sync::OnceLock<MouseCallback> = std::sync::OnceLock::new();
 static MOUSE_ON_UP: std::sync::OnceLock<MouseCallback> = std::sync::OnceLock::new();
+static MOUSE_ON_MOVE: std::sync::OnceLock<MoveCallback> = std::sync::OnceLock::new();
 
 /// 低级鼠标钩子：回调必须立刻返回（它在系统的输入线程上跑，慢了整个系统的鼠标都卡）
 unsafe extern "system" fn mouse_hook(
@@ -211,7 +215,9 @@ unsafe extern "system" fn mouse_hook(
     wparam: windows::Win32::Foundation::WPARAM,
     lparam: windows::Win32::Foundation::LPARAM,
 ) -> windows::Win32::Foundation::LRESULT {
-    use windows::Win32::UI::WindowsAndMessaging::{WM_LBUTTONDOWN, WM_LBUTTONUP};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, MSLLHOOKSTRUCT,
+    };
     if code >= 0 {
         match wparam.0 as u32 {
             WM_LBUTTONDOWN => {
@@ -224,6 +230,12 @@ unsafe extern "system" fn mouse_hook(
                     cb()
                 }
             }
+            WM_MOUSEMOVE => {
+                if let Some(cb) = MOUSE_ON_MOVE.get() {
+                    let pt = (*(lparam.0 as *const MSLLHOOKSTRUCT)).pt;
+                    cb(pt.x as i32, pt.y as i32);
+                }
+            }
             _ => {}
         }
     }
@@ -232,7 +244,11 @@ unsafe extern "system" fn mouse_hook(
 
 /// 装全局鼠标监听：左键按下/松开各回调一次。低级钩子必须装在自带消息循环的线程上，
 /// 所以这里起一个常驻线程把它跑起来。
-pub fn start_mouse_watch(on_down: MouseCallback, on_up: MouseCallback) -> bool {
+pub fn start_mouse_watch(
+    on_down: MouseCallback,
+    on_up: MouseCallback,
+    on_move: MoveCallback,
+) -> bool {
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::UI::WindowsAndMessaging::{
         GetMessageW, SetWindowsHookExW, MSG, WH_MOUSE_LL,
@@ -240,6 +256,7 @@ pub fn start_mouse_watch(on_down: MouseCallback, on_up: MouseCallback) -> bool {
 
     let _ = MOUSE_ON_DOWN.set(on_down);
     let _ = MOUSE_ON_UP.set(on_up);
+    let _ = MOUSE_ON_MOVE.set(on_move);
     // 钩子安装结果同步传回：装不上时调用方要明确知道（划词图标不可用），
     // 而不是永远返回 true 静默失败
     let (tx, rx) = std::sync::mpsc::channel();
@@ -275,10 +292,12 @@ pub fn focused_selection() -> Option<String> {
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         let automation: IUIAutomation =
             CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
-        // Chromium / Electron 的 UIA 树是懒建的，第一次常拿到空节点，隔一小会儿重试一次
-        for attempt in 0..2 {
-            if attempt == 1 {
-                std::thread::sleep(std::time::Duration::from_millis(120));
+        // Chromium / Electron 的 UIA 树是懒建的，第一次常拿到空节点；负载高时
+        // 120ms 也不够，逐次加长重试到 360ms（选词后图标本就不弹在鼠标按下瞬间，
+        // 这里慢几十毫秒无感）
+        for attempt in 0..3 {
+            if attempt > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(120 * attempt as u64));
             }
             if let Some(text) = selection_of(&automation) {
                 return Some(text);

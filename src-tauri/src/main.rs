@@ -530,6 +530,10 @@ static MOUSE_UP: std::sync::OnceLock<parking_lot::Mutex<(i32, i32, u64)>> =
     std::sync::OnceLock::new();
 /// 本次松手是否值得探测选区；mouse-up 回调里算好，worker 直接读
 static PROBE_INTENT: AtomicBool = AtomicBool::new(false);
+/// 选区代次：每次按下 +1。探测在独立线程里异步做（UIA 重试要 sleep，
+/// 不能堵 worker，否则后续鼠标信号会撑爆 sync_channel 被丢弃），
+/// show 前对一下代次，期间有新的按下（用户已开始新选区）就放弃本次结果
+static SELECTION_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 /// 本次按下时光标是否落在划词图标矩形内（钩子回调只做廉价判断，hide 由 worker 做）
 static DOWN_ON_ICON: AtomicBool = AtomicBool::new(false);
 /// 划词图标最近一次 show 的屏幕矩形（物理像素 x,y,w,h）：钩子回调用它判断
@@ -546,8 +550,9 @@ fn record_mouse_down() {
 /// AXSelectedText 照样返回旧文本，不拦就会出现「随便点一下也冒图标」。
 /// 位移阈值：曼哈顿距离超过 6px 视为拖拽选区（低于此值是普通点击的抖动）
 const GESTURE_MOVE_PX: i32 = 6;
-/// 连击判定：按下与上次松手间隔 < 350ms 且同一点（±8px）→ 双击选词/三击选行
-const GESTURE_REPEAT_MS: u64 = 350;
+/// 连击判定：按下与上次松手间隔 < 500ms 且同一点（±8px）→ 双击选词/三击选行
+/// （Windows 系统双击默认 500ms，取同值避免手慢的双击被判成两次单击）
+const GESTURE_REPEAT_MS: u64 = 500;
 const GESTURE_REPEAT_PX: i32 = 8;
 
 /// 纯判定逻辑，供测试：本次按下/松开与上一次松开（px,py,prev_at）的坐标时间
@@ -567,8 +572,7 @@ fn gesture_selects(
     moved || repeated
 }
 
-fn mouse_gesture_selects() -> bool {
-    let (x, y) = crate::platform::cursor_pos();
+fn mouse_gesture_selects(x: i32, y: i32) -> bool {
     let down = { *MOUSE_DOWN.get_or_init(Default::default).lock() };
     let (px, py, prev_at) = {
         let mut up = MOUSE_UP.get_or_init(Default::default).lock();
@@ -605,15 +609,16 @@ fn hide_selection_icon(app: &AppHandle) {
     }
 }
 
-/// 在光标旁显示图标（窗口已在 tauri.conf.json 里预建，这里只是挪位置 + show）
-fn show_selection_icon(app: &AppHandle, text: String) {
+/// 在松手位置显示图标（窗口已在 tauri.conf.json 里预建，这里只是挪位置 + show）。
+/// 锚定松手位置而不是实时光标：探测是异步的（要等 120ms+），用实时位置的话
+/// 用户探测期间挪开鼠标，图标会追着光标在别处冒出来
+fn show_selection_icon(app: &AppHandle, text: String, ax: i32, ay: i32) {
     *app.state::<IconSelection>().0.lock() = Some(text);
-    let (cx, cy) = crate::platform::cursor_pos();
     let app = app.clone();
     let inner = app.clone();
     let _ = app.run_on_main_thread(move || {
         if let Some(win) = inner.get_webview_window("icon") {
-            let (x, y) = clamp_to_screen(&inner, "icon", cx + 8, cy + 12);
+            let (x, y) = clamp_to_screen(&inner, "icon", ax + 8, ay + 12);
             let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
             if let Ok(size) = win.outer_size() {
                 *ICON_RECT.lock() = Some((x, y, size.width, size.height));
@@ -637,23 +642,49 @@ fn cursor_on_icon_rect() -> bool {
 /// 光标旁弹按钮，点一下走热键同一套翻译链路。读不到选区（终端、Electron 等
 /// 不实现 AX/UIA 文本接口的应用）就什么都不做，用户照旧用划词快捷键。
 fn start_selection_icon(app: &AppHandle) {
-    // false = 按下（只记状态，延迟处理），true = 松开（探测选区）。队列只留一个信号：
-    // 钩子回调绝不做窗口操作（跨线程查询/ShowWindow 会拖慢全系统鼠标，
+    /// 鼠标信号：Down=按下、Up=松开（带松手位置，锚点用）、Leave=图标可见时鼠标飘远
+    enum Signal {
+        Down,
+        Up { x: i32, y: i32 },
+        Leave,
+    }
+    // 队列只留一个信号：钩子回调绝不做窗口操作（跨线程查询/ShowWindow 会拖慢全系统鼠标，
     // 超时还会被 Windows 静默摘钩），hide 一律在 worker 线程里做
-    let (tx, rx) = std::sync::mpsc::sync_channel::<bool>(1);
+    let (tx, rx) = std::sync::mpsc::sync_channel::<Signal>(1);
     let tx_down = tx.clone();
+    let tx_move = tx.clone();
+    /// 光标离开图标矩形这么远（物理像素）就收起图标：说明用户已经去别处了，
+    /// 图标留在原地碍事。留这一圈余量是给「把鼠标挪过去点图标」的路径
+    const ICON_LEAVE_PX: i32 = 48;
+    /// 探测完成时（要等 120ms+）光标离松手点超过这么远就丢弃结果：用户已去别处，
+    /// 且很多应用会一直报旧选区，人不在那就不该弹
+    const ICON_NEAR_PX: i32 = 150;
     let watch = crate::platform::start_mouse_watch(
         Box::new(move || {
             // 点在图标窗口自身上时不能收起：Windows 低级钩子连自己窗口的鼠标事件也收，
             // down 就把窗口藏掉会吞掉这次 click（macOS 全局监视器不收自身应用的事件，无此问题）
             DOWN_ON_ICON.store(cursor_on_icon_rect(), Ordering::Relaxed);
             record_mouse_down();
-            let _ = tx_down.try_send(false);
+            let _ = tx_down.try_send(Signal::Down);
         }),
         Box::new(move || {
-            PROBE_INTENT.store(mouse_gesture_selects(), Ordering::Relaxed);
+            let (x, y) = crate::platform::cursor_pos();
+            PROBE_INTENT.store(mouse_gesture_selects(x, y), Ordering::Relaxed);
             // 队列里只留一个待处理的探测：连点鼠标时不堆积，也不会每点一下就开条线程
-            let _ = tx.try_send(true);
+            let _ = tx.try_send(Signal::Up { x, y });
+        }),
+        // 移动：图标可见且光标已飘远（要开始别的事了）→ 发 Leave 收起。
+        // 只碰内存读 + 坐标比较，保持回调轻量；图标已收起时这里近乎免费
+        Box::new(move |x, y| {
+            if let Some((ix, iy, iw, ih)) = *ICON_RECT.lock() {
+                if x < ix - ICON_LEAVE_PX
+                    || x >= ix + iw as i32 + ICON_LEAVE_PX
+                    || y < iy - ICON_LEAVE_PX
+                    || y >= iy + ih as i32 + ICON_LEAVE_PX
+                {
+                    let _ = tx_move.try_send(Signal::Leave);
+                }
+            }
         }),
     );
     println!(
@@ -666,41 +697,66 @@ fn start_selection_icon(app: &AppHandle) {
     }
     let worker = app.clone();
     std::thread::spawn(move || {
-        while let Ok(is_up) = rx.recv() {
-            if !is_up {
-                // 按下：不在图标上就收起图标（开始新一轮选区）；点在图标上则保留，
+        while let Ok(sig) = rx.recv() {
+            match sig {
+                // 按下/飘远：收起图标（开始新一轮选区）；点在图标上按下则保留，
                 // 等随后的 click 命令（translate_selection_icon）接管
-                if !DOWN_ON_ICON.load(Ordering::Relaxed) {
-                    hide_selection_icon(&worker);
+                Signal::Down | Signal::Leave => {
+                    SELECTION_GEN.fetch_add(1, Ordering::Relaxed);
+                    if matches!(sig, Signal::Leave)
+                        || !DOWN_ON_ICON.load(Ordering::Relaxed)
+                    {
+                        hide_selection_icon(&worker);
+                    }
                 }
-                continue;
-            }
-            // 开关每次现读配置：设置里一关就立即生效，不用重装监听
-            let enabled = worker
-                .state::<parking_lot::Mutex<translate::AppConfig>>()
-                .lock()
-                .selection_icon;
-            if !enabled
-                || !PROBE_INTENT.load(Ordering::Relaxed)
-                || now_ms().saturating_sub(ICON_CLICKED_AT.load(Ordering::Relaxed)) < 400
-            {
-                hide_selection_icon(&worker);
-                continue;
-            }
-            // 在自家窗口里划词（卡片内选中跳查、设置页复制等）不弹图标，
-            // 否则用户在自己卡片里选个词，光标旁边又冒出一个翻译图标
-            if ["main", "icon", "settings", "input"]
-                .iter()
-                .any(|&l| cursor_on_window(&worker, l))
-            {
-                hide_selection_icon(&worker);
-                continue;
-            }
-            match crate::platform::focused_selection() {
-                Some(text) => show_selection_icon(&worker, text),
-                None => hide_selection_icon(&worker),
+                Signal::Up { x, y } => self::probe_selection(&worker, x, y, ICON_NEAR_PX),
             }
         }
+    });
+}
+
+/// 松开且是选词手势：探测选区，成功且用户还没走远就在松手位置弹图标
+fn probe_selection(worker: &AppHandle, ux: i32, uy: i32, near_px: i32) {
+    // 开关每次现读配置：设置里一关就立即生效，不用重装监听
+    let enabled = worker
+        .state::<parking_lot::Mutex<translate::AppConfig>>()
+        .lock()
+        .selection_icon;
+    if !enabled
+        || !PROBE_INTENT.load(Ordering::Relaxed)
+        || now_ms().saturating_sub(ICON_CLICKED_AT.load(Ordering::Relaxed)) < 400
+    {
+        hide_selection_icon(worker);
+        return;
+    }
+    // 在自家窗口里划词（卡片内选中跳查、设置页复制等）不弹图标，
+    // 否则用户在自己卡片里选个词，光标旁边又冒出一个翻译图标
+    if ["main", "icon", "settings", "input"]
+        .iter()
+        .any(|&l| cursor_on_window(worker, l))
+    {
+        hide_selection_icon(worker);
+        return;
+    }
+    // 探测放进独立线程：UIA 对 Chromium 应用要重试等 120ms+，堵在这里
+    // 会让 sync_channel(1) 溢出，丢掉后续鼠标信号 → 图标时灵时不灵
+    let gen = SELECTION_GEN.load(Ordering::Relaxed);
+    let prober = worker.clone();
+    std::thread::spawn(move || match crate::platform::focused_selection() {
+        // 等待期间用户又按下了鼠标（新选区开始）：本次结果已过期，丢弃
+        Some(text) if SELECTION_GEN.load(Ordering::Relaxed) == gen => {
+            // 光标已离松手点很远：用户去别处了，不追着报旧选区的应用弹图标
+            let (cx, cy) = crate::platform::cursor_pos();
+            if (cx - ux).abs() + (cy - uy).abs() > near_px {
+                hide_selection_icon(&prober);
+            } else {
+                show_selection_icon(&prober, text, ux, uy);
+            }
+        }
+        _ if SELECTION_GEN.load(Ordering::Relaxed) == gen => {
+            hide_selection_icon(&prober)
+        }
+        _ => {} // 过期结果，什么都不做
     });
 }
 
@@ -1280,10 +1336,10 @@ mod tests {
         assert!(gesture_selects((100, 100, 1000), (130, 100), (0, 0, 0)));
         // 普通点击（位移小、无连击）→ 不弹图标
         assert!(!gesture_selects((100, 100, 1000), (102, 101), (0, 0, 0)));
-        // 双击选词：350ms 内同一点再次按下 → 选中
+        // 双击选词：500ms 内同一点再次按下 → 选中
         assert!(gesture_selects((100, 100, 1200), (101, 100), (101, 100, 1000)));
-        // 间隔太久（≥350ms）不算连击
-        assert!(!gesture_selects((100, 100, 1400), (101, 100), (101, 100, 1000)));
+        // 间隔太久（≥500ms）不算连击
+        assert!(!gesture_selects((100, 100, 1600), (101, 100), (101, 100, 1000)));
     }
 
     #[test]
