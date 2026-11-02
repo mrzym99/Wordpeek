@@ -19,8 +19,8 @@
   border-left: 1px solid var(--line);
 }
 .toggle button:global(.active) {
-  background: var(--accent-wash);
-  color: var(--ink);
+  background: var(--accent-solid);
+  color: var(--on-accent);
   font-weight: 600;
 }
 .toggle button:disabled {

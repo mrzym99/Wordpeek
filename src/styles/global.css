@@ -29,6 +29,9 @@ body,
   --hairline: rgba(0, 0, 0, 0.07); /* 极轻的分界线：给圆角面板描边用，不抢眼 */
   --thumb: rgba(0, 0, 0, 0.22);
   --accent: #005fb8; /* VS Code 蓝，6.3:1（wash 上 5.7） */
+  /* 实心控件（按钮、选中 tab）的底色与字色：比 --accent 再深一档，
+     白字才够 4.5:1。--accent 本身留给文字、描边、焦点环 */
+  --accent-solid: #005fb8; /* 白字 6.3:1 */
   --on-accent: #ffffff;
   --accent-wash: #e8f1fb;
   --danger: #a1260d; /* 7.5:1 */
@@ -71,7 +74,8 @@ body,
   --hairline: rgba(255, 255, 255, 0.07);
   --thumb: rgba(255, 255, 255, 0.22);
   --accent: #3794ff; /* VS Code 蓝，5.4:1 */
-  --on-accent: #102a43;
+  --accent-solid: #1f6feb; /* 白字 4.6:1：--accent 那种亮蓝上白字只有 3.1:1 */
+  --on-accent: #ffffff;
   --accent-wash: #142b42;
   --danger: #f48771; /* 6.7:1 */
 
