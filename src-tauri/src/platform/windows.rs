@@ -65,6 +65,28 @@ pub fn cursor_pos() -> (i32, i32) {
     }
 }
 
+/// 关掉 Windows 11 给顶层窗口自动加的系统圆角（~8px）：透明弹窗的圆角由 CSS 画，
+/// 系统再叠一层弧就成了「两层圆角」。Win10 不认这个属性，返回错误静默忽略
+pub fn disable_rounding(win: &tauri::WebviewWindow) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Graphics::Dwm::{
+        DwmSetWindowAttribute, DWM_WINDOW_CORNER_PREFERENCE, DWMWA_WINDOW_CORNER_PREFERENCE,
+        DWMWCP_DONOTROUND,
+    };
+    let Ok(hwnd) = win.hwnd() else {
+        return;
+    };
+    let pref = DWM_WINDOW_CORNER_PREFERENCE(DWMWCP_DONOTROUND.0);
+    unsafe {
+        let _ = DwmSetWindowAttribute(
+            HWND(hwnd.0 as *mut core::ffi::c_void),
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            &pref as *const _ as *const core::ffi::c_void,
+            std::mem::size_of::<DWM_WINDOW_CORNER_PREFERENCE>() as u32,
+        );
+    }
+}
+
 /// 光标所在显示器的工作区（物理像素，排除任务栏等应用栏）。
 /// 拿不到信息时返回 (0,0,0,0)，前端会退回用虚拟屏边界錨制。
 pub fn work_area_at(x: i32, y: i32) -> (i32, i32, i32, i32) {

@@ -1,6 +1,6 @@
 [package]
 name = "wordpeek"
-version = "1.0.6"
+version = "1.0.7"
 edition = "2021"
 
 [build-dependencies]
@@ -28,6 +28,8 @@ tauri-plugin-dialog = "2"   # 权限缺失时弹原生对话框（Rust 侧调用
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
     "Win32_UI_WindowsAndMessaging", "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_Threading",
+    # 透明弹窗关掉 Win11 系统圆角（DWM），圆角只留 CSS 一层
+    "Win32_Graphics_Dwm",
     # 划词图标：低级鼠标钩子(Win32_System_LibraryLoader 取模块句柄) + UIA 读选区
     "Win32_System_LibraryLoader", "Win32_System_Com", "Win32_UI_Accessibility",
     "Foundation", "Foundation_Collections", "Globalization", "Graphics_Imaging", "Media_Ocr", "Storage_Streams",

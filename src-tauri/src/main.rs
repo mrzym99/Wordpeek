@@ -291,6 +291,8 @@ fn open_settings(app: AppHandle) {
     let for_builder = app.clone();
     // Windows 上 webview 窗口必须在事件循环线程创建，托盘/齿轮回调不保证在主线程
     let spawn = app.run_on_main_thread(move || {
+        // macOS 分支会重新赋值 builder，Windows 构建下才是 unused_mut
+        #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
         let mut builder = tauri::WebviewWindowBuilder::new(
             &for_builder,
             "settings",
@@ -331,6 +333,7 @@ fn open_input_window(app: &AppHandle) {
     let for_builder = app.clone();
     // Windows 上 webview 窗口必须在事件循环线程创建，快捷键/托盘回调不保证在主线程
     let spawn = app.run_on_main_thread(move || {
+        #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
         let mut builder = tauri::WebviewWindowBuilder::new(
             &for_builder,
             "input",
@@ -534,6 +537,18 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// 光标是否落在指定窗口内（物理像素）。取不到窗口/位置按不在处理
+fn cursor_on_window(app: &AppHandle, label: &str) -> bool {
+    let Some(win) = app.get_webview_window(label) else {
+        return false;
+    };
+    let (Ok(pos), Ok(size)) = (win.outer_position(), win.outer_size()) else {
+        return false;
+    };
+    let (x, y) = crate::platform::cursor_pos();
+    x >= pos.x && x < pos.x + size.width as i32 && y >= pos.y && y < pos.y + size.height as i32
+}
+
 fn hide_selection_icon(app: &AppHandle) {
     if let Some(win) = app.get_webview_window("icon") {
         let _ = win.hide();
@@ -563,8 +578,12 @@ fn start_selection_icon(app: &AppHandle) {
     let down_app = app.clone();
     let watch = crate::platform::start_mouse_watch(
         Box::new(move || {
-            record_mouse_down();
-            hide_selection_icon(&down_app);
+            // 点在图标窗口自身上时不能收起：Windows 低级钩子连自己窗口的鼠标事件也收，
+            // down 就把窗口藏掉会吞掉这次 click（macOS 全局监视器不收自身应用的事件，无此问题）
+            if !cursor_on_window(&down_app, "icon") {
+                record_mouse_down();
+                hide_selection_icon(&down_app);
+            }
         }),
         Box::new(move || {
             PROBE_INTENT.store(mouse_gesture_selects(), Ordering::Relaxed);
@@ -591,6 +610,15 @@ fn start_selection_icon(app: &AppHandle) {
             if !enabled
                 || !PROBE_INTENT.load(Ordering::Relaxed)
                 || now_ms().saturating_sub(ICON_CLICKED_AT.load(Ordering::Relaxed)) < 400
+            {
+                hide_selection_icon(&worker);
+                continue;
+            }
+            // 在自家窗口里划词（卡片内选中跳查、设置页复制等）不弹图标，
+            // 否则用户在自己卡片里选个词，光标旁边又冒出一个翻译图标
+            if ["main", "icon", "settings", "input"]
+                .iter()
+                .any(|&l| cursor_on_window(&worker, l))
             {
                 hide_selection_icon(&worker);
                 continue;
@@ -1038,6 +1066,15 @@ fn main() {
             app.manage(UpdateState::default());
             app.manage(ScreenshotState::default());
             app.manage(IconSelection::default());
+
+            // Win11 会给透明弹窗再叠一层 ~8px 系统圆角，CSS 圆角外多出一道弧；
+            // 弹窗类窗口全关掉，圆角只留 CSS 一层（设置/输入窗有标题栏，保留系统圆角）
+            #[cfg(windows)]
+            for label in ["main", "icon", "screenshot"] {
+                if let Some(win) = app.get_webview_window(label) {
+                    platform::disable_rounding(&win);
+                }
+            }
 
             // 划词图标：全局鼠标监听（跟设置里的开关无关，开关在探测时现读）
             start_selection_icon(&handle);

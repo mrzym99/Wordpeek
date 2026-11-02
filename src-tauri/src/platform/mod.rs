@@ -96,6 +96,8 @@ pub use macos::start_mouse_watch;
 
 /// 焦点控件里被选中的文本（系统 AX/UIA 接口，不碰剪贴板；不支持的应用返回 None）
 #[cfg(windows)]
+pub use windows::disable_rounding;
+#[cfg(windows)]
 pub use windows::focused_selection;
 #[cfg(target_os = "macos")]
 pub use macos::focused_selection;

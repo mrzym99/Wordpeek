@@ -212,28 +212,38 @@ export default function Popup() {
     };
     const startHideCheck = () => {
       if (hideCheck !== undefined) return;
-      hideCheck = setInterval(async () => {
+      hideCheck = setInterval(() => {
         stopHideCheck();
-        if (!(await win.isFocused())) {
-          win.hide();
-          // 关闭即清空：下次打开从空态开始，残留内容不会影响首帧布局；
-          // 顺带序号+1，丢掉还在路上的旧翻译结果
-          seqRef.current++;
-          lastLooked.current = "";
-          setWord("");
-          setInfo(null);
-          setError("");
-          setShotResult(null);
-          setDraft("");
-          setShotTo("auto");
-          setCompareOpen(false);
-          setRows(null);
-          setCompareText("");
-          setCompareLoading(false);
-          setCompareError("");
-          setCopied("");
-        }
+        maybeHide();
       }, 150);
+    };
+
+    // 失焦复查：窗口没焦点且鼠标不在卡片里才收。鼠标在卡片里时不藏——
+    // 用户可能只是点了别的窗口想边看边打字；等鼠标离开时由 onLeave 补查
+    const maybeHide = async () => {
+      if (document.documentElement.matches(":hover")) return;
+      if (!(await win.isFocused())) hideAndReset();
+    };
+    const onLeave = () => maybeHide();
+
+    // 收起即清空：下次打开从空态开始，残留内容不会影响首帧布局；
+    // 顺带序号+1，丢掉还在路上的旧翻译结果
+    const hideAndReset = () => {
+      win.hide();
+      seqRef.current++;
+      lastLooked.current = "";
+      setWord("");
+      setInfo(null);
+      setError("");
+      setShotResult(null);
+      setDraft("");
+      setShotTo("auto");
+      setCompareOpen(false);
+      setRows(null);
+      setCompareText("");
+      setCompareLoading(false);
+      setCompareError("");
+      setCopied("");
     };
 
     // 异步订阅竞态防护：StrictMode 会 挂载→清理→再挂载，
@@ -317,6 +327,10 @@ export default function Popup() {
       if (disposed) focus();
       else unlistenFocus = focus;
 
+      // blur 时鼠标在卡片里被豁免，离开卡片后补一次失焦复查
+      document.documentElement.addEventListener("mouseleave", onLeave);
+      if (disposed) document.documentElement.removeEventListener("mouseleave", onLeave);
+
       // 用户拖宽弹窗后防抖落盘，重启恢复；高度动画引发的 resize 宽度不变，
       // 会被「与上次已存宽度比较」过滤掉，不会频繁写盘
       let widthTimer: number | undefined;
@@ -343,6 +357,7 @@ export default function Popup() {
       unlistenFocus?.();
       unlistenShot?.();
       unlistenResized?.();
+      document.documentElement.removeEventListener("mouseleave", onLeave);
       stopHideCheck();
     };
   }, []);
