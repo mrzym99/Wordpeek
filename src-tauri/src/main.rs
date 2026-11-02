@@ -555,9 +555,6 @@ fn record_mouse_down() {
 /// AXSelectedText 照样返回旧文本，不拦就会出现「随便点一下也冒图标」。
 /// 位移阈值：曼哈顿距离超过 6px 视为拖拽选区（低于此值是普通点击的抖动）
 const GESTURE_MOVE_PX: i32 = 6;
-/// 连击判定：按下与上次松手间隔 < 500ms 且同一点（±8px）→ 双击选词/三击选行
-/// （Windows 系统双击默认 500ms，取同值避免手慢的双击被判成两次单击）
-const GESTURE_REPEAT_MS: u64 = 500;
 const GESTURE_REPEAT_PX: i32 = 8;
 
 /// 纯判定逻辑，供测试：本次按下/松开与上一次松开（px,py,prev_at）的坐标时间
@@ -565,14 +562,15 @@ fn gesture_selects(
     down: (i32, i32, u64),
     up: (i32, i32),
     prev_up: (i32, i32, u64),
+    repeat_ms: u64,
 ) -> bool {
     let (dx, dy, down_at) = down;
     let (x, y) = up;
     let (px, py, prev_at) = prev_up;
     let moved = (x - dx).abs() + (y - dy).abs() >= GESTURE_MOVE_PX;
-    // 本次按下紧跟上一次松手（350ms 内、同一点）= 连击：双击选词/三击选行
+    // 本次按下紧跟上一次松手（系统双击间隔内、同一点）= 连击：双击选词/三击选行
     let repeated = prev_at != 0
-        && down_at.saturating_sub(prev_at) < GESTURE_REPEAT_MS
+        && down_at.saturating_sub(prev_at) < repeat_ms
         && (dx - px).abs() + (dy - py).abs() < GESTURE_REPEAT_PX;
     moved || repeated
 }
@@ -585,7 +583,13 @@ fn mouse_gesture_selects(x: i32, y: i32) -> bool {
         *up = (x, y, now_ms());
         prev
     };
-    gesture_selects(down, (x, y), (px, py, prev_at))
+    gesture_selects(down, (x, y), (px, py, prev_at), repeat_ms())
+}
+
+/// 连击判定窗口取系统「双击间隔」：系统里调到 900ms 时慢速双击也是双击，
+/// 硬编码 500ms 会把它们判成两次单击。极端值（0 或超长）夹到 250–1000
+fn repeat_ms() -> u64 {
+    crate::platform::double_click_interval_ms().clamp(250, 1000)
 }
 
 fn now_ms() -> u64 {
@@ -600,6 +604,11 @@ fn cursor_on_window(app: &AppHandle, label: &str) -> bool {
     let Some(win) = app.get_webview_window(label) else {
         return false;
     };
+    // 藏起来的窗口还留着上次的位置和尺寸：不判可见的话，卡片收起后它那块屏幕区域
+    // 就再也划不出图标了（logs 里 skip 光标在自家窗口 的根源）
+    if !win.is_visible().unwrap_or(false) {
+        return false;
+    }
     let (Ok(pos), Ok(size)) = (win.outer_position(), win.outer_size()) else {
         return false;
     };
@@ -661,9 +670,10 @@ fn start_selection_icon(app: &AppHandle) {
     /// 光标离开图标矩形这么远（物理像素）就收起图标：说明用户已经去别处了，
     /// 图标留在原地碍事。留这一圈余量是给「把鼠标挪过去点图标」的路径
     const ICON_LEAVE_PX: i32 = 48;
-    /// 探测完成时（要等 120ms+）光标离松手点超过这么远就丢弃结果：用户已去别处，
-    /// 且很多应用会一直报旧选区，人不在那就不该弹
-    const ICON_NEAR_PX: i32 = 150;
+    /// 探测完成时光标离松手点超过这么远就丢弃结果：用户已去别处，且很多应用会一直
+    /// 报旧选区，人不在那就不该弹。取 400px 物理（200pt）：AX 读不到时还要走 Cmd+C
+    /// 兜底（≥300ms），期间手一动就超 150px
+    const ICON_NEAR_PX: i32 = 400;
     let watch = crate::platform::start_mouse_watch(
         Box::new(move || {
             // 点在图标窗口自身上时不能收起：Windows 低级钩子连自己窗口的鼠标事件也收，
@@ -747,22 +757,45 @@ fn probe_selection(worker: &AppHandle, ux: i32, uy: i32, near_px: i32) {
     // 会让 sync_channel(1) 溢出，丢掉后续鼠标信号 → 图标时灵时不灵
     let gen = SELECTION_GEN.load(Ordering::Relaxed);
     let prober = worker.clone();
-    std::thread::spawn(move || match crate::platform::focused_selection() {
+    // 探测线程要自己开 autorelease pool：worker 线程没有主线程那个池，
+    // Obj-C 临时对象会攒到线程结束
+    std::thread::spawn(move || {
+        crate::platform::with_release_pool(|| probe_and_show(&prober, ux, uy, near_px, gen))
+    });
+}
+
+/// 探测选区并弹图标。`gen` 是发起时的选区代次：期间用户开始了新选区就丢弃本次结果
+fn probe_and_show(worker: &AppHandle, ux: i32, uy: i32, near_px: i32, gen: u64) {
+    // 上一轮的 Cmd+C 兜底还没收尾（连点、连按快捷键）：放弃本次，但**不 hide**——
+    // 上一轮可能刚把图标弹出来，hide 会让它闪一下就消失
+    // shortcut: 只读标志不排队，真撞在同一毫秒会少弹一次，为这点概率上锁不值
+    if GRAB_IN_PROGRESS.load(Ordering::SeqCst) {
+        return;
+    }
+    let mut text = crate::platform::focused_selection();
+    if text.is_none() && crate::platform::clipboard_fallback_allowed() {
+        // AX 读不到（终端、部分 Electron、自绘 UI）。没选区时应用不会响应复制键，
+        // grab_selection 会还原剪贴板，所以这一步白跑也不会顶掉用户内容。
+        // Windows 老控制台里 Ctrl+C 是中断，clipboard_fallback_allowed 会拦掉
+        text = grab_selection(worker);
+    }
+    match text {
         // 等待期间用户又按下了鼠标（新选区开始）：本次结果已过期，丢弃
         Some(text) if SELECTION_GEN.load(Ordering::Relaxed) == gen => {
             // 光标已离松手点很远：用户去别处了，不追着报旧选区的应用弹图标
             let (cx, cy) = crate::platform::cursor_pos();
-            if (cx - ux).abs() + (cy - uy).abs() > near_px {
-                hide_selection_icon(&prober);
+            let far = (cx - ux).abs() + (cy - uy).abs() > near_px;
+            if far {
+                hide_selection_icon(worker);
             } else {
-                show_selection_icon(&prober, text, ux, uy);
+                show_selection_icon(worker, text, ux, uy);
             }
         }
         _ if SELECTION_GEN.load(Ordering::Relaxed) == gen => {
-            hide_selection_icon(&prober)
+            hide_selection_icon(worker)
         }
         _ => {} // 过期结果，什么都不做
-    });
+    }
 }
 
 /// 点划词图标：把上次探测到的选区交给弹窗卡片（与热键同一个 selection 事件）
@@ -1365,13 +1398,15 @@ mod tests {
     #[test]
     fn gesture_selects_distinguishes_drag_click_and_double_click() {
         // 拖拽（位移 ≥ 6px）→ 选中
-        assert!(gesture_selects((100, 100, 1000), (130, 100), (0, 0, 0)));
+        assert!(gesture_selects((100, 100, 1000), (130, 100), (0, 0, 0), 500));
         // 普通点击（位移小、无连击）→ 不弹图标
-        assert!(!gesture_selects((100, 100, 1000), (102, 101), (0, 0, 0)));
-        // 双击选词：500ms 内同一点再次按下 → 选中
-        assert!(gesture_selects((100, 100, 1200), (101, 100), (101, 100, 1000)));
-        // 间隔太久（≥500ms）不算连击
-        assert!(!gesture_selects((100, 100, 1600), (101, 100), (101, 100, 1000)));
+        assert!(!gesture_selects((100, 100, 1000), (102, 101), (0, 0, 0), 500));
+        // 双击选词：双击间隔内同一点再次按下 → 选中
+        assert!(gesture_selects((100, 100, 1200), (101, 100), (101, 100, 1000), 500));
+        // 间隔超双击窗口不算连击
+        assert!(!gesture_selects((100, 100, 1600), (101, 100), (101, 100, 1000), 500));
+        // 系统把双击间隔调到 900ms 时，慢速双击仍算连击
+        assert!(gesture_selects((100, 100, 1800), (101, 100), (101, 100, 1000), 900));
     }
 
     #[test]

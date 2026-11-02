@@ -324,7 +324,12 @@ pub fn focused_selection() -> Option<String> {
     };
     use windows::Win32::UI::Accessibility::CUIAutomation;
 
-    unsafe {
+    let pid = foreground_pid();
+    // 整轮读完一个字都没拿到的 app（终端、自绘 UI）不再试：UIA 重试要白等 360ms
+    if pid.is_some_and(super::selection_hopeless) {
+        return None;
+    }
+    let text = unsafe {
         // UIA 客户端用 STA；反复初始化只是加引用计数，无需配对 Uninitialize（线程随进程退出）
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         let automation: IUIAutomation =
@@ -332,15 +337,61 @@ pub fn focused_selection() -> Option<String> {
         // Chromium / Electron 的 UIA 树是懒建的，第一次常拿到空节点；负载高时
         // 120ms 也不够，逐次加长重试到 360ms（选词后图标本就不弹在鼠标按下瞬间，
         // 这里慢几十毫秒无感）
+        let mut text = None;
         for attempt in 0..3 {
             if attempt > 0 {
                 std::thread::sleep(std::time::Duration::from_millis(120 * attempt as u64));
             }
-            if let Some(text) = selection_of(&automation) {
-                return Some(text);
+            if let Some(t) = selection_of(&automation) {
+                text = Some(t);
+                break;
             }
         }
-        None
+        text
+    };
+    if let Some(pid) = pid {
+        match text.is_some() {
+            true => super::clear_selection_hopeless(pid),
+            false => super::mark_selection_hopeless(pid),
+        }
+    }
+    text
+}
+
+/// 前台窗口所属进程的 pid
+pub fn foreground_pid() -> Option<i32> {
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
+
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        if hwnd.0.is_null() {
+            return None;
+        }
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        (pid != 0).then_some(pid as i32)
+    }
+}
+
+/// 能不能用 Ctrl+C 读剪贴板做兜底。
+///
+/// 传统控制台（cmd.exe / PowerShell / conhost，窗口类 ConsoleWindowClass）里
+/// Ctrl+C 是「中断」不是复制，注入下去会把用户正在跑的命令打断；Windows Terminal
+/// 有选区时才是复制，所以只排除老控制台。宁可不出图标，也不动用户进程
+pub fn clipboard_fallback_allowed() -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{GetClassNameW, GetForegroundWindow};
+
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        if hwnd.0.is_null() {
+            return true;
+        }
+        let mut buf = [0u16; 64];
+        let len = GetClassNameW(hwnd, &mut buf);
+        if len <= 0 {
+            return true;
+        }
+        String::from_utf16_lossy(&buf[..len as usize]) != "ConsoleWindowClass"
     }
 }
 

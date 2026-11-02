@@ -265,6 +265,7 @@ extern "C" {
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
     fn AXUIElementCreateApplication(pid: i32) -> *const std::ffi::c_void;
+    fn AXUIElementSetMessagingTimeout(element: *const std::ffi::c_void, timeout: f32) -> i32;
     fn AXUIElementCopyAttributeValue(
         element: *const std::ffi::c_void,
         attribute: *const std::ffi::c_void,
@@ -288,6 +289,29 @@ extern "C" {
 /// AXValueType::CFRange
 const AX_VALUE_CFRANGE: u32 = 4;
 
+/// 后台线程执行 AppKit 代码前开 autorelease pool（worker 线程没有主线程那个池）
+pub fn with_release_pool<R>(f: impl FnOnce() -> R) -> R {
+    objc2::rc::autoreleasepool(|_| f())
+}
+
+/// 系统设置里的「双击间隔」（毫秒）
+pub fn double_click_interval_ms() -> u64 {
+    use objc2_app_kit::NSEvent;
+    (NSEvent::doubleClickInterval() * 1000.0).round().max(0.0) as u64
+}
+
+/// 前台 app 的 pid（系统级 AX 元素不可用，一律按它建元素）
+pub fn foreground_pid() -> Option<i32> {
+    use objc2_app_kit::NSWorkspace;
+    Some(NSWorkspace::sharedWorkspace().frontmostApplication()?.processIdentifier())
+}
+
+/// macOS 的 Cmd+C 在任何 app 里都是「复制」，不会误伤（不像 Windows 控制台里
+/// Ctrl+C 是中断），所以兜底一律允许
+pub fn clipboard_fallback_allowed() -> bool {
+    true
+}
+
 /// 读焦点控件里被选中的文本（辅助功能 API，不碰剪贴板也不注入按键）。
 ///
 /// 三步，越往后越慢，所以前面的不中才走后面：
@@ -299,30 +323,49 @@ const AX_VALUE_CFRANGE: u32 = 4;
 /// CannotComplete，所以一律按前台 app 的 pid 建元素。终端、conhost 这类根本没有
 /// 选区概念的应用三步都读不到，返回 None——那时不弹图标，用户照常用划词快捷键。
 pub fn focused_selection() -> Option<String> {
-    use objc2_app_kit::NSWorkspace;
-
     if !accessibility_allowed() {
         return None;
     }
-    let pid = NSWorkspace::sharedWorkspace()
-        .frontmostApplication()?
-        .processIdentifier();
+    let pid = foreground_pid()?;
+    // 整轮读完（含唤醒等待、扫窗口）一个字都没拿到的 app——终端、自绘 UI——不再试：
+    // 每次重试光唤醒轮询就要 640ms，用户体感就是「划完半天没反应」
+    if super::selection_hopeless(pid) {
+        return None;
+    }
     unsafe {
         let app = AXUIElementCreateApplication(pid);
         if app.is_null() {
             return None;
         }
+        // 默认 6 秒：目标 app 卡住时能把探测线程钉死，图标就得等 6 秒才弹
+        AXUIElementSetMessagingTimeout(app, 0.1);
         let mut text = read_focused(app);
-        if text.is_none() && mark_woken(pid) {
+        if text.is_none() && should_wake(pid) {
             wake_accessibility(app);
-            std::thread::sleep(std::time::Duration::from_millis(100));
-            text = read_focused(app);
-            restore_accessibility(app);
+            // Chromium 建树是异步的（实测 100ms 常常不够）：每 80ms 试一次，
+            // 最多 ~640ms，读到就停。成功就不 restore，让树保持醒着，
+            // 否则下次又得从零唤醒。
+            for _ in 0..8 {
+                std::thread::sleep(std::time::Duration::from_millis(80));
+                if let Some(t) = read_focused(app) {
+                    text = Some(t);
+                    break;
+                }
+            }
+            if text.is_some() {
+                mark_wake_ok(pid);
+            } else {
+                restore_accessibility(app);
+            }
         }
         if text.is_none() {
             text = scan_window(app, 4, 48);
         }
         CFRelease(app);
+        match text.is_some() {
+            true => super::clear_selection_hopeless(pid),
+            false => super::mark_selection_hopeless(pid),
+        }
         text
     }
 }
@@ -448,16 +491,30 @@ struct CFRange {
     length: isize,
 }
 
-/// 每个进程只叫醒一次：设置 AXEnhancedUserInterface 会触发 Chromium / Electron
-/// 的「检测到读屏软件」提示（VS Code 会弹一次「是否启用无障碍支持」），反复设置
-/// 就是在骚扰用户。树建起来之后本来也不会再塌，所以一次够用。
-fn mark_woken(pid: i32) -> bool {
-    static WOKEN: std::sync::OnceLock<parking_lot::Mutex<std::collections::HashSet<i32>>> =
-        std::sync::OnceLock::new();
-    WOKEN
-        .get_or_init(Default::default)
-        .lock()
-        .insert(pid)
+/// 唤醒成功：清掉该 app 的重试计数，下次需要时还能继续唤醒
+fn mark_wake_ok(pid: i32) {
+    wake_tries().lock().remove(&pid);
+}
+
+/// 唤醒尝试次数：每 app 最多 3 次。终端这类永不暴露选区的 app 唤醒也没用，
+/// 不封顶就会每次划词白等 640ms。
+fn should_wake(pid: i32) -> bool {
+    let mut tries = wake_tries().lock();
+    let n = tries.entry(pid).or_insert(0);
+    if *n >= 3 {
+        return false;
+    }
+    *n += 1;
+    true
+}
+
+/// 整轮都读不到选区的 app（终端、自绘 UI）：跳过整个 AX 流程直接走 Cmd+C 兜底
+
+static WAKE_TRIES: std::sync::OnceLock<parking_lot::Mutex<std::collections::HashMap<i32, u8>>> =
+    std::sync::OnceLock::new();
+
+fn wake_tries() -> &'static parking_lot::Mutex<std::collections::HashMap<i32, u8>> {
+    WAKE_TRIES.get_or_init(Default::default)
 }
 
 /// 叫醒目标 app 的无障碍树。Chromium / Electron 平时不建树，看到

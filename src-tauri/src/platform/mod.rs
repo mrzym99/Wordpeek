@@ -115,3 +115,50 @@ pub use windows::disable_rounding;
 pub use windows::focused_selection;
 #[cfg(target_os = "macos")]
 pub use macos::focused_selection;
+#[cfg(windows)]
+pub use windows::{clipboard_fallback_allowed, foreground_pid};
+#[cfg(target_os = "macos")]
+pub use macos::{clipboard_fallback_allowed, foreground_pid};
+
+// ---------- 划词图标：「这个 app 读不到选区」的记忆（两个平台共用） ----------
+
+/// 整轮探测（唤醒轮询 / UIA 重试 / 扫窗口）一个字都没拿到的 app——终端、自绘 UI——
+/// 记住它，之后直接走剪贴板兜底，不再每次白等（macOS 唤醒轮询约 640ms，Windows
+/// UIA 重试约 360ms）。读到过一次就清掉：pid 会被系统复用，记忆不能是永久的负担
+static SELECTION_HOPELESS: std::sync::OnceLock<
+    parking_lot::Mutex<std::collections::HashSet<i32>>,
+> = std::sync::OnceLock::new();
+
+fn hopeless_set() -> &'static parking_lot::Mutex<std::collections::HashSet<i32>> {
+    SELECTION_HOPELESS.get_or_init(|| parking_lot::Mutex::new(std::collections::HashSet::new()))
+}
+
+pub(crate) fn selection_hopeless(pid: i32) -> bool {
+    hopeless_set().lock().contains(&pid)
+}
+
+pub(crate) fn mark_selection_hopeless(pid: i32) {
+    hopeless_set().lock().insert(pid);
+}
+
+pub(crate) fn clear_selection_hopeless(pid: i32) {
+    hopeless_set().lock().remove(&pid);
+}
+
+/// 系统设置里的「双击间隔」（毫秒）。Windows 侧不动：`#[cfg(windows)]` 代码在 macOS
+/// 上不参与编译，加 GetDoubleClickTime 只能盲写，保持 500ms 默认值
+#[cfg(target_os = "macos")]
+pub use macos::double_click_interval_ms;
+#[cfg(windows)]
+pub fn double_click_interval_ms() -> u64 {
+    500
+}
+
+/// 后台线程执行 Objective-C/AppKit 代码前要自己开 autorelease pool：worker 线程
+/// 没有主线程那个池，临时对象会攒到线程结束。Windows 无此概念，直通
+#[cfg(target_os = "macos")]
+pub use macos::with_release_pool;
+#[cfg(windows)]
+pub fn with_release_pool<R>(f: impl FnOnce() -> R) -> R {
+    f()
+}
