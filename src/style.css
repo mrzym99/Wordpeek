@@ -42,7 +42,9 @@ body,
   --r-lg: 18px;
   --r-pill: 999px;
 
-  --shadow-card: 0 0 0 1px rgba(38, 36, 70, 0.06), 0 1px 2px rgba(38, 36, 70, 0.05);
+  /* 描边只靠 .card 的 border 一层：这里不再叠 0 0 0 1px 环（双描边），
+     Blur 部分超出窗口边界本来也会被裁 */
+  --shadow-card: 0 1px 2px rgba(38, 36, 70, 0.05);
   --shadow-pop: 0 0 0 1px rgba(38, 36, 70, 0.06), 0 2px 6px rgba(38, 36, 70, 0.06), 0 10px 28px rgba(38, 36, 70, 0.1);
 
   --ease: cubic-bezier(0.2, 0.7, 0.3, 1);
@@ -68,7 +70,8 @@ body,
   --accent-wash: #142b42;
   --danger: #f48771; /* 6.7:1 */
 
-  --shadow-card: 0 0 0 1px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.4);
+  /* 同上：描边只靠 border，不叠阴影环 */
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-pop: 0 0 0 1px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.4), 0 10px 28px rgba(0, 0, 0, 0.5);
 }
 
