@@ -3,7 +3,7 @@ import ReactDOM from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import App from "./App";
 import { applyTheme, watchTheme, type Theme } from "./lib/theme";
-import "./style.css";
+import "./styles/global.css";
 
 // 四个窗口共用这一份页面：主题在这里统一落地，页面组件不必各自处理
 // 设置/输入窗口在 macOS 上自绘标题栏（Rust 侧 TitleBarStyle::Overlay），CSS 靠这个标记决定要不要让出头部

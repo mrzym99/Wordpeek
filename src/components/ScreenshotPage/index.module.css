@@ -1,0 +1,20 @@
+/* 全屏遮罩框选的专属样式 */
+.mask {
+  position: fixed;
+  inset: 0;
+  cursor: crosshair;
+  overflow: hidden;
+}
+.selection {
+  position: absolute;
+  border: 1px solid #3794ff;
+  box-shadow: 0 0 0 100000px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+/* 未拖拽时的全屏占位：元素铺满窗口，box-shadow 会全画在窗口外被裁，故置空 */
+.idle {
+  inset: 0;
+  border: none;
+  background: rgba(0, 0, 0, 0.35);
+  box-shadow: none;
+}

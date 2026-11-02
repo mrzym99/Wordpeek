@@ -1,0 +1,142 @@
+/* 划词翻译卡片（Popup）专属样式 */
+
+/* header：固定不随 body 滚动（card 用 flex 纵向布局）；高度 24 + 下边距 8 = 32，
+   与 Popup 传给 useAutoFitWindow 的 chrome 常量绑在一起，改高度要一起改 */
+.wordHead {
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 24px;
+  margin-bottom: 8px;
+}
+/* 右上角按钮组：对比各源，两种模式都固定在标题行右上 */
+.headActions {
+  position: absolute;
+  right: 0;
+  top: 1px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  z-index: 2; /* 盖过顶部拖拽热区，保证可点击 */
+}
+
+/* 顶部拖拽热区：覆盖卡片上 padding（16px），隐形但鼠标移入变移动光标。
+   fixed 钉在窗口顶部，内容滚动时热区不会跟着跑 */
+.dragStrip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 16px;
+  cursor: move;
+}
+
+/* 品牌字（划词卡片左上的唯一标识；版本号在设置 → 关于） */
+.appTitle {
+  flex-shrink: 0;
+  font-size: var(--t-small);
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.badges {
+  margin-top: 6px;
+}
+.badge {
+  display: inline-block;
+  padding: 0 8px;
+  margin: 0 4px 2px 0;
+  border-radius: var(--r-pill);
+  background: var(--wash);
+  color: var(--ink-2);
+  font-size: var(--t-micro);
+  line-height: 18px;
+}
+
+/* 小节：词形变化 / 同义词。柔和版不画分隔线，交给间距 */
+.section {
+  margin-top: 16px;
+}
+.sectionTitle {
+  font-size: var(--t-small);
+  font-weight: 600;
+  color: var(--ink-2);
+  margin-bottom: 6px;
+}
+.posTag {
+  color: var(--ink-3);
+  font-weight: 400;
+  font-style: italic;
+}
+
+.wordForms {
+  font-size: var(--t-body);
+  color: var(--ink-2);
+}
+.wordForm {
+  margin-right: 14px;
+}
+/* 可点文本（词形变化）：内联按钮，保证键盘可达 */
+.linkBtn {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+  font-family: var(--font-read);
+}
+.linkBtn:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.synos {
+  font-size: var(--t-small);
+}
+.syno {
+  display: inline-flex;
+  align-items: center;
+  margin: 2px 6px 2px 0;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: var(--wash);
+  color: var(--accent);
+  font: inherit;
+  line-height: 22px;
+  cursor: pointer;
+}
+.syno:hover {
+  background: var(--accent-wash);
+}
+
+/* ===== 截图翻译结果区 ===== */
+.shotLoading {
+  font-size: var(--t-small);
+  color: var(--ink-3);
+  margin-bottom: 8px;
+}
+/* 内容框里的截图释义：灰底块 + 去序号 */
+.shotSenses {
+  margin: 0 0 10px;
+  background: var(--wash);
+  border-radius: var(--r-xs);
+  padding: 8px 12px;
+}
+.shotSenses li {
+  padding: 0;
+}
+.shotSenses li::before {
+  display: none;
+}
+
+/* 自适应高度过程中不出滚动条（同 global.css 里 .card-body 的规则） */
+:global(html:not(.is-capped)) .card {
+  scrollbar-width: none;
+}
+:global(html:not(.is-capped)) .card::-webkit-scrollbar {
+  width: 0;
+}

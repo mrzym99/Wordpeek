@@ -1,6 +1,6 @@
 import Popup from "./components/Popup";
 import InputPage from "./components/InputPage";
-import SettingsPage from "./components/SettingsPage";
+import SettingsPage from "./components/Settings";
 import ScreenshotPage from "./components/ScreenshotPage";
 import SelectionIcon from "./components/SelectionIcon";
 

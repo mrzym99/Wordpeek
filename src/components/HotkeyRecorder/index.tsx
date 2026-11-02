@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import s from "./index.module.css";
 
 const IS_MAC = navigator.userAgent.includes("Macintosh");
 
@@ -67,7 +68,7 @@ export default function HotkeyRecorder({ value, onChange }: { value: string; onC
   return (
     <>
       <input
-        className={recording ? "recording" : ""}
+        className={recording ? s.recording : ""}
         readOnly
         value={recording ? "" : displayHotkey(value)}
         placeholder={recording ? "按下新的组合键（Esc 取消）" : ""}

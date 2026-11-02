@@ -1,0 +1,76 @@
+/* 划词小释义卡（issue #7）的专属样式 */
+/* fixed 定位挂视口坐标（落位逻辑在 DictPop.tsx）：不在文档流里，不撑大父容器，
+   窗口自适应不会因为划过单词而长高。宽度跟着可被拖窄的窗口走 */
+.card {
+  position: fixed;
+  z-index: 50;
+  box-sizing: border-box;
+  /* 随内容收缩，最多 220；实际宽度由 DictPop 按视口实测后写 inline style */
+  width: max-content;
+  max-width: 220px;
+  max-height: min(140px, calc(100vh - 8px));
+  overflow: hidden;
+  padding: 12px 14px;
+  background: var(--paper-raised);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-pop);
+  font-size: var(--t-small);
+  line-height: 1.55;
+  user-select: text;
+  /* 唯一的入场动效：小卡是用户手势的直接反应，值得一次淡入上移 */
+  animation: pop-in var(--dur) var(--ease);
+}
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.head {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+}
+/* 音标单独一行（复用 Phonetic 组件，美/英都在这行）；放不下时只在 美 / 英 之间折行 */
+.phon {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 14px;
+  margin-top: 1px;
+  font-size: var(--t-small);
+}
+/* 单词和音标都不许折行：折在中途读不出来 */
+.phon :global(.phonetic) {
+  margin: 0;
+  white-space: nowrap;
+}
+.word {
+  font-family: var(--font-read);
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+}
+.senses {
+  margin-top: 6px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: var(--t-small);
+  line-height: 1.5;
+  color: var(--ink);
+}
+.more {
+  margin-top: 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card {
+    animation: none;
+  }
+}

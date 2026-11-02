@@ -1,0 +1,14 @@
+/* 目标语言切换 + 执行按钮：左边切换、右边执行（输入窗口与截图卡片共用） */
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: -2px 0 10px;
+}
+/* 执行按钮与左侧分段控件同高、同一颗边框胶囊；比正文里的 .text-btn 再重一点 */
+.bar :global(.text-btn) {
+  padding: 4px 14px;
+  font-weight: 600;
+  color: var(--ink);
+}

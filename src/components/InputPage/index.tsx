@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import type { SourceResult, WordInfo } from "../types";
-import { useAutoFitWindow } from "../lib/autofit";
-import SourceCompare from "./SourceCompare";
-import type { CompareRow } from "./SourceCompare";
-import SourceBox from "./SourceBox";
-import TranslateBar from "./TranslateBar";
-import Phonetic from "./Phonetic";
+import type { SourceResult, WordInfo } from "../../types";
+import { useAutoFitWindow } from "../../hooks/useAutoFitWindow";
+import SourceCompare from "../SourceCompare";
+import type { CompareRow } from "../SourceCompare";
+import SourceBox from "../SourceBox";
+import TranslateBar from "../TranslateBar";
+import Phonetic from "../Phonetic";
+import s from "./index.module.css";
 
 /** 输入翻译窗口（?page=input）：打字/粘贴 → 默认翻译 + 勾选的额外源逐源给出译文，目标语言可智能/手动切换 */
 export default function InputPage() {
@@ -93,7 +94,7 @@ export default function InputPage() {
   };
 
   return (
-    <div className="input-layout">
+    <div className={s.layout}>
       {/* macOS 把页面画到标题栏下面了，这条是自绘的头部（拖拽 + 底色），Windows 下隐藏 */}
       <div className="win-head" data-tauri-drag-region />
       <div className="card-body" ref={setBody}>

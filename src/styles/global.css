@@ -1,0 +1,359 @@
+/* ===== 全局层：设计 token + 跨组件共享的原语 =====
+   只有「两个以上组件共用」或「被别的模块用 :global 引用」的类才放这里；
+   单个组件的样式一律放它自己的 X.module.css（类名哈希，永不冲突）。
+   改动某个组件的外观先去它的 module.css 找，找不到才回这里。 */
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  user-select: none;
+}
+
+/* ===== 设计 token：中性灰 + VS Code 蓝（去掉了早期的靛紫） ===== */
+/* 层次靠三层表面（wash 外壳 < paper 内容 < paper-raised 抬起）与贴身阴影，不靠降对比度；
+   任何 ≤13px 文字都不低于 4.5:1 —— 改色前先算一遍，别凭眼睛。 */
+:root {
+  color-scheme: light; /* 原生滚动条/表单控件跟着主题走 */
+  /* 三层表面照 VS Code：外壳面（深）< 内容面 < 抬起面，内容永远比外壳浅 */
+  --paper: #ffffff; /* 内容面：卡片、设置右侧内容 */
+  --paper-raised: #ffffff; /* 抬起面：浮层、聚焦输入、选中项（浅色下与内容面同色，靠边框/阴影区分） */
+  --wash: #f3f3f3; /* 外壳面：设置左菜单、输入窗口底、内嵌填充块 */
+  --wash-hover: #e8e8e8;
+  --ink: #202020; /* 16.3:1 */
+  --ink-2: #616161; /* 6.2:1 */
+  --ink-3: #6e6e6e; /* 5.1:1，不承载唯一信息 */
+  --line: #e5e5e5;
+  --hairline: rgba(0, 0, 0, 0.07); /* 极轻的分界线：给圆角面板描边用，不抢眼 */
+  --thumb: rgba(0, 0, 0, 0.22);
+  --accent: #005fb8; /* VS Code 蓝，6.3:1（wash 上 5.7） */
+  --on-accent: #ffffff;
+  --accent-wash: #e8f1fb;
+  --danger: #a1260d; /* 7.5:1 */
+
+  --font-read: ui-serif, "New York", "Songti SC", Georgia, serif;
+  --font-ui: -apple-system, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+
+  --t-head: 19px;
+  --t-lead: 15px;
+  --t-body: 13px;
+  --t-small: 12px;
+  --t-micro: 11px;
+
+  --r-xs: 8px;
+  --r-md: 12px;
+  --r-lg: 18px;
+  --r-pill: 999px;
+
+  /* 描边只靠 .card 的 border 一层：这里不再叠 0 0 0 1px 环（双描边），
+     Blur 部分超出窗口边界本来也会被裁 */
+  --shadow-card: 0 1px 2px rgba(38, 36, 70, 0.05);
+  --shadow-pop: 0 0 0 1px rgba(38, 36, 70, 0.06), 0 2px 6px rgba(38, 36, 70, 0.06), 0 10px 28px rgba(38, 36, 70, 0.1);
+
+  --ease: cubic-bezier(0.2, 0.7, 0.3, 1);
+  --dur: 140ms;
+}
+
+/* 深色不是可选项：弹窗大半时间浮在深色编辑器上。
+   主题由 <html data-theme> 决定（system 在 JS 里先解析成 light/dark），样式表只有两套 token */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --paper: #1f1f1f; /* 内容面 */
+  --paper-raised: #2b2b2b; /* 抬起面：浮层、聚焦输入、选中项 */
+  --wash: #181818; /* 外壳面：设置左菜单、输入窗口底、内嵌填充块 */
+  --wash-hover: #2a2a2a;
+  --ink: #cccccc; /* 10.3:1 */
+  --ink-2: #a5a5a5; /* 6.7:1 */
+  --ink-3: #8e8e8e; /* 5.0:1 */
+  --line: #3c3c3c;
+  --hairline: rgba(255, 255, 255, 0.07);
+  --thumb: rgba(255, 255, 255, 0.22);
+  --accent: #3794ff; /* VS Code 蓝，5.4:1 */
+  --on-accent: #102a43;
+  --accent-wash: #142b42;
+  --danger: #f48771; /* 6.7:1 */
+
+  /* 同上：描边只靠 border，不叠阴影环 */
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-pop: 0 0 0 1px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.4), 0 10px 28px rgba(0, 0, 0, 0.5);
+}
+
+/* ===== 卡片外壳与内容区（划词卡 / 输入窗共用） ===== */
+.card {
+  position: relative;
+  height: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  /* padding 决定 autofit 的 CARD_CHROME=35 与 Popup 的 chrome=67，改这里要同步改两处 */
+  padding: 16px 18px;
+  border-radius: var(--r-lg);
+  background: var(--paper);
+  color: var(--ink);
+  font: var(--t-body) / 1.6 var(--font-ui);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-card);
+  overflow-y: auto;
+  user-select: text;
+}
+
+/* 只收缩不拉伸（flex: 0 1 auto），否则量到的不是内容高度，自适应会退化；
+   max-height 用 100vh − chrome（67），窗口到屏幕上限后剩下的内容才能框内滚动 */
+.card-body {
+  position: relative; /* 划词小卡的包含块 */
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: calc(100vh - 67px);
+  overflow-y: auto;
+}
+
+/* 内容区滚动条：细条浅色 */
+.card-body::-webkit-scrollbar {
+  width: 6px;
+}
+.card-body::-webkit-scrollbar-thumb {
+  background: var(--thumb);
+  border-radius: 3px;
+}
+
+/* 自适应高度过程中不出滚动条：窗口没顶到屏幕上限时永远不出条，
+   只有 fit_window 返回值被上限裁住（html.is-capped）才恢复按需细条。
+   （.card / .shot-text 的同款规则在各自 module.css 里） */
+html:not(.is-capped) .card-body {
+  scrollbar-width: none;
+}
+html:not(.is-capped) .card-body::-webkit-scrollbar {
+  width: 0;
+}
+
+/* ===== macOS 自绘标题栏（Overlay）：Windows 下原生标题栏还在，隐藏 =====
+   Rust 侧设置/输入窗口用了 TitleBarStyle::Overlay + hidden_title，交通灯由系统画在页面最上层，
+   所以这里只要让出 28px 并把外壳面铺满整条。 */
+.win-head {
+  display: none;
+}
+:root[data-os="mac"] .win-head {
+  display: block;
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 28px;
+  background: var(--wash);
+}
+
+/* ===== 跨组件复用的文本/状态原语 ===== */
+
+/* 单词行：单词 + 音标/发音一行排列（划词卡、输入窗默认翻译行共用） */
+.word-line {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+/* 词头：衬线，宽度随内容收缩（field-sizing 需要较新内核） */
+.word-big {
+  font-family: var(--font-read);
+  font-size: var(--t-head);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  line-height: 1.25;
+  background: transparent;
+  border: none;
+  outline: none;
+  padding: 0;
+  max-width: 100%;
+  field-sizing: content;
+}
+.word-big:focus {
+  box-shadow: inset 0 -1.5px 0 var(--accent);
+}
+
+.phonetic-container {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+}
+
+/* 音标：词典惯例是衬线斜体，不用等宽 */
+.phonetic {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-read);
+  font-style: italic;
+  font-size: var(--t-small);
+  color: var(--ink-3);
+}
+.phonetic svg {
+  flex-shrink: 0;
+}
+.phonetic:hover {
+  color: var(--accent);
+}
+
+/* 文字+图标行内组合（已授权/已复制/Star 按钮） */
+.i-txt {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+button svg {
+  vertical-align: -2px;
+}
+
+.loading {
+  color: var(--ink-3);
+  font-size: var(--t-small);
+}
+.error {
+  margin-top: 10px;
+  color: var(--danger);
+  white-space: pre-wrap;
+}
+
+/* 图标按钮：hover 淡入的复制/关闭等 */
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--ink-3);
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+.icon-btn.ok {
+  color: var(--accent);
+}
+.icon-btn:hover:not(.ok) {
+  color: var(--ink);
+}
+/* 重新翻译进行中：图标旋转 */
+.icon-btn.spinning {
+  animation: shot-spin 0.9s linear infinite;
+}
+@keyframes shot-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 文字按钮：卡片里的小动作（对比各源 / 重新翻译 / 详细释义） */
+.text-btn {
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: var(--t-small);
+  padding: 2px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.text-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.text-btn:disabled {
+  color: var(--ink-3);
+  cursor: default;
+}
+
+/* ===== 释义列表（SenseList 组件）：序号在 22px 左栏，正文成一条干净的栏 ===== */
+/* 衬线只留给词头和音标（词典惯例）：13px 宋体中文笔画过细，正文用无衬线 */
+.senses {
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: sense;
+  font-size: var(--t-body);
+  line-height: 1.7;
+}
+.senses li {
+  counter-increment: sense;
+  position: relative;
+  padding: 2px 0 2px 22px;
+  color: var(--ink);
+}
+.senses li::before {
+  content: counter(sense) ".";
+  position: absolute;
+  left: 0;
+  top: 2px;
+  width: 16px;
+  text-align: right;
+  color: var(--ink-3);
+  font: var(--t-small) / 1.7 var(--font-ui);
+}
+.pos {
+  margin-right: 5px;
+  color: var(--ink-2);
+  font-weight: 400;
+  font-style: italic;
+}
+
+/* ===== 表单原语（设置各页 + HotkeyRecorder 共用） ===== */
+.field {
+  display: block;
+  margin-bottom: 12px;
+  color: var(--ink-2);
+  font-size: var(--t-small);
+}
+.field input,
+.field select {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 6px;
+  padding: 6px 10px;
+  border-radius: var(--r-xs);
+  border: 1px solid var(--line);
+  background: var(--wash);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--t-body);
+  outline: none;
+}
+.field input:focus,
+.field select:focus {
+  border-color: var(--accent);
+  background: var(--paper-raised);
+  box-shadow: 0 0 0 3px var(--accent-wash);
+}
+.field-error {
+  color: var(--danger);
+  font-size: var(--t-small);
+  margin: -4px 0 8px;
+}
+.field-hint {
+  color: var(--ink-3);
+  font-size: var(--t-small);
+}
+
+/* ===== 键盘焦点：柔和设计最容易丢掉的东西，全局给一个能看见的环 =====
+   各菜单项/胶囊按钮都是 <button>，这里一条覆盖全部；非 button 的可点元素在各模块里自己补 */
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+button {
+  transition:
+    color var(--dur) var(--ease),
+    background-color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease),
+    opacity var(--dur) var(--ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .icon-btn.spinning {
+    animation: none;
+  }
+  * {
+    transition: none !important;
+  }
+}

@@ -1,0 +1,25 @@
+/* 输入翻译窗口专属样式 */
+/* padding 14×2 是 useAutoFitWindow("input", 29) 的常量来源，别改 */
+.layout {
+  padding: 14px 16px;
+  box-sizing: border-box;
+  /* 撑满视口：窗口比内容高时多出来的部分画外壳面，否则露出原生窗口的白底 */
+  min-height: 100vh;
+  background: var(--wash);
+  color: var(--ink);
+  font: var(--t-body) / 1.6 var(--font-ui);
+}
+
+/* 头部占了 28px，内容高度上限同步收紧（29 = 原 padding 14×2 + 1） */
+.layout :global(.card-body) {
+  max-height: calc(100vh - 29px);
+}
+
+/* macOS 把页面画到标题栏下面了：让出 28px 自绘头部（Overlay） */
+:root[data-os="mac"] .layout {
+  position: relative;
+  padding-top: 42px; /* 28 头部 + 原 14 */
+}
+:root[data-os="mac"] .layout :global(.card-body) {
+  max-height: calc(100vh - 57px);
+}

@@ -1,0 +1,46 @@
+/* 通用内容框：浅灰圆角框 + 框内右上角复制按钮（对齐多源对比行的样式） */
+.box {
+  background: var(--wash);
+  border-radius: var(--r-xs);
+  padding: 6px 12px 10px;
+  margin-bottom: 10px;
+}
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 22px;
+  gap: 8px;
+}
+.label {
+  font-size: var(--t-small);
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto; /* 无标签时按钮也要贴右 */
+}
+/* 复制按钮：hover 内容框时才浮现（复制过的对勾恒显） */
+.copy {
+  opacity: 0;
+  transition: opacity var(--dur) var(--ease);
+}
+.box:hover .copy,
+.copy:global(.ok) {
+  opacity: 1;
+}
+
+/* 框内释义列表（SenseList）：去掉左栏序号与外边距 */
+.box :global(.senses) {
+  margin: 0;
+  padding: 0;
+}
+.box :global(.senses li) {
+  padding-left: 0;
+}
+.box :global(.senses li::before) {
+  display: none;
+}

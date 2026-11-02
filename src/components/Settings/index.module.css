@@ -1,0 +1,314 @@
+/* 独立设置窗口：左侧窄菜单 + 右侧内容，保存按钮贴底。
+   本模块覆盖设置窗口全部专属样式；.field/.field-hint 等表单原语在 global.css */
+
+/* 窗口底铺外壳面，左菜单与右内容各自是一张同色的圆角面板，中间只留 8px 缝，不画分隔线 */
+.layout {
+  height: 100%;
+  box-sizing: border-box;
+  background: var(--wash);
+  padding: 8px;
+  gap: 8px;
+  color: var(--ink);
+  font: var(--t-body) / 1.6 var(--font-ui);
+  display: flex;
+}
+
+/* 菜单窄而安静：铺外壳面（与头部同色），选中项用抬起面 + 左侧 3px 竖条 */
+.nav {
+  width: 104px;
+  flex: 0 0 104px;
+  padding: 14px 8px;
+  box-sizing: border-box;
+  background: var(--wash);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.navItem {
+  position: relative;
+  width: 100%;
+  box-sizing: border-box;
+  text-align: left;
+  padding: 5px 8px 5px 11px;
+  border: none;
+  background: none;
+  border-radius: var(--r-xs);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: var(--t-small);
+  cursor: pointer;
+}
+.navItem:hover {
+  background: var(--wash-hover);
+  color: var(--ink);
+}
+.navItem:global(.active) {
+  background: var(--paper-raised);
+  color: var(--ink);
+  font-weight: 600;
+}
+.navItem:global(.active)::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.content {
+  flex: 1;
+  min-width: 0;
+  /* 内容面：与左菜单同一张纸，靠中间那道 8px 外壳面缝隙分开 */
+  background: var(--paper);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  padding: 20px 24px 16px;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+/* 表单列不拉满窗口宽：600px 窗口里 440 是舒服的阅读宽度 */
+.content > * {
+  max-width: 440px;
+}
+.content::-webkit-scrollbar {
+  width: 6px;
+}
+.content::-webkit-scrollbar-thumb {
+  background: var(--thumb);
+  border-radius: 3px;
+}
+
+.sectionHeading {
+  font-size: var(--t-lead);
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 14px;
+}
+
+/* 可选分组标题 */
+.groupHeading {
+  font-size: var(--t-small);
+  font-weight: 600;
+  color: var(--ink-2);
+  margin: 16px 0 8px;
+}
+
+/* 保存密钥 / 启用开关行 */
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--t-body);
+  color: var(--ink);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.switch input {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.switch input:disabled {
+  cursor: not-allowed;
+}
+
+.footer {
+  margin-top: auto;
+  padding-top: 14px;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+}
+.savedTip {
+  color: var(--accent);
+  font-size: var(--t-small);
+}
+.saveError {
+  color: var(--danger);
+  font-size: var(--t-small);
+  max-width: 300px;
+  text-align: right;
+}
+
+.aboutText p {
+  margin: 0 0 8px;
+  color: var(--ink-2);
+}
+.aboutText p:first-child {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* 更新检查/权限行：提示文字占满一行，操作按钮独立一行 */
+.updateTip {
+  margin-top: 4px;
+}
+.updateTip + .updateTip {
+  margin-top: 12px;
+}
+.tipText {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--ink-2);
+  line-height: 1.6;
+}
+.tipActions {
+  display: flex;
+  gap: 8px;
+}
+.updateBtn {
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--wash);
+  color: var(--ink-2);
+  font-size: var(--t-small);
+  padding: 3px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.updateBtn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.updateBtn:disabled {
+  color: var(--ink-3);
+  cursor: default;
+}
+
+.saveBtn {
+  padding: 6px 18px;
+  border: none;
+  border-radius: var(--r-md);
+  background: var(--accent);
+  color: var(--on-accent);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.saveBtn:hover:not(:disabled) {
+  filter: brightness(0.94);
+}
+.saveBtn:disabled {
+  background: var(--wash);
+  color: var(--ink-3);
+  cursor: not-allowed;
+}
+
+/* 设置里的主题选择器：独占一行，贴着 .field 的标签文字下方 */
+.themeToggle {
+  display: flex;
+  width: fit-content;
+  margin-top: 6px;
+}
+
+/* ===== 翻译源勾选 + 拖拽排序 ===== */
+.sourceList {
+  margin-bottom: 6px;
+}
+.sourceItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: var(--r-xs);
+  user-select: none; /* 拖拽时别选中文本 */
+}
+.sourceItem:hover {
+  background: var(--wash);
+}
+.sourceItem.off {
+  color: var(--ink-3);
+}
+.dragHandle {
+  width: 14px;
+  color: var(--ink-3);
+  cursor: grab;
+}
+
+/* 翻译源子页横向 tab：源配置 / 排序 */
+.subTabs {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+.subTab {
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: var(--t-body);
+  color: var(--ink-2);
+  padding: 5px 12px;
+  cursor: pointer;
+  border-radius: var(--r-xs) var(--r-xs) 0 0;
+  border-bottom: 2px solid transparent;
+}
+.subTab:hover {
+  color: var(--ink);
+}
+.subTab:global(.active) {
+  color: var(--accent);
+  font-weight: 600;
+  border-bottom-color: var(--accent);
+}
+
+/* 源配置 tab：左侧菜单选源 + 右侧密钥表单 */
+.configSplit {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+.configMenu {
+  width: 72px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.configMenuItem {
+  position: relative;
+  padding: 6px 8px;
+  border: none;
+  background: none;
+  text-align: left;
+  border-radius: var(--r-xs);
+  font: inherit;
+  font-size: var(--t-small);
+  color: var(--ink-2);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.configMenuItem:hover {
+  background: var(--wash);
+  color: var(--ink);
+}
+.configMenuItem:global(.active) {
+  background: var(--wash);
+  color: var(--accent);
+  font-weight: 600;
+}
+.configDot {
+  position: absolute;
+  top: 7px;
+  right: 8px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.configForm {
+  flex: 1;
+  min-width: 0;
+}
+
+/* macOS 自绘标题栏：让出 28px 头部 + 8px 面板留白 */
+:root[data-os="mac"] .layout {
+  position: relative;
+  padding-top: 36px;
+}

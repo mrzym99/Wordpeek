@@ -1,5 +1,5 @@
-import { VolumeIcon } from "./icons";
-import { playVoice } from "../lib/voice";
+import { VolumeIcon } from "../icons";
+import { playVoice } from "../../lib/voice";
 
 /** 有道音标 + 发音（volume-2 图标 美 / 英）：Popup 划词卡 / InputPage 输入翻译共用 */
 export default function Phonetic({

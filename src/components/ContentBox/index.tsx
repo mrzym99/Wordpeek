@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
-import { CheckIcon, CopyIcon } from "./icons";
+import s from "./index.module.css";
+import { CheckIcon, CopyIcon } from "../icons";
 
 /**
  * 通用内容框：浅灰圆角框 + 框内右上角复制按钮（对齐多源对比行的样式）。
@@ -20,14 +21,14 @@ export default function ContentBox({
   children: ReactNode;
 }) {
   return (
-    <div className={"content-box " + className}>
+    <div className={s.box + " " + className}>
       {(label || onCopy) && (
-        <div className="content-box-head">
-          {label && <span className="content-box-label">{label}</span>}
-          <span className="content-box-actions">
+        <div className={s.head}>
+          {label && <span className={s.label}>{label}</span>}
+          <span className={s.actions}>
             {onCopy && (
               <button
-                className={"icon-btn copy-btn" + (copied ? " ok" : "")}
+                className={s.copy + " icon-btn" + (copied ? " ok" : "")}
                 title="复制"
                 onClick={onCopy}
               >

@@ -1,8 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import Phonetic from "./Phonetic";
-import type { WordInfo } from "../types";
+import Phonetic from "../Phonetic";
+import type { WordInfo } from "../../types";
+import s from "./index.module.css";
 
 /** 小卡离视口边缘的最小间距 / 离选中词的距离 */
 const GAP = 6;
@@ -136,24 +137,24 @@ export default function DictPop({
   if (!pop) return null;
   return (
     <div
-      className="pop-card"
+      className={s.card}
       ref={popRef}
       style={pos ?? { left: pop.at.left, top: pop.at.bottom + GAP }}
     >
-      <div className="pop-head">
-        <span className="pop-word">{pop.word}</span>
+      <div className={s.head}>
+        <span className={s.word}>{pop.word}</span>
       </div>
       {(info?.usphone || info?.ukphone) && (
-        <div className="pop-phon">
+        <div className={s.phon}>
           <Phonetic word={pop.word} usphone={info.usphone} ukphone={info.ukphone} />
         </div>
       )}
       {/* 只留第一条释义一行：小卡要够矮，否则会盖住整张卡片 */}
-      <div className="pop-senses">
-        {info ? info.senses[0] : <span className="pop-loading">查询中…</span>}
+      <div className={s.senses}>
+        {info ? info.senses[0] : <span className="loading">查询中…</span>}
       </div>
       <button
-        className="text-btn pop-more"
+        className={"text-btn " + s.more}
         onClick={() => {
           setPop(null);
           onOpenDetail(pop.word);

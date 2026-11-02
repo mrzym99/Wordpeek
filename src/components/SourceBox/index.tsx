@@ -1,4 +1,5 @@
 import type { LegacyRef } from "react";
+import s from "./index.module.css";
 
 /**
  * 多行原文输入框：输入翻译 / 划词句子 / 截图共用同一个组件与外观。
@@ -28,11 +29,11 @@ export default function SourceBox({
   textareaRef?: LegacyRef<HTMLTextAreaElement>;
 }) {
   return (
-    <div className="source-box">
-      {label && <span className="source-box-label">{label}</span>}
+    <div className={s.box}>
+      {label && <span className={s.label}>{label}</span>}
       <textarea
         ref={textareaRef}
-        className={`shot-text${rows >= 4 ? " input-box" : ""}`}
+        className={s.text}
         value={value}
         rows={rows}
         placeholder={placeholder}

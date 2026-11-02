@@ -1,0 +1,29 @@
+/* 目标语言切换（智能 / → 英文 / → 中文），TranslateBar 与设置页主题选择共用 */
+.toggle {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--wash);
+  overflow: hidden;
+}
+.toggle button {
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: var(--t-small);
+  color: var(--ink-2);
+  padding: 4px 12px;
+  cursor: pointer;
+}
+.toggle button + button {
+  border-left: 1px solid var(--line);
+}
+.toggle button:global(.active) {
+  background: var(--accent-wash);
+  color: var(--ink);
+  font-weight: 600;
+}
+.toggle button:disabled {
+  color: var(--ink-3);
+  cursor: default;
+}

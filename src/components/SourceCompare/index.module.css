@@ -1,0 +1,52 @@
+/* 多源对比列表 */
+.list {
+  margin-top: 12px;
+  background: var(--wash);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+.row {
+  padding: 10px 12px;
+}
+.row + .row {
+  border-top: 1px solid var(--line);
+}
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.label {
+  font-size: var(--t-small);
+  font-weight: 600;
+  color: var(--ink-2);
+}
+/* 复制按钮：hover 行时才浮现 */
+.row :global(.icon-btn) {
+  opacity: 0;
+  transition: opacity var(--dur) var(--ease);
+}
+.row:hover :global(.icon-btn),
+.row :global(.icon-btn.ok) {
+  opacity: 1;
+}
+
+/* 对比行一条一句，不显示释义序号 */
+.row :global(.senses) {
+  margin-top: 4px;
+}
+.row :global(.senses li::before) {
+  display: none;
+}
+/* 不显示序号的地方不需要左栏缩进：否则按行返回的源会显得比整段翻译松 */
+.row :global(.senses li) {
+  padding: 0;
+  line-height: 1.65;
+}
+.error {
+  margin-top: 4px;
+  color: var(--danger);
+  font-size: var(--t-small);
+  white-space: pre-wrap;
+}

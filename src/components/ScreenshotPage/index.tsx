@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import s from "./index.module.css";
 
 /** 全屏遮罩框选页：遮罩窗口透明，框选直接对着实时桌面（选区外变暗）；
  *  快照由后端在触发瞬间抓取，仅供松手后裁剪，前端不显示大图 */
@@ -69,10 +70,10 @@ export default function ScreenshotPage() {
   };
 
   return (
-    <div className="shot-mask" onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp}>
+    <div className={s.mask} onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp}>
       {sel ? (
         <div
-          className="shot-selection"
+          className={s.selection}
           style={{
             left: Math.min(sel.x0, sel.x1),
             top: Math.min(sel.y0, sel.y1),
@@ -82,7 +83,7 @@ export default function ScreenshotPage() {
         />
       ) : (
         // 未开始拖拽时整屏变暗，提示已进入截图模式（选区内亮、外暗由 box-shadow 实现）
-        <div className="shot-selection shot-idle" />
+        <div className={s.selection + " " + s.idle} />
       )}
     </div>
   );

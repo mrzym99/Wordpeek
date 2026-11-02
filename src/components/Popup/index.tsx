@@ -3,18 +3,19 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { PhysicalPosition } from "@tauri-apps/api/dpi";
-import { savePopupWidth } from "../lib/config";
-import type { AppConfig, Selection, ShotResult, SourceResult, WordInfo } from "../types";
-import SenseList from "./SenseList";
-import DictPop from "./DictPop";
-import SourceCompare from "./SourceCompare";
-import ContentBox from "./ContentBox";
-import SourceBox from "./SourceBox";
-import TranslateBar from "./TranslateBar";
-import Phonetic from "./Phonetic";
-import { CheckIcon, CopyIcon } from "./icons";
-import { useAutoFitWindow } from "../lib/autofit";
-import { isSentenceText } from "../lib/text";
+import { savePopupWidth } from "../../lib/config";
+import type { AppConfig, Selection, ShotResult, SourceResult, WordInfo } from "../../types";
+import SenseList from "../SenseList";
+import DictPop from "../DictPop";
+import SourceCompare from "../SourceCompare";
+import s from "./index.module.css";
+import ContentBox from "../ContentBox";
+import SourceBox from "../SourceBox";
+import TranslateBar from "../TranslateBar";
+import Phonetic from "../Phonetic";
+import { CheckIcon, CopyIcon } from "../icons";
+import { useAutoFitWindow } from "../../hooks/useAutoFitWindow";
+import { isSentenceText } from "../../lib/text";
 
 /** 划词/截图统一弹窗：同一张卡片，标题行 = 可编辑原文 + 「对比各源」按钮 */
 export default function Popup() {
@@ -385,17 +386,17 @@ export default function Popup() {
   ) ?? null;
 
   return (
-    <div className="card" ref={cardRef}>
+    <div className={"card " + s.card} ref={cardRef}>
       {/* 顶部 padding 区是隐形拖拽热区：按住可移动窗口；窗口边缘仍可拉伸 */}
-      <div className="drag-strip" data-tauri-drag-region />
+      <div className={s.dragStrip} data-tauri-drag-region />
       {/* header 固定不随内容滚动；body 才是滚动区 */}
-      <div className="word-head">
+      <div className={s.wordHead}>
         {/* 品牌独占标题行左侧；版本号留在设置 → 关于，弹窗里只留名字 */}
-        <div className="app-title">
+        <div className={s.appTitle}>
           Wordpeek<span className="app-beta">beta</span>
         </div>
         {/* 对比各源：固定标题行右上角，两种模式都有（设置入口在托盘菜单，不占弹窗标题行） */}
-        <div className="head-actions">
+        <div className={s.headActions}>
           {activeText && extrasCount > 0 && (
             <button
               className="text-btn"
@@ -456,9 +457,9 @@ export default function Popup() {
       )}
 
       {!inShot && info && info.exam_types.length > 0 && (
-        <div className="badges">
+        <div className={s.badges}>
           {info.exam_types.map((t) => (
-            <span key={t} className="badge">
+            <span key={t} className={s.badge}>
               {t}
             </span>
           ))}
@@ -485,7 +486,7 @@ export default function Popup() {
               busy={shotLoading}
             />
           )}
-          {shotLoading && <div className="shot-loading">翻译中…</div>}
+          {shotLoading && <div className={s.shotLoading}>翻译中…</div>}
           {shotResult.error && <div className="error">{shotResult.error}</div>}
           {shotResult.info && (
             <ContentBox
@@ -493,7 +494,7 @@ export default function Popup() {
               copied={copied === "translation"}
               onCopy={() => doCopy("translation", shotResult.info!.senses.join("\n"))}
             >
-              <SenseList senses={shotResult.info.senses} className="shot-senses" />
+              <SenseList senses={shotResult.info.senses} className={s.shotSenses} />
             </ContentBox>
           )}
         </>
@@ -510,20 +511,20 @@ export default function Popup() {
               copied={copied === "translation"}
               onCopy={() => doCopy("translation", info.senses.join("\n"))}
             >
-              <SenseList senses={info.senses} className="shot-senses" />
+              <SenseList senses={info.senses} className={s.shotSenses} />
             </ContentBox>
           ) : (
             <SenseList senses={info.senses} />
           )}
 
           {info.word_forms.length > 0 && (
-            <div className="section">
-              <div className="section-title">词形变化</div>
-              <div className="word-forms">
+            <div className={s.section}>
+              <div className={s.sectionTitle}>词形变化</div>
+              <div className={s.wordForms}>
                 {info.word_forms.map((f, i) => (
-                  <span key={i} className="word-form">
+                  <span key={i} className={s.wordForm}>
                     {f.name}{" "}
-                    <button type="button" className="link-btn" onClick={() => lookup(f.value)}>
+                    <button type="button" className={s.linkBtn} onClick={() => lookup(f.value)}>
                       {f.value}
                     </button>
                   </span>
@@ -533,16 +534,16 @@ export default function Popup() {
           )}
 
           {info.synos.map((g, i) => (
-            <div key={i} className="section">
-              <div className="section-title">
-                同义词 {g.pos && <span className="pos-tag">{g.pos}</span>} {g.tran}
+            <div key={i} className={s.section}>
+              <div className={s.sectionTitle}>
+                同义词 {g.pos && <span className={s.posTag}>{g.pos}</span>} {g.tran}
               </div>
-              <div className="synos">
+              <div className={s.synos}>
                 {g.words.map((w) => (
                   <button
                     key={w}
                     type="button"
-                    className="syno"
+                    className={s.syno}
                     onClick={() => lookup(w)}
                   >
                     {w}
