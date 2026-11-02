@@ -301,86 +301,91 @@ fn center_window(win: &tauri::WebviewWindow) {
     let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
 }
 
-/// 显示独立的设置窗口（弹窗齿轮按钮 / 托盘菜单共用）。/// 不常驻：没建过就按需创建为隐藏态，内容就绪后由前端自己 show；
+/// 已存在则 show+置前；没建过就在事件循环线程按需创建为隐藏态（内容就绪后由前端自己 show）。
+/// 首次创建摆到屏幕中央；已打开时只 show，尊重用户拖到的位置。
+/// macOS：页面画到标题栏下面（Overlay），头部底色由前端画，交通灯浮在上面。
+/// drag_drop: true 时加 disable_drag_drop_handler（设置窗里要拖拽排序，输入窗不需要）
+fn spawn_or_show_window(
+    app: &AppHandle,
+    label: &str,
+    title: &str,
+    url: &str,
+    w: f64,
+    h: f64,
+    resizable: bool,
+    drag_drop: bool,
+) {
+    if let Some(win) = app.get_webview_window(label) {
+        let _ = win.show();
+        let _ = win.set_focus();
+        return;
+    }
+    let for_builder = app.clone();
+    let owned_label = label.to_string();
+    let owned_title = title.to_string();
+    let owned_url = url.to_string();
+    // Windows 上 webview 窗口必须在事件循环线程创建，托盘/快捷键/齿轮回调不保证在主线程
+    let spawn = app.run_on_main_thread(move || {
+        // macOS 分支会重新赋值 builder，Windows 构建下可能才是 unused_mut
+        #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+        let mut builder = tauri::WebviewWindowBuilder::new(
+            &for_builder,
+            &owned_label,
+            tauri::WebviewUrl::App(owned_url.into()),
+        )
+        .title(&owned_title)
+        .inner_size(w, h)
+        .resizable(resizable)
+        .visible(false);
+        if drag_drop {
+            builder = builder.disable_drag_drop_handler();
+        }
+        #[cfg(target_os = "macos")]
+        {
+            builder = builder
+                .title_bar_style(tauri::TitleBarStyle::Overlay)
+                .hidden_title(true);
+        }
+        match builder.build() {
+            Ok(win) => center_window(&win),
+            Err(e) => eprintln!("[{owned_label}] 创建窗口失败: {e}"),
+        }
+    });
+    if let Err(e) = spawn {
+        eprintln!("[{label}] 调度创建失败: {e}");
+    }
+}
+
+/// 显示独立的设置窗口（弹窗齿轮按钮 / 托盘菜单共用）。
 /// 点 ✕ 即销毁，回收它那个常驻 WebView2 renderer；一级菜单选择已存配置，
 /// 重开时设置页自动回到上次停留的菜单
 #[tauri::command]
 fn open_settings(app: AppHandle) {
-    if let Some(win) = app.get_webview_window("settings") {
-        let _ = win.show();
-        let _ = win.set_focus();
-        return;
-    }
-    let for_builder = app.clone();
-    // Windows 上 webview 窗口必须在事件循环线程创建，托盘/齿轮回调不保证在主线程
-    let spawn = app.run_on_main_thread(move || {
-        // macOS 分支会重新赋值 builder，Windows 构建下才是 unused_mut
-        #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
-        let mut builder = tauri::WebviewWindowBuilder::new(
-            &for_builder,
-            "settings",
-            tauri::WebviewUrl::App("/?page=settings".into()),
-        )
-        .title("Wordpeek 设置")
-        .inner_size(600.0, 440.0)
-        .resizable(false)
-        .visible(false)
-        .disable_drag_drop_handler();
-        // macOS：页面画到标题栏下面（Overlay），头部那条底色由前端画，交通灯浮在上面
-        #[cfg(target_os = "macos")]
-        {
-            builder = builder
-                .title_bar_style(tauri::TitleBarStyle::Overlay)
-                .hidden_title(true);
-        }
-        // 首次创建摆到屏幕中央；已打开时只 show，尊重用户拖到的位置
-        match builder.build() {
-            Ok(win) => center_window(&win),
-            Err(e) => eprintln!("[settings] 创建窗口失败: {e}"),
-        }
-    });
-    if let Err(e) = spawn {
-        eprintln!("[settings] 调度创建失败: {e}");
-    }
+    spawn_or_show_window(
+        &app,
+        "settings",
+        "Wordpeek 设置",
+        "/?page=settings",
+        600.0,
+        440.0,
+        false,
+        true,
+    );
 }
 
 /// 显示输入翻译窗口（托盘菜单 / 输入翻译快捷键共用）。
-/// 不常驻：没建过就按需创建为隐藏态，内容就绪后由前端自己 show；
 /// 点 ✕ 即销毁，回收它那个常驻 WebView2 renderer（~60MB）
 fn open_input_window(app: &AppHandle) {
-    if let Some(win) = app.get_webview_window("input") {
-        let _ = win.show();
-        let _ = win.set_focus();
-        return;
-    }
-    let for_builder = app.clone();
-    // Windows 上 webview 窗口必须在事件循环线程创建，快捷键/托盘回调不保证在主线程
-    let spawn = app.run_on_main_thread(move || {
-        #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
-        let mut builder = tauri::WebviewWindowBuilder::new(
-            &for_builder,
-            "input",
-            tauri::WebviewUrl::App("/?page=input".into()),
-        )
-        .title("Wordpeek 输入翻译")
-        .inner_size(460.0, 240.0)
-        .resizable(true)
-        .visible(false);
-        // macOS：同设置窗口，头部底色由前端画
-        #[cfg(target_os = "macos")]
-        {
-            builder = builder
-                .title_bar_style(tauri::TitleBarStyle::Overlay)
-                .hidden_title(true);
-        }
-        match builder.build() {
-            Ok(win) => center_window(&win),
-            Err(e) => eprintln!("[input] 创建窗口失败: {e}"),
-        }
-    });
-    if let Err(e) = spawn {
-        eprintln!("[input] 主线程调度失败: {e}");
-    }
+    spawn_or_show_window(
+        app,
+        "input",
+        "Wordpeek 输入翻译",
+        "/?page=input",
+        460.0,
+        240.0,
+        true,
+        false,
+    );
 }
 
 /// 已缓存的可用更新（启动 / 手动检查后写入）
@@ -837,6 +842,27 @@ struct ScreenshotSession {
     main_was_visible: bool,
 }
 
+/// 藏起自家窗口并返回藏之前的真实可见性（供事后恢复）；窗口不存在/读不到状态都按
+/// “本来就没开”处理返回 false。与 show_window 是截图会话专用的配对原语
+fn hide_window(app: &AppHandle, label: &str) -> bool {
+    match app.get_webview_window(label) {
+        Some(w) if w.is_visible().unwrap_or(false) => {
+            let _ = w.hide();
+            true
+        }
+        _ => false,
+    }
+}
+
+/// 按会话记录的可见性恢复窗口（和 hide_window 配对，各调用点共用同一对 label）
+fn show_window(app: &AppHandle, label: &str, was_visible: bool) {
+    if was_visible {
+        if let Some(w) = app.get_webview_window(label) {
+            let _ = w.show();
+        }
+    }
+}
+
 /// 截图翻译触发：后台抓屏供裁剪，遮罩立即显示（透明，框选对实时桌面）
 fn handle_screenshot_trigger(app: &AppHandle) {
     // 连按热键：上一场截图还开着时直接忽略，否则两个会话抢同一扇遮罩窗
@@ -868,44 +894,18 @@ fn handle_screenshot_trigger(app: &AppHandle) {
         }
         // 抓屏前先把自家窗口藏起来：否则设置窗/上次的结果卡片会被拍进截图，
         // 而且新遮罩弹出时旧卡片还压在屏幕上（用户看到的「卡片不消失」）
-        let was_visible = app
-            .get_webview_window("settings")
-            .map(|w| w.is_visible().unwrap_or(false))
-            .unwrap_or(false);
-        if was_visible {
-            if let Some(s) = app.get_webview_window("settings") {
-                let _ = s.hide();
-            }
-        }
-        let main_was_visible = app
-            .get_webview_window("main")
-            .map(|w| w.is_visible().unwrap_or(false))
-            .unwrap_or(false);
-        if main_was_visible {
-            if let Some(m) = app.get_webview_window("main") {
-                let _ = m.hide();
-            }
-        }
+        let was_visible = hide_window(&app, "settings");
+        let main_was_visible = hide_window(&app, "main");
         // 抓屏失败/找不到遮罩窗时要恢复刚才藏掉的窗口，否则设置窗凭空消失
-        macro_rules! restore_windows {
-            () => {{
-                if was_visible {
-                    if let Some(s) = app.get_webview_window("settings") {
-                        let _ = s.show();
-                    }
-                }
-                if main_was_visible {
-                    if let Some(m) = app.get_webview_window("main") {
-                        let _ = m.show();
-                    }
-                }
-            }};
-        }
+        let restore_windows = || {
+            show_window(&app, "settings", was_visible);
+            show_window(&app, "main", main_was_visible);
+        };
         let screen = match crate::platform::capture_virtual_screen() {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("[screenshot] 抓屏失败: {e}");
-                restore_windows!();
+                restore_windows();
                 return;
             }
         };
@@ -913,7 +913,7 @@ fn handle_screenshot_trigger(app: &AppHandle) {
             (screen.width, screen.height, screen.origin_x, screen.origin_y);
 
         let Some(win) = app.get_webview_window("screenshot") else {
-            restore_windows!();
+            restore_windows();
             return;
         };
         // 遮罩窗口常驻铺满虚拟屏：位置/尺寸没变就不重设，避免 resize 引起闪动
@@ -985,6 +985,27 @@ fn handle_screenshot_trigger(app: &AppHandle) {
     });
 }
 
+/// 截图结果 payload：ctx 里带 sel/virtual/mouse/work 四组坐标（物理像素），
+/// 前端用它们把卡片弹到框选位置附近；四个分支只差 ok/text/info/error，其余手抄三遍太脆
+fn shot_payload(
+    ok: bool,
+    text: Option<String>,
+    info: Option<translate::WordInfo>,
+    error: Option<String>,
+    ctx: &serde_json::Value,
+) -> serde_json::Value {
+    serde_json::json!({
+        "ok": ok,
+        "text": text,
+        "info": info,
+        "error": error,
+        "sel": ctx["sel"],
+        "virtual": ctx["virtual"],
+        "mouse": ctx["mouse"],
+        "work": ctx["work"],
+    })
+}
+
 /// 前端框选完成：裁剪选区 → OCR → 翻译，结果发回主窗口弹卡片
 #[tauri::command]
 fn screenshot_finish(app: AppHandle, x: i32, y: i32, w: i32, h: i32) -> Result<(), String> {
@@ -1007,11 +1028,13 @@ fn screenshot_finish(app: AppHandle, x: i32, y: i32, w: i32, h: i32) -> Result<(
     // 定位信息先提取，随后释放全屏像素（OCR 期间不再需要 ~23MB RGBA）
     let (vx, vy, vw, vh) = (screen.origin_x, screen.origin_y, screen.width, screen.height);
     drop(screen.rgba);
-    // 选区与虚拟屏边界（物理像素）随结果发前端，用于把卡片弹到框选位置附近
-    let sel = serde_json::json!({ "x": cx, "y": cy, "w": cw, "h": ch });
-    let virt = serde_json::json!({ "x": vx, "y": vy, "width": vw, "height": vh });
-    let mouse = serde_json::json!({ "x": mx, "y": my });
-    let work = serde_json::json!({ "x": wx, "y": wy, "width": ww, "height": wh });
+    // 选区/虚拟屏/鼠标/工作区坐标（物理像素）随结果发前端，用于把卡片弹到框选位置附近
+    let ctx = serde_json::json!({
+        "sel": { "x": cx, "y": cy, "w": cw, "h": ch },
+        "virtual": { "x": vx, "y": vy, "width": vw, "height": vh },
+        "mouse": { "x": mx, "y": my },
+        "work": { "x": wx, "y": wy, "width": ww, "height": wh },
+    });
     let png = crate::capture::encode_png(&cropped, rect.w, rect.h)?;
     drop(session); // 后续流程不再需要会话锁
 
@@ -1030,11 +1053,7 @@ fn screenshot_finish(app: AppHandle, x: i32, y: i32, w: i32, h: i32) -> Result<(
                     .collect::<Vec<_>>()
                     .join("\n");
                 if text.trim().is_empty() {
-                    serde_json::json!({
-                        "ok": false, "text": null, "info": null,
-                        "error": "未识别到文字，请框选包含文字的区域",
-                        "sel": sel, "virtual": virt, "mouse": mouse, "work": work
-                    })
+                    shot_payload(false, None, None, Some("未识别到文字，请框选包含文字的区域".into()), &ctx)
                 } else {
                     // 翻译（主源→降级；整句需百度 key，错误信息会引导）
                     let cfg = app
@@ -1046,21 +1065,17 @@ fn screenshot_finish(app: AppHandle, x: i32, y: i32, w: i32, h: i32) -> Result<(
                     match tauri::async_runtime::block_on(crate::translate::translate_text(
                         &cfg, &text, to
                     )) {
-                        Ok(info) => serde_json::json!({ "ok": true, "text": text, "info": info, "error": null, "sel": sel, "virtual": virt, "mouse": mouse, "work": work }),
-                        Err(e) => serde_json::json!({ "ok": true, "text": text, "info": null, "error": e, "sel": sel, "virtual": virt, "mouse": mouse, "work": work }),
+                        Ok(info) => shot_payload(true, Some(text), Some(info), None, &ctx),
+                        Err(e) => shot_payload(true, Some(text), None, Some(e), &ctx),
                     }
                 }
             }
-            Err(e) => serde_json::json!({ "ok": false, "text": null, "info": null, "error": e, "sel": sel, "virtual": virt, "mouse": mouse, "work": work }),
+            Err(e) => shot_payload(false, None, None, Some(e), &ctx),
         };
         let _ = app.emit_to("main", "screenshot-result", payload);
 
         // 截图前设置窗口可见则恢复
-        if was_visible {
-            if let Some(s) = app.get_webview_window("settings") {
-                let _ = s.show();
-            }
-        }
+        show_window(&app, "settings", was_visible);
     });
     Ok(())
 }
@@ -1079,16 +1094,8 @@ fn screenshot_cancel(app: AppHandle) {
     if let Some(win) = app.get_webview_window("screenshot") {
         let _ = win.hide();
     }
-    if was_visible {
-        if let Some(s) = app.get_webview_window("settings") {
-            let _ = s.show();
-        }
-    }
-    if main_was_visible {
-        if let Some(m) = app.get_webview_window("main") {
-            let _ = m.show();
-        }
-    }
+    show_window(&app, "settings", was_visible);
+    show_window(&app, "main", main_was_visible);
     println!("[screenshot] cancelled");
 }
 
@@ -1176,6 +1183,13 @@ fn check_permissions() -> PermissionStatus {
 }
 
 fn main() {
+    // 第一件事：拆 stdout/stderr 死管道炸弹（必须在任何 println! 之前）。
+    // dev 构建不拆：cargo tauri dev 的控制台日志全靠 npm 那根管道
+    #[cfg(windows)]
+    if cfg!(not(debug_assertions)) {
+        platform::sanitize_stdio();
+    }
+
     let builder = tauri::Builder::default();
     builder
         // 单实例：第二次启动不再起新进程，直接在已有实例里把设置窗拉到前台。
@@ -1220,6 +1234,24 @@ fn main() {
                     platform::disable_rounding(&win);
                 }
             }
+
+    // panic 钩子：tokio 任务里的 panic 默认只打到 stderr（release 下不可见），
+    // 落一份到配置目录的 panic.log 方便事后排查
+    let panic_dir = app
+        .path()
+        .app_config_dir()
+        .unwrap_or_else(|_| std::env::temp_dir());
+    std::panic::set_hook(Box::new(move |info| {
+        translate::log_panic(&panic_dir, &info.to_string());
+    }));
+
+    // TODO(诊断): tokio 运行时心跳——卡死时对比此日志是否仍在增长，破案后删
+    tauri::async_runtime::spawn(async {
+        loop {
+            translate::diag("runtime alive");
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        }
+    });
 
             // 划词图标：全局鼠标监听（跟设置里的开关无关，开关在探测时现读）
             start_selection_icon(&handle);

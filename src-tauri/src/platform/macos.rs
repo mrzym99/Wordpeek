@@ -204,13 +204,9 @@ pub fn inject_copy(_app: &tauri::AppHandle) -> bool {
 
 // ---------- 划词图标：全局鼠标监听 + 系统选区 ----------
 
-/// 鼠标事件回调（进程内只装一次，装在静态里给 block 用）
-type MouseCallback = Box<dyn Fn() + Send + Sync>;
-/// 鼠标移动回调（macOS 未用：远离图标自动隐藏目前只在 Windows 实现，
-/// 全局监视器加 mouseMoved 会每帧唤醒主线程，不值得）
-type MoveCallback = Box<dyn Fn(i32, i32) + Send + Sync>;
-static MOUSE_ON_DOWN: OnceLock<MouseCallback> = OnceLock::new();
-static MOUSE_ON_UP: OnceLock<MouseCallback> = OnceLock::new();
+// 回调类型与回调槽（MOUSE_ON_*）在 super（platform/mod.rs），两个平台共用；
+// MOUSE_ON_MOVE 在 macOS 未用（见 super 里的 MoveCallback 注释）
+use super::{MOUSE_ON_DOWN, MOUSE_ON_UP, MouseCallback, MoveCallback};
 
 /// 装全局鼠标监听：左键按下/松开各回调一次。
 ///

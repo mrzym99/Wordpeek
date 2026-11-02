@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use parking_lot::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -167,6 +167,27 @@ impl Default for AppConfig {
 }
 
 type SharedConfig = Mutex<AppConfig>;
+
+/// TODO(诊断): 定位“翻译中”永久卡死用的带时间戳日志，破案后删。
+/// 追加写 %TEMP%\wordpeek-diag.log，保留现场证据
+pub(crate) fn diag(msg: &str) {
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(std::env::temp_dir().join("wordpeek-diag.log"))
+    {
+        let ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        let _ = writeln!(f, "[{ms}] {msg}");
+    }
+}
+
+/// 落盘串行锁：所有写盘都持它，保证磁盘写入顺序与内存修改顺序一致；
+/// 配置锁内绝不做磁盘 I/O（否则杀软/系统卡住写盘会冻住 translate 等所有读配置路径）
+static CONFIG_WRITE: Mutex<()> = Mutex::new(());
 
 /// 网页端免 Key 接口都按浏览器 UA 放行
 const WEB_UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15";
@@ -389,10 +410,14 @@ fn persist<F: FnOnce(&mut AppConfig)>(
     state: State<SharedConfig>,
     mutate: F,
 ) -> Result<(), String> {
-    // 全程持锁：读-改-写期间不能放锁，否则两个并发保存会互相覆盖字段。
-    // 克隆出来改，失败时不污染内存态
     let path = config_path(&app).ok_or("无法定位配置目录")?;
+    // 落盘串行锁：保证写盘顺序与内存修改顺序一致（否则并发保存时，
+    // 后改内存的快照可能先写盘、被后写盘的旧快照覆盖掉字段）。
+    // 磁盘 I/O 只发生在这把锁内，配置锁绝不被磁盘读写拖住——
+    // 否则杀软扫描卡住 write_config 时，translate 等所有读配置的路径全部冻住
+    let _write = CONFIG_WRITE.lock();
     let cfg = {
+        // 读-改-内存写很快，只在锁内做这些；磁盘写在锁外
         let mut guard = state.lock();
         let mut cfg = guard.clone();
         mutate(&mut cfg);
@@ -404,10 +429,11 @@ fn persist<F: FnOnce(&mut AppConfig)>(
         }
         // 勾选列表去重并剔除非法项，避免空列表导致没有可用源
         cfg.sources = enabled_sources(&cfg);
-        write_config(&path, &cfg)?;
         *guard = cfg.clone();
         cfg
     };
+    // 磁盘写在配置锁外：锁内 I/O 被杀软/系统卡住时会冻住所有读配置的路径
+    write_config(&path, &cfg)?;
     println!("[config] saved");
 
     // 快捷键可能被修改：按新配置重新注册全部快捷键
@@ -498,13 +524,17 @@ pub fn save_settings(
 #[tauri::command]
 pub fn save_popup_width(app: AppHandle, state: State<SharedConfig>, width: f64) -> Result<(), String> {
     let path = config_path(&app).ok_or("无法定位配置目录")?;
-    let mut guard = state.lock();
-    // 高度动画也会触发 resize 事件：宽度没变就不写盘
-    if (guard.popup_width - width).abs() <= 0.5 {
-        return Ok(());
-    }
-    guard.popup_width = width;
-    write_config(&path, &guard)
+    let _write = CONFIG_WRITE.lock();
+    let snapshot = {
+        let mut guard = state.lock();
+        // 高度动画也会触发 resize 事件：宽度没变就不写盘
+        if (guard.popup_width - width).abs() <= 0.5 {
+            return Ok(());
+        }
+        guard.popup_width = width;
+        guard.clone()
+    };
+    write_config(&path, &snapshot)
 }
 
 /// 设置窗口当前停留的一级菜单：切页即落盘，重开设置窗口时回到上次页。
@@ -516,12 +546,16 @@ pub fn save_settings_section(
     section: String,
 ) -> Result<(), String> {
     let path = config_path(&app).ok_or("无法定位配置目录")?;
-    let mut guard = state.lock();
-    if guard.settings_section == section {
-        return Ok(());
-    }
-    guard.settings_section = section;
-    write_config(&path, &guard)
+    let _write = CONFIG_WRITE.lock();
+    let snapshot = {
+        let mut guard = state.lock();
+        if guard.settings_section == section {
+            return Ok(());
+        }
+        guard.settings_section = section;
+        guard.clone()
+    };
+    write_config(&path, &snapshot)
 }
 
 /// 外观主题：system / light / dark。直接写盘不走 persist（不碰快捷键，不发 config-changed），
@@ -532,12 +566,16 @@ pub fn save_theme(app: AppHandle, state: State<SharedConfig>, theme: String) -> 
         return Err(format!("未知主题: {theme}"));
     }
     let path = config_path(&app).ok_or("无法定位配置目录")?;
-    let mut guard = state.lock();
-    if guard.theme == theme {
-        return Ok(());
-    }
-    guard.theme = theme;
-    write_config(&path, &guard)
+    let _write = CONFIG_WRITE.lock();
+    let snapshot = {
+        let mut guard = state.lock();
+        if guard.theme == theme {
+            return Ok(());
+        }
+        guard.theme = theme;
+        guard.clone()
+    };
+    write_config(&path, &snapshot)
 }
 
 /// 划词图标开关：直接写盘不走 persist（不碰快捷键，不发 config-changed）；
@@ -549,12 +587,16 @@ pub fn save_selection_icon(
     enabled: bool,
 ) -> Result<(), String> {
     let path = config_path(&app).ok_or("无法定位配置目录")?;
-    let mut guard = state.lock();
-    if guard.selection_icon == enabled {
-        return Ok(());
-    }
-    guard.selection_icon = enabled;
-    write_config(&path, &guard)?;
+    let _write = CONFIG_WRITE.lock();
+    let snapshot = {
+        let mut guard = state.lock();
+        if guard.selection_icon == enabled {
+            return Ok(());
+        }
+        guard.selection_icon = enabled;
+        guard.clone()
+    };
+    write_config(&path, &snapshot)?;
     // 关闭时顺手把可能还显着的图标收掉
     if !enabled {
         if let Some(win) = app.get_webview_window("icon") {
@@ -884,6 +926,9 @@ async fn try_translate(
 /// 翻译核心：按用户勾选顺序逐个尝试源（首个成功即返回）；勾选内的源全失败才报错。
 /// to: "zh" | "en"（其它值按 "zh" 处理）。
 /// 从 translate 命令抽出，供截图翻译管线在无 State 的上下文直接调用。
+/// 单源超时上限：与 http() 客户端超时一致；即使请求层超时失灵也由运行时层兜底
+const SOURCE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
 pub async fn translate_text(cfg: &AppConfig, text: &str, to: &str) -> Result<WordInfo, String> {
     let to = if to == "en" { "en" } else { "zh" };
     let order = build_order(cfg, to);
@@ -892,9 +937,24 @@ pub async fn translate_text(cfg: &AppConfig, text: &str, to: &str) -> Result<Wor
     }
     let mut errors: Vec<String> = Vec::new();
     for src in order {
-        match try_translate(&src, text, cfg, to).await {
-            Ok(result) => return Ok(result),
-            Err(e) => errors.push(format!("[{src}] {e}")),
+        // 每源独立异步超时：reqwest 客户端自带 15s 超时，但若底层任务
+        // 偶发停止被 poll（报不到错也收不到响应），请求级超时不会触发，
+        // 这里用 tokio 计时器在运行时层强制断开，保证永远能降级到下一个源
+        diag(&format!("源 {src} 开始"));
+        let attempt = tokio::time::timeout(SOURCE_TIMEOUT, try_translate(&src, text, cfg, to));
+        match attempt.await {
+            Ok(Ok(result)) => {
+                diag(&format!("源 {src} 成功"));
+                return Ok(result);
+            }
+            Ok(Err(e)) => {
+                diag(&format!("源 {src} 失败: {e}"));
+                errors.push(format!("[{src}] {e}"));
+            }
+            Err(_) => {
+                diag(&format!("源 {src} 超时被切断"));
+                errors.push(format!("[{src}] 请求超时（{:#?}，已跳过）", SOURCE_TIMEOUT));
+            }
         }
     }
     Err(errors.join("；"))
@@ -942,14 +1002,40 @@ fn resolve_to(text: &str, to: Option<&str>) -> &'static str {
     }
 }
 
+/// 轻量崩溃日志：tokio 任务里的 panic 默认只打到看不见的 stderr，
+/// 落一份到配置目录方便事后排查（追加写，不轮转——panic 应当极少发生）
+pub(crate) fn log_panic(dir: &Path, msg: &str) {
+    use std::io::Write;
+    if std::fs::create_dir_all(dir).is_ok() {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dir.join("panic.log"))
+        {
+            let ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis();
+            let _ = writeln!(f, "[unix {ms}ms] {msg}");
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn translate(
     state: State<'_, SharedConfig>,
     text: String,
     to: Option<String>,
 ) -> Result<WordInfo, String> {
+    // TODO(诊断): 定位“翻译中”永久卡死，破案后删
+    diag(&format!("translate 进入: {text:?}"));
     let cfg = state.lock().clone();
-    translate_text(&cfg, &text, resolve_to(&text, to.as_deref())).await
+    diag("translate 拿到配置锁");
+    let to = resolve_to(&text, to.as_deref());
+    diag(&format!("translate 目标: {to}"));
+    let r = translate_text(&cfg, &text, to).await;
+    diag(&format!("translate 结束: {:?}", r.as_ref().map(|i| i.source.clone())));
+    r
 }
 
 /// 单源对比结果：失败的源也返回，由前端逐行展示错误

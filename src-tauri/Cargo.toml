@@ -3,6 +3,9 @@ name = "wordpeek"
 version = "1.0.7"
 edition = "2021"
 
+[features]
+custom-protocol = ["tauri/custom-protocol"]   # 本地裸 cargo build 必须 --features custom-protocol，否则窗口连 localhost:1420 白屏
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -21,6 +24,7 @@ sha2 = "0.10"     # TC3 签名哈希
 image = { version = "0.25", default-features = false, features = ["png"] }
 base64 = "0.22"
 parking_lot = "0.12"
+tokio = { version = "1", features = ["time"] }   # 每源翻译超时兜底
 tauri-plugin-opener = "2.7.1"
 tauri-plugin-single-instance = "2"   # 禁止多开：第二次启动只唤醒已有实例
 tauri-plugin-dialog = "2"   # 权限缺失时弹原生对话框（Rust 侧调用，前端不需要权限）
@@ -32,6 +36,8 @@ windows = { version = "0.58", features = [
     "Win32_Graphics_Dwm",
     # 划词图标：低级鼠标钩子(Win32_System_LibraryLoader 取模块句柄) + UIA 读选区
     "Win32_System_LibraryLoader", "Win32_System_Com", "Win32_UI_Accessibility",
+    # 启动时拆 stdout/stderr 死管道炸弹（sanitize_stdio）
+    "Win32_System_Console", "Win32_Storage_FileSystem", "Win32_Security",
     "Foundation", "Foundation_Collections", "Globalization", "Graphics_Imaging", "Media_Ocr", "Storage_Streams",
 ] }
 
@@ -50,4 +56,4 @@ objc2-vision = { version = "0.3", features = [
 ] }   # 本地离线 OCR（免 Key）
 
 [dev-dependencies]
-tokio = { version = "1", features = ["rt", "macros"] }
+tokio = { version = "1", features = ["rt", "macros", "time"] }

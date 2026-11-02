@@ -6,6 +6,54 @@ use windows::Win32::Foundation::POINT;
 use windows::Win32::UI::Accessibility::IUIAutomation;
 use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
 
+/// 启动时拆掉 stdout/stderr 上的「死管道炸弹」，必须在任何 println! 之前调用。
+///
+/// 背景（panic.log 实锤）：进程的 stdout 若是继承来的管道（从终端启动后终端关了、
+/// updater restart 继承旧进程的管道），读者一死，之后**任何一次 println! 都会
+/// panic**（os error 232「管道正在被关闭」）。panic 落在异步命令任务里，invoke 的
+/// promise 永不 settle（前端永远「翻译中」）；落在事件循环/快捷键回调里则是
+/// `panic in a function that cannot unwind`，整个进程直接 abort。
+///
+/// 处理：无效句柄（GUI 方式启动时 stdout 本就是 NULL）和管道句柄一律换成 NUL
+/// 设备——写入永远成功，日志丢弃。release 的 GUI 窗口本就看不到 stdout，不亏；
+/// 从终端启动想看日志的场景用 dev 构建。console（真控制台）和磁盘文件
+/// （重定向到日志文件）保持原样。dev 构建不调用本函数：cargo tauri dev
+/// 的日志全靠 npm 那根活管道。
+///
+/// std 的 Stdout 在首次写入时才取句柄并缓存，所以只要赶在第一次 println! 前
+/// 换掉即可，此后所有 println! 写 NUL 恒成功、永不 panic。
+pub fn sanitize_stdio() {
+    use windows::Win32::Foundation::GENERIC_WRITE;
+    use windows::Win32::Storage::FileSystem::{
+        CreateFileW, GetFileType, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        FILE_TYPE_PIPE, OPEN_EXISTING,
+    };
+    use windows::Win32::System::Console::{
+        GetStdHandle, SetStdHandle, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE,
+    };
+    // NUL 设备：打开一次，两个标准流共用（打不开就放弃，维持现状总比没有强）
+    let nul = unsafe {
+        CreateFileW(
+            windows::core::w!("NUL"),
+            GENERIC_WRITE.0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            None,
+            OPEN_EXISTING,
+            FILE_FLAGS_AND_ATTRIBUTES(0),
+            None,
+        )
+    };
+    let Ok(nul) = nul else { return };
+    for which in [STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+        unsafe {
+            let Ok(h) = GetStdHandle(which) else { continue };
+            if h.is_invalid() || GetFileType(h) == FILE_TYPE_PIPE {
+                let _ = SetStdHandle(which, nul);
+            }
+        }
+    }
+}
+
 /// 注入「复制」按键。快捷键触发时物理按着的修饰键要先松开：
 /// 直接模拟 Ctrl+C 会被应用当成 Ctrl+Alt+C 而拒绝复制。
 /// `app` 参数只为与 macOS 实现对齐（那边必须派发回主线程）。返回是否成功按下。
@@ -105,26 +153,35 @@ pub fn work_area_at(x: i32, y: i32) -> (i32, i32, i32, i32) {
     (0, 0, 0, 0)
 }
 
+/// 虚拟屏边界（SM_X/Y/CX/CYVIRTUALSCREEN，物理像素）；宽或高非正时返回 None。
+/// 抓屏与 virtual_screen_bounds 共用这一份读数
+fn virtual_screen_metrics() -> Option<(i32, i32, i32, i32)> {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
+        SM_YVIRTUALSCREEN,
+    };
+    unsafe {
+        let (ox, oy) = (
+            GetSystemMetrics(SM_XVIRTUALSCREEN),
+            GetSystemMetrics(SM_YVIRTUALSCREEN),
+        );
+        let (w, h) = (
+            GetSystemMetrics(SM_CXVIRTUALSCREEN),
+            GetSystemMetrics(SM_CYVIRTUALSCREEN),
+        );
+        (w > 0 && h > 0).then_some((ox, oy, w, h))
+    }
+}
+
 /// 抓取整个虚拟屏幕（所有显示器覆盖的范围）
 pub fn capture_virtual_screen() -> Result<crate::capture::CapturedScreen, String> {
     use windows::Win32::Graphics::Gdi::{
         BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC,
         GetDIBits, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS, SRCCOPY,
     };
-    use windows::Win32::UI::WindowsAndMessaging::{
-        GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
-        SM_YVIRTUALSCREEN,
-    };
 
+    let (ox, oy, w, h) = virtual_screen_metrics().ok_or("获取虚拟屏幕尺寸失败")?;
     unsafe {
-        let ox = GetSystemMetrics(SM_XVIRTUALSCREEN);
-        let oy = GetSystemMetrics(SM_YVIRTUALSCREEN);
-        let w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
-        let h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
-        if w <= 0 || h <= 0 {
-            return Err("获取虚拟屏幕尺寸失败".into());
-        }
-
         let screen_dc = GetDC(None);
         let mem_dc = CreateCompatibleDC(screen_dc);
         let bitmap = CreateCompatibleBitmap(screen_dc, w, h);
@@ -181,33 +238,13 @@ pub fn capture_virtual_screen() -> Result<crate::capture::CapturedScreen, String
 
 /// 虚拟屏边界（物理像素）
 pub fn virtual_screen_bounds() -> Option<(i32, i32, i32, i32)> {
-    use windows::Win32::UI::WindowsAndMessaging::{
-        GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
-        SM_YVIRTUALSCREEN,
-    };
-    unsafe {
-        let (ox, oy) = (
-            GetSystemMetrics(SM_XVIRTUALSCREEN),
-            GetSystemMetrics(SM_YVIRTUALSCREEN),
-        );
-        let (w, h) = (
-            GetSystemMetrics(SM_CXVIRTUALSCREEN),
-            GetSystemMetrics(SM_CYVIRTUALSCREEN),
-        );
-        (w > 0 && h > 0).then_some((ox, oy, w, h))
-    }
+    virtual_screen_metrics()
 }
 
 // ---------- 划词图标：全局鼠标监听 + 系统选区 ----------
 
-/// 鼠标事件回调（进程内只装一次，钩子函数从静态里取）
-/// 鼠标事件回调（进程内只装一次，装在静态里给 block 用）
-type MouseCallback = Box<dyn Fn() + Send + Sync>;
-/// 鼠标移动回调：参数是钩子自带的光标物理像素坐标（不额外调 GetCursorPos）
-type MoveCallback = Box<dyn Fn(i32, i32) + Send + Sync>;
-static MOUSE_ON_DOWN: std::sync::OnceLock<MouseCallback> = std::sync::OnceLock::new();
-static MOUSE_ON_UP: std::sync::OnceLock<MouseCallback> = std::sync::OnceLock::new();
-static MOUSE_ON_MOVE: std::sync::OnceLock<MoveCallback> = std::sync::OnceLock::new();
+// 回调类型与回调槽（MOUSE_ON_*）在 super（platform/mod.rs），两个平台共用
+use super::{MOUSE_ON_DOWN, MOUSE_ON_MOVE, MOUSE_ON_UP, MouseCallback, MoveCallback};
 
 /// 低级鼠标钩子：回调必须立刻返回（它在系统的输入线程上跑，慢了整个系统的鼠标都卡）
 unsafe extern "system" fn mouse_hook(

@@ -2,6 +2,18 @@
 //! Windows 实现全在 windows.rs，macOS 实现全在 macos.rs；
 //! 共享逻辑（main.rs / translate.rs / ocr.rs / capture.rs 纯函数）不掺平台细节。
 
+// ---------- 划词图标：全局鼠标监听回调槽（两个平台共用，钩子/监视器从这里取） ----------
+
+/// 鼠标事件回调（进程内只装一次，钩子函数从静态里取）
+pub(crate) type MouseCallback = Box<dyn Fn() + Send + Sync>;
+/// 鼠标移动回调：参数是钩子/事件自带的光标物理像素坐标（不额外调 GetCursorPos）。
+/// macOS 端未用 move：远离图标自动隐藏目前只在 Windows 实现，全局监视器加
+/// mouseMoved 会每帧唤醒主线程，不值得
+pub(crate) type MoveCallback = Box<dyn Fn(i32, i32) + Send + Sync>;
+pub(crate) static MOUSE_ON_DOWN: std::sync::OnceLock<MouseCallback> = std::sync::OnceLock::new();
+pub(crate) static MOUSE_ON_UP: std::sync::OnceLock<MouseCallback> = std::sync::OnceLock::new();
+pub(crate) static MOUSE_ON_MOVE: std::sync::OnceLock<MoveCallback> = std::sync::OnceLock::new();
+
 #[cfg(windows)]
 pub mod windows;
 #[cfg(target_os = "macos")]
@@ -18,6 +30,8 @@ pub use macos::inject_copy;
 pub use windows::cursor_pos;
 #[cfg(windows)]
 pub use windows::foreground_app;
+#[cfg(windows)]
+pub use windows::sanitize_stdio;
 #[cfg(target_os = "macos")]
 pub use macos::cursor_pos;
 

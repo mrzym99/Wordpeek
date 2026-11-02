@@ -91,6 +91,10 @@ npm run tauri build   # 打包
 #   macOS   → src-tauri/target/release/bundle/macos/Wordpeek.app（+ .dmg）
 ```
 
+> 注意：不要用裸 `cargo build --release` 构建——那样不会启用
+> `custom-protocol`，所有窗口会去连不存在的 devUrl（localhost:1420）而白屏。
+> 实在需要跳过打包，用 `npm run tauri build -- --no-bundle`。
+
 ## 使用说明
 
 1. 启动后应用常驻系统托盘（任务栏右下角，可能在 `^` 折叠区里）
