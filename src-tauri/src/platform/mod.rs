@@ -116,9 +116,9 @@ pub use windows::focused_selection;
 #[cfg(target_os = "macos")]
 pub use macos::focused_selection;
 #[cfg(windows)]
-pub use windows::{clipboard_fallback_allowed, foreground_pid};
+pub use windows::clipboard_fallback_allowed;
 #[cfg(target_os = "macos")]
-pub use macos::{clipboard_fallback_allowed, foreground_pid};
+pub use macos::clipboard_fallback_allowed;
 
 // ---------- 划词图标：「这个 app 读不到选区」的记忆（两个平台共用） ----------
 
