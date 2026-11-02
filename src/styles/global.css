@@ -357,3 +357,14 @@ button {
     transition: none !important;
   }
 }
+
+/* 版本徽章（弹窗标题与设置「关于」页共用） */
+.app-beta {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: var(--r-pill);
+  font-size: var(--t-micro);
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-wash);
+}
