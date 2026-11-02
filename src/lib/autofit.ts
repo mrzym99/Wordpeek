@@ -38,7 +38,6 @@ export function useAutoFitWindow(
   useEffect(() => {
     if (!body) return;
     let target = 0; // 已提交的目标高度（去重用它比）
-    let cur = 0; // 上次发出去的高度（保留备用）
     let userResizeAt = 0;
     let suppressUntil = 0;
     let trailing: ReturnType<typeof setTimeout> | undefined;
@@ -46,7 +45,6 @@ export function useAutoFitWindow(
     const canApply = () => Date.now() - userResizeAt > USER_RESIZE_QUIET;
     let fitFailed = false;
     const send = (h: number) => {
-      cur = h;
       suppressUntil = Date.now() + RESIZE_SUPPRESS;
       invoke("fit_window", { label, height: h, viewport: window.innerHeight })
         .then((applied) => {
@@ -60,9 +58,12 @@ export function useAutoFitWindow(
           );
         })
         .catch(() => {
-          // 偶发失败（窗口暂不可写等）不再永久静默：静默期后补测重试一次
+          // 偶发失败（窗口暂不可写等）不再永久静默：静默期后补测重试一次。
+          // 必须把 target 清零，否则重试算出的新高度和失败前那次相等，
+          // apply() 里 < EPSILON 直接短路，重试永远空转，窗口卡在错误高度
           if (!fitFailed) {
             fitFailed = true;
+            target = 0;
             schedule();
           }
         });
@@ -115,8 +116,8 @@ export function useAutoFitWindow(
     // 窗口从隐藏态被 show 出来时，隐藏期间的 set_size 可能没落地：
     // 拿到焦点即强制重报一次，保证显示出来的尺寸就是内容尺寸（不带动画）
     const refit = () => {
+      // target 清零强制重报；fitFailed 后 target=0 的重试语义与此一致
       target = 0;
-      cur = 0;
       if (canApply()) apply();
       else schedule();
     };

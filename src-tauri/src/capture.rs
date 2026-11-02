@@ -19,6 +19,20 @@ pub struct CapturedScreen {
     pub rgba: Vec<u8>,
 }
 
+/// 把前端发来的选区钳制到快照范围内（至少 1×1）：screenshot_finish 需要在裁剪前
+/// 拿到钳制后的坐标（sel json / encode_png 尺寸都要用），统一从这里出，避免
+/// 与 crop 内部各套一套钳制逻辑
+pub fn clamp_rect(x: i32, y: i32, w: i32, h: i32, width: i32, height: i32) -> Rect {
+    let x = x.clamp(0, (width - 1).max(0));
+    let y = y.clamp(0, (height - 1).max(0));
+    Rect {
+        x,
+        y,
+        w: w.clamp(1, (width - x).max(1)),
+        h: h.clamp(1, (height - y).max(1)),
+    }
+}
+
 /// 裁剪 RGBA 图像中的选区；越界部分钳制到图像内，空选区报错
 pub fn crop(rgba: &[u8], width: i32, height: i32, rect: Rect) -> Result<Vec<u8>, String> {
     if width <= 0 || height <= 0 {
@@ -106,6 +120,14 @@ mod tests {
         let (rgba, w, h) = sample();
         assert!(crop(&rgba, w, h, Rect { x: 0, y: 0, w: 0, h: 5 }).is_err());
         assert!(crop(&rgba, w, h, Rect { x: 2, y: 0, w: 4, h: 4 }).is_err());
+    }
+
+    #[test]
+    fn clamp_rect_pins_selection_into_snapshot() {
+        let r = clamp_rect(-5, -5, 9999, 9999, 100, 50);
+        assert_eq!((r.x, r.y, r.w, r.h), (0, 0, 100, 50));
+        let r = clamp_rect(99, 49, 0, 0, 100, 50);
+        assert_eq!((r.x, r.y, r.w, r.h), (99, 49, 1, 1));
     }
 
     #[test]

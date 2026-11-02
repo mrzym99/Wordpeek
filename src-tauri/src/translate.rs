@@ -353,7 +353,32 @@ pub fn load_config(app: &AppHandle) -> AppConfig {
 
 #[tauri::command]
 pub fn get_config(state: State<SharedConfig>) -> AppConfig {
-    state.lock().clone()
+    let mut cfg = state.lock().clone();
+    // 密钥打码后再发：所有窗口都能调 get_config，明文密钥不该离开后端。
+    // 设置页保存时 "***" 按未修改处理（见 save_baidu/save_tencent）
+    if !cfg.baidu.appid.is_empty() {
+        cfg.baidu.appid = "***".into();
+    }
+    if !cfg.baidu.secret.is_empty() {
+        cfg.baidu.secret = "***".into();
+    }
+    if !cfg.tencent.secret_id.is_empty() {
+        cfg.tencent.secret_id = "***".into();
+    }
+    if !cfg.tencent.secret_key.is_empty() {
+        cfg.tencent.secret_key = "***".into();
+    }
+    cfg
+}
+
+/// 打码后的密钥按「保持原值」处理，否则设置页回显的掩码会把真密钥覆盖掉
+fn keep_masked(masked: &str, current: &str) -> String {
+    let t = masked.trim();
+    if t == "***" {
+        current.to_string()
+    } else {
+        t.to_string()
+    }
 }
 
 /// 模块化落盘：以后端当前配置为基底，只改调用方负责的字段后整体写回。
@@ -385,8 +410,14 @@ fn persist<F: FnOnce(&mut AppConfig)>(
     };
     println!("[config] saved");
 
-    // 快捷键可能被修改：按新配置重新注册全部快捷键（失败仅日志，不阻断保存）
-    crate::register_hotkeys(&app, &cfg);
+    // 快捷键可能被修改：按新配置重新注册全部快捷键
+    let failed = crate::register_hotkeys(&app, &cfg);
+    if !failed.is_empty() {
+        return Err(format!(
+            "配置已保存，但快捷键注册失败：{}（可能被其他程序占用）",
+            failed.join("、")
+        ));
+    }
     // 广播配置变化：已打开的窗口（如划词卡片）据此作废按旧配置算出的结果，
     // 典型场景是设置里拖拽排序后，对比区的顺序要跟上新配置
     let _ = app.emit("config-changed", ());
@@ -421,8 +452,8 @@ pub fn save_baidu(
 ) -> Result<(), String> {
     persist(app, state, |c| {
         c.baidu = BaiduConfig {
-            appid: appid.trim().into(),
-            secret: secret.trim().into(),
+            appid: keep_masked(&appid, &c.baidu.appid),
+            secret: keep_masked(&secret, &c.baidu.secret),
         }
     })
 }
@@ -437,8 +468,8 @@ pub fn save_tencent(
 ) -> Result<(), String> {
     persist(app, state, |c| {
         c.tencent = TencentConfig {
-            secret_id: secret_id.trim().into(),
-            secret_key: secret_key.trim().into(),
+            secret_id: keep_masked(&secret_id, &c.tencent.secret_id),
+            secret_key: keep_masked(&secret_key, &c.tencent.secret_key),
         }
     })
 }
@@ -655,9 +686,11 @@ async fn translate_baidu(
     hasher.update(format!("{appid}{text}{salt}{secret}"));
     let sign = format!("{:x}", hasher.finalize());
 
+    // POST 表单而不是 GET query：截图翻译是整页文本，q 会被塞进 URL，
+    // GET 的 URL 长度限制（百度 q 上限 ~6000 字节）必炸；该端点两种方式都收
     let resp: serde_json::Value = http()
-        .get("https://fanyi-api.baidu.com/api/trans/vip/translate")
-        .query(&[
+        .post("https://fanyi-api.baidu.com/api/trans/vip/translate")
+        .form(&[
             ("q", text),
             ("from", "auto"),
             ("to", baidu_target(to)),
@@ -667,7 +700,7 @@ async fn translate_baidu(
         ])
         .send()
         .await
-        // URL 里有 appid+sign，reqwest 错误 Display 默认带完整 URL，必须脱掉
+        // 请求体里有 appid+sign，reqwest 错误 Display 默认带完整 URL，必须脱掉
         .map_err(|e| format!("请求失败: {}", e.without_url()))?
         .json()
         .await

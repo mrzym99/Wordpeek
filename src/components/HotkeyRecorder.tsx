@@ -4,7 +4,7 @@ const IS_MAC = navigator.userAgent.includes("Macintosh");
 
 /** 存的是跨平台的 Ctrl/Alt/Shift/Super，展示时按平台换成用户键盘上的字（mac 上 Alt 是 Option、Super 是 Cmd） */
 const MAC_MOD_LABEL: Record<string, string> = { Alt: "⌥ Option", Super: "⌘ Cmd" };
-export const displayHotkey = (v: string) =>
+const displayHotkey = (v: string) =>
   IS_MAC ? v.split("+").map((p) => MAC_MOD_LABEL[p] ?? p).join("+") : v;
 
 /** 快捷键录制输入框：点击后按下组合键录制，Esc 取消。
@@ -50,7 +50,18 @@ export default function HotkeyRecorder({ value, onChange }: { value: string; onC
       setRecording(false);
     };
     document.addEventListener("keydown", onKey, true);
-    return () => document.removeEventListener("keydown", onKey, true);
+    // 录制中点到输入框外的任何地方 = 取消录制（否则键盘一直被全局接管，必须先按 Esc）
+    const onMouseDown = (e: MouseEvent) => {
+      if (!(e.target instanceof HTMLInputElement)) {
+        setRecording(false);
+        setError("");
+      }
+    };
+    document.addEventListener("mousedown", onMouseDown, true);
+    return () => {
+      document.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("mousedown", onMouseDown, true);
+    };
   }, [recording]);
 
   return (

@@ -1,13 +1,17 @@
-#![allow(dead_code)] // OcrLine 坐标已按契约还原，但尚未被前端消费（留给原位覆盖展示）
 //! Windows.Media.Ocr：PNG → 文本行（行坐标保留，本期不使用）
 
 /// OCR 识别出的一行文字；坐标为相对裁剪图像的物理像素
 #[derive(Debug, Clone)]
 pub struct OcrLine {
     pub text: String,
+    // 坐标已按契约还原但前端尚未消费（留给原位覆盖展示），先压住 dead_code 警告
+    #[allow(dead_code)]
     pub x: i32,
+    #[allow(dead_code)]
     pub y: i32,
+    #[allow(dead_code)]
     pub w: i32,
+    #[allow(dead_code)]
     pub h: i32,
 }
 
@@ -965,6 +969,3 @@ pub fn warmup() {
     let _ = recognize(&buf.into_inner(), "auto"); // 白图无文字，Err 正常
     println!("[ocr] 预热完成，用时 {}ms", t0.elapsed().as_millis());
 }
-
-#[cfg(not(target_os = "macos"))]
-pub fn warmup() {}

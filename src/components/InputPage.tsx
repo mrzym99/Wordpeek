@@ -25,6 +25,8 @@ export default function InputPage() {
   const headHeight = document.documentElement.dataset.os === "mac" ? 28 : 0;
   const { setBody, refit } = useAutoFitWindow("input", 29 + headHeight, 180);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
+  // 请求序号：慢的旧结果返回时丢弃，避免覆盖新查询（同 Popup.tsx 的 seqRef）
+  const seqRef = useRef(0);
 
   useEffect(() => {
     // 窗口由 Rust 按需创建为隐藏态，内容挂好了再自己显示，避免先白屏一下
@@ -48,6 +50,7 @@ export default function InputPage() {
     if (!q) return;
     // 智能 = 交给后端检测（含 CJK → 译英文，否则 → 译中文）
     const target = mode === "auto" ? "auto" : mode;
+    const seq = ++seqRef.current;
     setLoading(true);
     setError("");
     setRows(null);
@@ -59,6 +62,8 @@ export default function InputPage() {
         invoke<WordInfo>("translate", { text: q, to: target }),
         invoke<SourceResult[]>("translate_all", { text: q, to: target, includeBuiltin: false }),
       ]);
+      // 已发起新查询：旧结果全部丢弃（loading 状态归新一轮管）
+      if (seqRef.current !== seq) return;
       if (d.status === "fulfilled") {
         setDefaultInfo(d.value);
       } else {
@@ -74,7 +79,7 @@ export default function InputPage() {
     } catch (err) {
       setError(String(err));
     } finally {
-      setLoading(false);
+      if (seqRef.current === seq) setLoading(false);
     }
   };
 

@@ -532,29 +532,11 @@ pub fn capture_virtual_screen() -> Result<CapturedScreen, String> {
         return Err("没有可用的显示器".into());
     }
 
-    // 虚拟屏边界（点，左上原点）与每屏像素缩放（Retina 为 2.0）；混合 DPI 时取最大缩放，尽力而为
-    let mut min_x = f64::MAX;
-    let mut min_y = f64::MAX;
-    let mut max_x = f64::MIN;
-    let mut max_y = f64::MIN;
-    let mut scale = 1.0f64;
-    for &id in &displays {
-        let d = CGDisplay::new(id);
-        let b = d.bounds();
-        min_x = min_x.min(b.origin.x);
-        min_y = min_y.min(b.origin.y);
-        max_x = max_x.max(b.origin.x + b.size.width);
-        max_y = max_y.max(b.origin.y + b.size.height);
-        let s = display_scale(&d);
-        if s > scale {
-            scale = s;
-        }
-    }
+    // 虚拟屏边界与缩放（点，左上原点）；与 virtual_screen_bounds 共用一套计算
+    let (min_x, min_y, max_x, max_y, scale) = virtual_screen_extents(&displays)
+        .ok_or_else(|| "获取虚拟屏幕尺寸失败".to_string())?;
     let vw = max_x - min_x;
     let vh = max_y - min_y;
-    if vw <= 0.0 || vh <= 0.0 {
-        return Err("获取虚拟屏幕尺寸失败".into());
-    }
 
     let cw = (vw * scale).round() as usize;
     let ch = (vh * scale).round() as usize;
@@ -660,15 +642,15 @@ fn display_scale(d: &CGDisplay) -> f64 {
         .unwrap_or(1.0)
 }
 
-/// 虚拟屏边界（物理像素）
-pub fn virtual_screen_bounds() -> Option<(i32, i32, i32, i32)> {
-    let displays = CGDisplay::active_displays().ok()?;
+/// 虚拟屏边界（点，左上原点）与每屏像素缩放（Retina 为 2.0）；混合 DPI 时取最大缩放，尽力而为。
+/// capture_virtual_screen 和 virtual_screen_bounds 共用
+fn virtual_screen_extents(displays: &[u32]) -> Option<(f64, f64, f64, f64, f64)> {
     let mut min_x = f64::MAX;
     let mut min_y = f64::MAX;
     let mut max_x = f64::MIN;
     let mut max_y = f64::MIN;
     let mut scale = 1.0f64;
-    for &id in &displays {
+    for &id in displays {
         let d = CGDisplay::new(id);
         let b = d.bounds();
         min_x = min_x.min(b.origin.x);
@@ -680,7 +662,13 @@ pub fn virtual_screen_bounds() -> Option<(i32, i32, i32, i32)> {
             scale = s;
         }
     }
-    ((max_x > min_x) && (max_y > min_y)).then(|| {
+    (max_x > min_x && max_y > min_y).then_some((min_x, min_y, max_x, max_y, scale))
+}
+
+/// 虚拟屏边界（物理像素）
+pub fn virtual_screen_bounds() -> Option<(i32, i32, i32, i32)> {
+    let displays = CGDisplay::active_displays().ok()?;
+    virtual_screen_extents(&displays).map(|(min_x, min_y, max_x, max_y, scale)| {
         (
             (min_x * scale).round() as i32,
             (min_y * scale).round() as i32,

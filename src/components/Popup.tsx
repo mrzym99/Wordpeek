@@ -14,12 +14,7 @@ import TranslateBar from "./TranslateBar";
 import Phonetic from "./Phonetic";
 import { CheckIcon, CopyIcon } from "./icons";
 import { useAutoFitWindow } from "../lib/autofit";
-
-/** 句子判定：英文看空格/标点，中文没空格所以看汉字数（超过两个当句子） */
-function isSentenceText(t: string) {
-  const s = t.trim();
-  return /[\s，。！？；,.!?;:]/.test(s) || (s.match(/[\u4e00-\u9fff]/g)?.length ?? 0) > 2;
-}
+import { isSentenceText } from "../lib/text";
 
 /** 划词/截图统一弹窗：同一张卡片，标题行 = 可编辑原文 + 「对比各源」按钮 */
 export default function Popup() {
@@ -31,6 +26,8 @@ export default function Popup() {
   const lastLooked = useRef("");
   // 查词序号：lookup 用它丢弃晚到的旧请求结果，避免快速连查时结果错乱
   const seqRef = useRef(0);
+  // 「对比各源」请求序号：收起对比/新配置到达时作废在途请求
+  const compareSeq = useRef(0);
   const [info, setInfo] = useState<WordInfo | null>(null);
   const [error, setError] = useState("");
   // 划词小释义卡整体封装在 DictPop 组件里（选词检测/定位/查词/渲染），
@@ -53,6 +50,7 @@ export default function Popup() {
   const [compareOpen, setCompareOpen] = useState(false);
   // 已勾选的额外源个数：0 时隐藏「对比各源」按钮（persist 保证 sources 里
   // 只留密钥就绪的合法源，所以这里不用再判密钥）
+  // -1 = 还没查到（不展示按钮，避免闪现），0 = 无额外源
   const [extrasCount, setExtrasCount] = useState(-1);
   const [rows, setRows] = useState<SourceResult[] | null>(null);
   // rows 对应的原文：展开对比时原文没变就直接复用缓存，不重新翻译
@@ -87,18 +85,21 @@ export default function Popup() {
   // 列出勾选的额外源译文（默认翻译的结果直接复用主卡片数据，不重复请求）
   const runCompare = async (text: string) => {
     if (!text.trim()) return;
+    // 请求序号：config-changed 重拉/连点对比时，慢的旧结果不能落进新文本的对比区
+    const seq = ++compareSeq.current;
     setCompareText(text);
     setCompareLoading(true);
     setRows(null);
     setCompareError("");
     try {
-      setRows(
-        await invoke<SourceResult[]>("translate_all", { text, to: "auto", includeBuiltin: false })
-      );
+      const rs = await invoke<SourceResult[]>("translate_all", { text, to: "auto", includeBuiltin: false });
+      if (compareSeq.current !== seq) return;
+      setRows(rs);
     } catch (err) {
+      if (compareSeq.current !== seq) return;
       setCompareError(String(err));
     } finally {
-      setCompareLoading(false);
+      if (compareSeq.current === seq) setCompareLoading(false);
     }
   };
 
@@ -180,24 +181,9 @@ export default function Popup() {
     let unlistenFocus: (() => void) | undefined;
     let unlistenShot: (() => void) | undefined;
     let unlistenResized: (() => void) | undefined;
-
-    const lookup = async (w: string) => {
-      lastLooked.current = w;
-      setWord(w);
-      setInfo(null);
-      setError("");
-      setCompareOpen(false); // 新查词收起旧对比
-      const seq = ++seqRef.current;
-      try {
-        // 翻译请求由 Rust 端发出（避免 CORS，且 API 密钥不进前端）
-        const res = await invoke<WordInfo>("translate", { text: w });
-        if (seqRef.current !== seq) return; // 已有更新的查询，丢弃过期结果
-        setInfo(res);
-      } catch (err) {
-        if (seqRef.current !== seq) return;
-        setError(String(err));
-      }
-    };
+    // 拖宽防抖的 timer 引用（setup 内赋值，cleanup 里清）
+    let widthTimer: number | undefined;
+    let selSeq = 0; // selection 处理器序号（见 sel 回调内注释）
 
     // 点击窗外自动隐藏。不能在 blur 时直接 hide：
     // 拖拽/缩放窗口（系统模态循环）开始时也会触发一次 blur，
@@ -239,6 +225,7 @@ export default function Popup() {
       setDraft("");
       setShotTo("auto");
       setCompareOpen(false);
+      compareSeq.current++; // 对比区已随卡片重置，在途的旧对比请求作废
       setRows(null);
       setCompareText("");
       setCompareLoading(false);
@@ -254,6 +241,10 @@ export default function Popup() {
       // Rust 端抓取到选中文本后通过 "selection" 事件发过来；
       // x/y 已在 Rust 端钳制到光标所在屏幕内
       const sel = await listen<Selection>("selection", async (e) => {
+        // 定位序号：连续两次划词时，旧处理器（跨屏 DPI 轮询最长等 500ms）
+        // 醒来后不得把窗口挪回旧位置/覆盖新处理器已 show 的窗口
+        const mySel = ++selSeq;
+        const stale = () => mySel !== selSeq;
         const { text, x, y } = e.payload;
         setShotResult(null); // 新的划词到达，退出截图模式
         setCompareOpen(false);
@@ -266,11 +257,13 @@ export default function Popup() {
           let prev = await win.outerSize();
           for (let i = 0; i < 25; i++) {
             await new Promise((r) => setTimeout(r, 20));
+            if (stale()) return;
             const cur = await win.outerSize();
             if (cur.width === prev.width && cur.height === prev.height) break;
             prev = cur;
           }
         }
+        if (stale()) return;
         await win.show();
         await win.setFocus();
         refit(); // 不依赖焦点事件：窗口重开时残留的拖拽高度立刻按内容纠正
@@ -333,7 +326,6 @@ export default function Popup() {
 
       // 用户拖宽弹窗后防抖落盘，重启恢复；高度动画引发的 resize 宽度不变，
       // 会被「与上次已存宽度比较」过滤掉，不会频繁写盘
-      let widthTimer: number | undefined;
       let savedWidth = 0;
       const resized = await win.onResized(async (e) => {
         const s = await win.scaleFactor();
@@ -357,6 +349,7 @@ export default function Popup() {
       unlistenFocus?.();
       unlistenShot?.();
       unlistenResized?.();
+      if (widthTimer !== undefined) clearTimeout(widthTimer);
       document.documentElement.removeEventListener("mouseleave", onLeave);
       stopHideCheck();
     };
@@ -403,7 +396,7 @@ export default function Popup() {
         </div>
         {/* 对比各源：固定标题行右上角，两种模式都有（设置入口在托盘菜单，不占弹窗标题行） */}
         <div className="head-actions">
-          {activeText && extrasCount !== 0 && (
+          {activeText && extrasCount > 0 && (
             <button
               className="text-btn"
               disabled={mainLoading}

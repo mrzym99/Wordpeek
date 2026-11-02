@@ -24,8 +24,31 @@ struct Selection {
     y: i32,
 }
 
+/// 抓取互斥量：grab_selection 会改写剪贴板（备份→哨兵→恢复），
+/// 两个并发实例交错会把用户的剪贴板顶成哨兵串，必须串行
+static GRAB_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+/// 截图会话互斥量：遮罩窗是全局唯一的，连续触发会两个会话抢同一扇遮罩
+static SCREENSHOT_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+
+/// RAII 复位标志；guard 被丢弃（含提前 return / panic 展开）时释放互斥
+struct FlagGuard(&'static AtomicBool);
+impl Drop for FlagGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
 /// 模拟复制键抓取当前选中文本，并把原剪贴板内容还原
 fn grab_selection(app: &AppHandle) -> Option<String> {
+    // 已有一轮在跑（热键连按）：直接放弃本次，上一轮的结果会正常弹出
+    if GRAB_IN_PROGRESS
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        println!("[grab] 上一轮抓取仍在进行，跳过本次触发");
+        return None;
+    }
+    let _guard = FlagGuard(&GRAB_IN_PROGRESS);
     // 诊断打印：foreground_app 只有 Windows 实现（macOS 要走 NSWorkspace，暂不缺）
     #[cfg(windows)]
     println!("[grab] foreground app: {}", crate::platform::foreground_app());
@@ -378,18 +401,18 @@ fn status_of(app: &AppHandle, update: Option<&Update>) -> UpdateStatus {
     }
 }
 
-/// 检查更新并把结果缓存到应用状态
-fn check_update(app: &AppHandle) -> Result<UpdateStatus, String> {
+/// 检查更新并把结果缓存到应用状态（async：同步命令在主线程跑，block_on 会冻结整个 UI）
+async fn check_update(app: &AppHandle) -> Result<UpdateStatus, String> {
     // macOS 端还没有签名/公证的产物，latest.json 里也没有 darwin 平台，检查只会报错
     if cfg!(target_os = "macos") {
         return Err("macOS 版暂不提供自动更新，请到 GitHub Releases 手动下载".into());
     }
-    let update = tauri::async_runtime::block_on(
-        app.updater()
-            .map_err(|e| e.to_string())?
-            .check(),
-    )
-    .map_err(|e| e.to_string())?;
+    let update = app
+        .updater()
+        .map_err(|e| e.to_string())?
+        .check()
+        .await
+        .map_err(|e| e.to_string())?;
     let status = status_of(app, update.as_ref());
     println!("[updater] check: {status:?}");
     *app.state::<UpdateState>().lock() = update;
@@ -403,10 +426,11 @@ fn get_update_status(app: AppHandle) -> UpdateStatus {
     status_of(&app, cached.as_ref())
 }
 
-/// 手动检查更新（设置页「检查更新」按钮）
+/// 手动检查更新（设置页「检查更新」按钮）。async 命令由 tauri 丢到异步运行时，
+/// 网络等待期间主线程（事件循环）不阻塞，弱网下应用不再假死
 #[tauri::command]
-fn check_update_now(app: AppHandle) -> Result<UpdateStatus, String> {
-    check_update(&app)
+async fn check_update_now(app: AppHandle) -> Result<UpdateStatus, String> {
+    check_update(&app).await
 }
 
 /// 重启自己。改完系统权限后必须换进程才生效，而 macOS 那个「退出并重新打开」
@@ -429,6 +453,8 @@ fn install_update(app: AppHandle) -> Result<(), String> {
         let install = update.download_and_install(|_chunk, _total| {}, || {});
         if let Err(e) = tauri::async_runtime::block_on(install) {
             eprintln!("[updater] install failed: {e}");
+            // 失败把已下载的更新放回缓存，用户重试不用再走一遍检查更新
+            *app.state::<UpdateState>().lock() = Some(update);
             return;
         }
         // NSIS 静默安装结束后旧进程通常已被安装器接管，restart 兜底
@@ -504,6 +530,11 @@ static MOUSE_UP: std::sync::OnceLock<parking_lot::Mutex<(i32, i32, u64)>> =
     std::sync::OnceLock::new();
 /// 本次松手是否值得探测选区；mouse-up 回调里算好，worker 直接读
 static PROBE_INTENT: AtomicBool = AtomicBool::new(false);
+/// 本次按下时光标是否落在划词图标矩形内（钩子回调只做廉价判断，hide 由 worker 做）
+static DOWN_ON_ICON: AtomicBool = AtomicBool::new(false);
+/// 划词图标最近一次 show 的屏幕矩形（物理像素 x,y,w,h）：钩子回调用它判断
+/// 点下的是不是图标自己，避免在回调里跨线程查窗口位置/尺寸
+static ICON_RECT: parking_lot::Mutex<Option<(i32, i32, u32, u32)>> = parking_lot::Mutex::new(None);
 
 fn record_mouse_down() {
     let (x, y) = crate::platform::cursor_pos();
@@ -513,21 +544,39 @@ fn record_mouse_down() {
 /// 只有真的做了选词手势才探测：拖动（位移 ≥ 6 物理像素）或连击（350ms 内同一点再松手，
 /// 双击选词/三击选行）。普通单击不算——很多应用会记住上一次选区，单击后
 /// AXSelectedText 照样返回旧文本，不拦就会出现「随便点一下也冒图标」。
+/// 位移阈值：曼哈顿距离超过 6px 视为拖拽选区（低于此值是普通点击的抖动）
+const GESTURE_MOVE_PX: i32 = 6;
+/// 连击判定：按下与上次松手间隔 < 350ms 且同一点（±8px）→ 双击选词/三击选行
+const GESTURE_REPEAT_MS: u64 = 350;
+const GESTURE_REPEAT_PX: i32 = 8;
+
+/// 纯判定逻辑，供测试：本次按下/松开与上一次松开（px,py,prev_at）的坐标时间
+fn gesture_selects(
+    down: (i32, i32, u64),
+    up: (i32, i32),
+    prev_up: (i32, i32, u64),
+) -> bool {
+    let (dx, dy, down_at) = down;
+    let (x, y) = up;
+    let (px, py, prev_at) = prev_up;
+    let moved = (x - dx).abs() + (y - dy).abs() >= GESTURE_MOVE_PX;
+    // 本次按下紧跟上一次松手（350ms 内、同一点）= 连击：双击选词/三击选行
+    let repeated = prev_at != 0
+        && down_at.saturating_sub(prev_at) < GESTURE_REPEAT_MS
+        && (dx - px).abs() + (dy - py).abs() < GESTURE_REPEAT_PX;
+    moved || repeated
+}
+
 fn mouse_gesture_selects() -> bool {
     let (x, y) = crate::platform::cursor_pos();
-    let (dx, dy, down_at) = { *MOUSE_DOWN.get_or_init(Default::default).lock() };
+    let down = { *MOUSE_DOWN.get_or_init(Default::default).lock() };
     let (px, py, prev_at) = {
         let mut up = MOUSE_UP.get_or_init(Default::default).lock();
         let prev = *up;
         *up = (x, y, now_ms());
         prev
     };
-    let moved = (x - dx).abs() + (y - dy).abs() >= 6;
-    // 本次按下紧跟上一次松手（350ms 内、同一点）= 连击：双击选词/三击选行
-    let repeated = prev_at != 0
-        && down_at.saturating_sub(prev_at) < 350
-        && (dx - px).abs() + (dy - py).abs() < 8;
-    moved || repeated
+    gesture_selects(down, (x, y), (px, py, prev_at))
 }
 
 fn now_ms() -> u64 {
@@ -550,6 +599,7 @@ fn cursor_on_window(app: &AppHandle, label: &str) -> bool {
 }
 
 fn hide_selection_icon(app: &AppHandle) {
+    *ICON_RECT.lock() = None;
     if let Some(win) = app.get_webview_window("icon") {
         let _ = win.hide();
     }
@@ -565,30 +615,45 @@ fn show_selection_icon(app: &AppHandle, text: String) {
         if let Some(win) = inner.get_webview_window("icon") {
             let (x, y) = clamp_to_screen(&inner, "icon", cx + 8, cy + 12);
             let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
+            if let Ok(size) = win.outer_size() {
+                *ICON_RECT.lock() = Some((x, y, size.width, size.height));
+            }
             let _ = win.show();
         }
     });
+}
+
+/// 光标是否落在缓存的图标矩形内。只在钩子回调用：只碰 GetCursorPos + 内存读，
+/// 绝不做跨线程窗口查询/ShowWindow（回调慢了全系统鼠标卡，超时还会被系统摘钩）
+fn cursor_on_icon_rect() -> bool {
+    let Some((x, y, w, h)) = *ICON_RECT.lock() else {
+        return false;
+    };
+    let (cx, cy) = crate::platform::cursor_pos();
+    cx >= x && cx < x + w as i32 && cy >= y && cy < y + h as i32
 }
 
 /// 划词图标：鼠标松开后读一次系统选区（不碰剪贴板、不注入按键），有选中文字就在
 /// 光标旁弹按钮，点一下走热键同一套翻译链路。读不到选区（终端、Electron 等
 /// 不实现 AX/UIA 文本接口的应用）就什么都不做，用户照旧用划词快捷键。
 fn start_selection_icon(app: &AppHandle) {
-    let (tx, rx) = std::sync::mpsc::sync_channel::<()>(1);
-    let down_app = app.clone();
+    // false = 按下（只记状态，延迟处理），true = 松开（探测选区）。队列只留一个信号：
+    // 钩子回调绝不做窗口操作（跨线程查询/ShowWindow 会拖慢全系统鼠标，
+    // 超时还会被 Windows 静默摘钩），hide 一律在 worker 线程里做
+    let (tx, rx) = std::sync::mpsc::sync_channel::<bool>(1);
+    let tx_down = tx.clone();
     let watch = crate::platform::start_mouse_watch(
         Box::new(move || {
             // 点在图标窗口自身上时不能收起：Windows 低级钩子连自己窗口的鼠标事件也收，
             // down 就把窗口藏掉会吞掉这次 click（macOS 全局监视器不收自身应用的事件，无此问题）
-            if !cursor_on_window(&down_app, "icon") {
-                record_mouse_down();
-                hide_selection_icon(&down_app);
-            }
+            DOWN_ON_ICON.store(cursor_on_icon_rect(), Ordering::Relaxed);
+            record_mouse_down();
+            let _ = tx_down.try_send(false);
         }),
         Box::new(move || {
             PROBE_INTENT.store(mouse_gesture_selects(), Ordering::Relaxed);
             // 队列里只留一个待处理的探测：连点鼠标时不堆积，也不会每点一下就开条线程
-            let _ = tx.try_send(());
+            let _ = tx.try_send(true);
         }),
     );
     println!(
@@ -601,7 +666,15 @@ fn start_selection_icon(app: &AppHandle) {
     }
     let worker = app.clone();
     std::thread::spawn(move || {
-        while rx.recv().is_ok() {
+        while let Ok(is_up) = rx.recv() {
+            if !is_up {
+                // 按下：不在图标上就收起图标（开始新一轮选区）；点在图标上则保留，
+                // 等随后的 click 命令（translate_selection_icon）接管
+                if !DOWN_ON_ICON.load(Ordering::Relaxed) {
+                    hide_selection_icon(&worker);
+                }
+                continue;
+            }
             // 开关每次现读配置：设置里一关就立即生效，不用重装监听
             let enabled = worker
                 .state::<parking_lot::Mutex<translate::AppConfig>>()
@@ -710,9 +783,18 @@ struct ScreenshotSession {
 
 /// 截图翻译触发：后台抓屏供裁剪，遮罩立即显示（透明，框选对实时桌面）
 fn handle_screenshot_trigger(app: &AppHandle) {
+    // 连按热键：上一场截图还开着时直接忽略，否则两个会话抢同一扇遮罩窗
+    if SCREENSHOT_IN_PROGRESS
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        println!("[screenshot] 上一场截图仍在进行，忽略本次触发");
+        return;
+    }
     println!("[screenshot] triggered");
     let app = app.clone();
     std::thread::spawn(move || {
+        let _guard = FlagGuard(&SCREENSHOT_IN_PROGRESS);
         // 没权限时抓屏只会拿到桌面壁纸，必须明确告诉用户去哪开，而不是静默失败。
         // 先 request：只有它会弹系统授权框并把 Wordpeek 登记进「屏幕录制」列表
         //（只 preflight 的话列表里没有这一项，用户根本没法勾）。
@@ -748,10 +830,26 @@ fn handle_screenshot_trigger(app: &AppHandle) {
                 let _ = m.hide();
             }
         }
+        // 抓屏失败/找不到遮罩窗时要恢复刚才藏掉的窗口，否则设置窗凭空消失
+        macro_rules! restore_windows {
+            () => {{
+                if was_visible {
+                    if let Some(s) = app.get_webview_window("settings") {
+                        let _ = s.show();
+                    }
+                }
+                if main_was_visible {
+                    if let Some(m) = app.get_webview_window("main") {
+                        let _ = m.show();
+                    }
+                }
+            }};
+        }
         let screen = match crate::platform::capture_virtual_screen() {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("[screenshot] 抓屏失败: {e}");
+                restore_windows!();
                 return;
             }
         };
@@ -759,6 +857,7 @@ fn handle_screenshot_trigger(app: &AppHandle) {
             (screen.width, screen.height, screen.origin_x, screen.origin_y);
 
         let Some(win) = app.get_webview_window("screenshot") else {
+            restore_windows!();
             return;
         };
         // 遮罩窗口常驻铺满虚拟屏：位置/尺寸没变就不重设，避免 resize 引起闪动
@@ -773,22 +872,14 @@ fn handle_screenshot_trigger(app: &AppHandle) {
             }
         }
 
-        // 记录设置窗口可见性并存快照，finish/cancel 时清理
-        let was_visible = app
-            .get_webview_window("settings")
-            .map(|w| w.is_visible().unwrap_or(false))
-            .unwrap_or(false);
+        // 存快照供 finish/cancel 清理（was_visible 是抓屏前读到的真实值，
+        // 窗口此刻已被藏起，不能再重新 is_visible）
         let state = app.state::<ScreenshotState>();
         {
             let mut session = state.0.lock();
             session.screen = Some(screen);
             session.settings_was_visible = was_visible;
             session.main_was_visible = main_was_visible;
-        }
-        if was_visible {
-            if let Some(s) = app.get_webview_window("settings") {
-                let _ = s.hide();
-            }
         }
 
         // 遮罩内容常驻就绪（纯 CSS，无大图传输），立即显示即可框选；
@@ -852,12 +943,9 @@ fn screenshot_finish(app: AppHandle, x: i32, y: i32, w: i32, h: i32) -> Result<(
     // 光标所在屏的工作区（排除任务栏），前端锚制用
     let (wx, wy, ww, wh) = crate::platform::work_area_at(mx, my);
 
-    // 钳制到快照范围内，避免越界尺寸与裁剪像素长度不符
-    let cx = x.max(0).min(screen.width - 1);
-    let cy = y.max(0).min(screen.height - 1);
-    let cw = w.min(screen.width - cx).max(1);
-    let ch = h.min(screen.height - cy).max(1);
-    let rect = crate::capture::Rect { x: cx, y: cy, w: cw, h: ch };
+    // 钳制到快照范围内（capture::clamp_rect，有单测），避免越界尺寸与裁剪像素长度不符
+    let rect = crate::capture::clamp_rect(x, y, w, h, screen.width, screen.height);
+    let (cx, cy, cw, ch) = (rect.x, rect.y, rect.w, rect.h);
 
     let cropped = crate::capture::crop(&screen.rgba, screen.width, screen.height, rect)?;
     // 定位信息先提取，随后释放全屏像素（OCR 期间不再需要 ~23MB RGBA）
@@ -969,43 +1057,44 @@ pub(crate) fn validate_hotkeys(hotkeys: &[&str]) -> Result<(), String> {
     Ok(())
 }
 
-/// 注册全部全局快捷键（先注销旧的全部再注册）；单个失败只打日志不阻断
-pub(crate) fn register_hotkeys(app: &AppHandle, cfg: &translate::AppConfig) {
+/// 注册全部全局快捷键（先注销旧的全部再注册）；返回注册失败的快捷键名（
+/// 通常是键位被其他程序占用）。保存配置时把它作为 Err 返回给设置页展示
+pub(crate) fn register_hotkeys(app: &AppHandle, cfg: &translate::AppConfig) -> Vec<String> {
+    let mut failed = Vec::new();
     if let Err(e) = app.global_shortcut().unregister_all() {
         eprintln!("[shortcut] 注销旧快捷键失败: {e}");
     }
     // 任意两个快捷键相同都会导致行为歧义，直接都不注册
     if let Err(e) = validate_hotkeys(&[&cfg.hotkey, &cfg.screenshot_hotkey, &cfg.input_hotkey]) {
         eprintln!("[shortcut] {e}");
-        return;
+        return vec![e];
     }
-    if let Ok(sc) = parse_hotkey(&cfg.hotkey) {
-        if let Err(e) = app.global_shortcut().on_shortcut(sc, |app, _s, event| {
-            if event.state == ShortcutState::Pressed {
-                handle_hotkey_trigger(app);
+    macro_rules! reg {
+        ($hotkey:expr, $handler:expr) => {
+            if let Ok(sc) = parse_hotkey(&$hotkey) {
+                if let Err(e) = app.global_shortcut().on_shortcut(sc, $handler) {
+                    eprintln!("[shortcut] {} 注册失败: {e}", $hotkey);
+                    failed.push($hotkey.clone());
+                }
             }
-        }) {
-            eprintln!("[shortcut] {} 注册失败: {e}", cfg.hotkey);
-        }
+        };
     }
-    if let Ok(sc) = parse_hotkey(&cfg.screenshot_hotkey) {
-        if let Err(e) = app.global_shortcut().on_shortcut(sc, |app, _s, event| {
-            if event.state == ShortcutState::Pressed {
-                handle_screenshot_trigger(app);
-            }
-        }) {
-            eprintln!("[shortcut] {} 注册失败: {e}", cfg.screenshot_hotkey);
+    reg!(cfg.hotkey, |app: &AppHandle, _s, event| {
+        if event.state == ShortcutState::Pressed {
+            handle_hotkey_trigger(app);
         }
-    }
-    if let Ok(sc) = parse_hotkey(&cfg.input_hotkey) {
-        if let Err(e) = app.global_shortcut().on_shortcut(sc, |app, _s, event| {
-            if event.state == ShortcutState::Pressed {
-                open_input_window(app);
-            }
-        }) {
-            eprintln!("[shortcut] {} 注册失败: {e}", cfg.input_hotkey);
+    });
+    reg!(cfg.screenshot_hotkey, |app: &AppHandle, _s, event| {
+        if event.state == ShortcutState::Pressed {
+            handle_screenshot_trigger(app);
         }
-    }
+    });
+    reg!(cfg.input_hotkey, |app: &AppHandle, _s, event| {
+        if event.state == ShortcutState::Pressed {
+            open_input_window(app);
+        }
+    });
+    failed
 }
 
 /// 系统权限状态（设置页「系统权限」区块展示 + 跳系统设置；
@@ -1093,8 +1182,9 @@ fn main() {
                 }
             });
 
-            // 启动后在后台预热 OCR：进程内第一次调 Vision 要加载模型（实测 30-60s），
-            // 不预热的话「第一次截图翻译」就会卡半分钟
+            // 启动后在后台预热 OCR（仅 macOS）：进程内第一次调 Vision 要加载模型（实测 30-60s），
+            // 不预热的话「第一次截图翻译」就会卡半分钟。Windows 用 Windows.Media.Ocr 无需预热
+            #[cfg(target_os = "macos")]
             std::thread::spawn(|| {
                 std::thread::sleep(std::time::Duration::from_secs(2));
                 crate::ocr::warmup();
@@ -1105,7 +1195,7 @@ fn main() {
                 let updater_handle = handle.clone();
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_secs(6));
-                    if let Err(e) = check_update(&updater_handle) {
+                    if let Err(e) = tauri::async_runtime::block_on(check_update(&updater_handle)) {
                         eprintln!("[updater] startup check failed: {e}");
                     }
                 });
@@ -1148,6 +1238,7 @@ fn main() {
                 .lock()
                 .clone();
             register_hotkeys(&handle, &cfg);
+            // 启动时注册失败只打日志：窗口还没起来，无处展示；设置页保存时会二次注册并报错
 
             Ok(())
         })
@@ -1182,6 +1273,18 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gesture_selects_distinguishes_drag_click_and_double_click() {
+        // 拖拽（位移 ≥ 6px）→ 选中
+        assert!(gesture_selects((100, 100, 1000), (130, 100), (0, 0, 0)));
+        // 普通点击（位移小、无连击）→ 不弹图标
+        assert!(!gesture_selects((100, 100, 1000), (102, 101), (0, 0, 0)));
+        // 双击选词：350ms 内同一点再次按下 → 选中
+        assert!(gesture_selects((100, 100, 1200), (101, 100), (101, 100, 1000)));
+        // 间隔太久（≥350ms）不算连击
+        assert!(!gesture_selects((100, 100, 1400), (101, 100), (101, 100, 1000)));
+    }
 
     #[test]
     fn parse_common_hotkeys() {

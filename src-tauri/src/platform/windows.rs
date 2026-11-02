@@ -240,21 +240,26 @@ pub fn start_mouse_watch(on_down: MouseCallback, on_up: MouseCallback) -> bool {
 
     let _ = MOUSE_ON_DOWN.set(on_down);
     let _ = MOUSE_ON_UP.set(on_up);
+    // 钩子安装结果同步传回：装不上时调用方要明确知道（划词图标不可用），
+    // 而不是永远返回 true 静默失败
+    let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || unsafe {
         let hmod = GetModuleHandleW(None).unwrap_or_default();
         let hook = match SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook), hmod, 0) {
             Ok(h) => h,
             Err(e) => {
                 eprintln!("[mouse] 装低级鼠标钩子失败: {e}");
+                let _ = tx.send(false);
                 return;
             }
         };
+        let _ = tx.send(true);
         println!("[mouse] 低级鼠标钩子已装");
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {}
         let _ = windows::Win32::UI::WindowsAndMessaging::UnhookWindowsHookEx(hook);
     });
-    true
+    rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap_or(false)
 }
 
 /// 读焦点控件里被选中的文本（UI Automation 文本模式，不碰剪贴板也不注入按键）。
