@@ -14,7 +14,7 @@
     "windows": [
       {
         "title": "Wordpeek",
-        "width": 400,
+        "width": 424,
         "height": 360,
         "decorations": false,
         "alwaysOnTop": true,

@@ -20,8 +20,8 @@ import { isSentenceText } from "../../lib/text";
 /** 划词/截图统一弹窗：同一张卡片，标题行 = 可编辑原文 + 「对比各源」按钮 */
 export default function Popup() {
   // 卡片内容高度上报给 Rust，窗口按内容收缩（防止透明区域吞掉下层窗口的点击）
-  // padding+border 35 + header 32；最小高度防查词时塌成一条，上限交给 Rust 按屏幕钳制
-  const { setBody, refit } = useAutoFitWindow("main", 67, 190);
+  // 阴影边距+padding+border 59 + header 32 = 91；最小高度防查词时塌成一条，上限交给 Rust 按屏幕钳制
+  const { setBody, refit } = useAutoFitWindow("main", 91, 214);
   const [word, setWord] = useState("");
   // 最近一次实际发起查词的词：改词框失焦时只在真正变化后才重查，避免回车+失焦查两次
   const lastLooked = useRef("");
@@ -572,7 +572,6 @@ export default function Popup() {
       <DictPop
         rootRef={cardRef}
         resetKey={`${word}|${shotResult?.text ?? ""}`}
-        onOpenDetail={lookup}
       />
       </div>
     </div>

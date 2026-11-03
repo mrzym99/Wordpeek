@@ -12,6 +12,13 @@ body,
   user-select: none;
 }
 
+/* #root 自成 BFC：拦住 .card 上下 12px 阴影边距的 margin 塌缩——
+   塌缩会穿透到文档层，把 html 撑得比视口高 24px，弹窗右缘就长出
+   一条几乎全高的原生粗滚动条（内容明明装得下） */
+#root {
+  display: flow-root;
+}
+
 /* ===== 设计 token：中性灰 + VS Code 蓝（去掉了早期的靛紫） ===== */
 /* 层次靠三层表面（wash 外壳 < paper 内容 < paper-raised 抬起）与贴身阴影，不靠降对比度；
    任何 ≤13px 文字都不低于 4.5:1 —— 改色前先算一遍，别凭眼睛。 */
@@ -50,9 +57,11 @@ body,
   --r-lg: 18px;
   --r-pill: 999px;
 
-  /* 描边只靠 .card 的 border 一层：这里不再叠 0 0 0 1px 环（双描边），
-     Blur 部分超出窗口边界本来也会被裁 */
-  --shadow-card: 0 1px 2px rgba(38, 36, 70, 0.05);
+  /* 卡片阴影分三层（贴身接触影 + 中距 + 远距）才有「浮起来」的质感，单层大 blur 只会显脏。
+     划词窗口四周留了 12px 透明边距（.card 的 margin）专供阴影渲染：
+     blur 收在 16px 内，尾巴越出边距时 alpha 已低到看不出裁切。不叠 0 0 0 1px 环（双描边） */
+  --shadow-card: 0 1px 2px rgba(38, 36, 70, 0.06), 0 2px 6px rgba(38, 36, 70, 0.06),
+    0 6px 16px rgba(38, 36, 70, 0.08);
   --shadow-pop: 0 0 0 1px rgba(38, 36, 70, 0.06), 0 2px 6px rgba(38, 36, 70, 0.06), 0 10px 28px rgba(38, 36, 70, 0.1);
 
   --ease: cubic-bezier(0.2, 0.7, 0.3, 1);
@@ -79,19 +88,24 @@ body,
   --accent-wash: #142b42;
   --danger: #f48771; /* 6.7:1 */
 
-  /* 同上：描边只靠 border，不叠阴影环 */
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4);
+  /* 同上：阴影同样分层，深色下加浓才有层次 */
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4), 0 2px 6px rgba(0, 0, 0, 0.35),
+    0 6px 16px rgba(0, 0, 0, 0.5);
   --shadow-pop: 0 0 0 1px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.4), 0 10px 28px rgba(0, 0, 0, 0.5);
 }
 
-/* ===== 卡片外壳与内容区（划词卡 / 输入窗共用） ===== */
+/* ===== 卡片外壳与内容区（划词卡专用；输入窗用 InputPage 自己的 .layout） ===== */
 .card {
   position: relative;
-  height: 100%;
+  /* 12px 透明边距：阴影的画布，也让 1px 边框远离窗口边缘——无边框窗口最后一行
+     物理像素会被 DPI 取整（125%/150%）裁掉，贴边的下边框「有时看不见」就是它。
+     margin 决定 autofit 的 CARD_CHROME=59 与 Popup 的 chrome=91，改这里要同步改两处 */
+  margin: 12px;
+  height: calc(100% - 24px);
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  /* padding 决定 autofit 的 CARD_CHROME=35 与 Popup 的 chrome=67，改这里要同步改两处 */
+  /* padding 决定 autofit 的 CARD_CHROME，改这里要同步改 */
   padding: 16px 18px;
   border-radius: var(--r-lg);
   background: var(--paper);
@@ -104,12 +118,13 @@ body,
 }
 
 /* 只收缩不拉伸（flex: 0 1 auto），否则量到的不是内容高度，自适应会退化；
-   max-height 用 100vh − chrome（67），窗口到屏幕上限后剩下的内容才能框内滚动 */
+   max-height 用 100vh − chrome（91，含卡片 12px 阴影边距），窗口到屏幕上限后
+   剩下的内容才能框内滚动（输入窗在其 module.css 里覆盖这条） */
 .card-body {
   position: relative; /* 划词小卡的包含块 */
   flex: 0 1 auto;
   min-height: 0;
-  max-height: calc(100vh - 67px);
+  max-height: calc(100vh - 91px);
   overflow-y: auto;
 }
 
@@ -179,6 +194,8 @@ html:not(.is-capped) .card-body::-webkit-scrollbar {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
+  /* 美 / 英两组音标之间的间距（DictPop 小卡里折行时行距在其 module.css 收紧） */
+  gap: 8px;
 }
 
 /* 音标：词典惯例是衬线斜体，不用等宽 */

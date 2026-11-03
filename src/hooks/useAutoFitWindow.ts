@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
-/** 卡片上下 padding（16×2）+ 边框（1×2）+ 1px 取整余量 */
-const CARD_CHROME = 35;
+/** 卡片上下 padding（16×2）+ 边框（1×2）+ 阴影边距（12×2，global.css .card 的 margin）+ 1px 取整余量 */
+const CARD_CHROME = 59;
 /** 高度变化小于该值不上报，避免来回抖动 */
 const EPSILON = 3;
 /** 用户手动拖拽窗口后，暂停自动适配的静默期（ms）：拖拽中窗口尺寸由用户主导， */
@@ -12,7 +12,7 @@ const USER_RESIZE_QUIET = 300;
 /** 自己 set_size 引发的 onResized 抑制窗口（ms） */
 const RESIZE_SUPPRESS = 80;
 /** 上报高度多留的余量（px）：逻辑高 撞上窗口 DPI 取整（125%/150%）轻易就少 1px， */
-/** 内容刚好顶满时会被裁出个滚动条；这点白边在卡片 16px 内边距里看不出来 */
+/** 内容刚好顶满时会被裁出个滚动条。余量落进卡片底部 12px 阴影边距里，看不出来 */
 const FIT_SLACK = 4;
 
 /**

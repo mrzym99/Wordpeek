@@ -35,11 +35,11 @@
   align-items: baseline;
   min-width: 0;
 }
-/* 音标单独一行（复用 Phonetic 组件，美/英都在这行）；放不下时只在 美 / 英 之间折行 */
+/* 音标单独一行（复用 Phonetic 组件，美/英都在这行）；
+   美 / 英之间的间距由全局 .phonetic-container 的 gap 提供 */
 .phon {
   display: flex;
   flex-wrap: wrap;
-  gap: 0 14px;
   margin-top: 1px;
   font-size: var(--t-small);
 }
@@ -47,6 +47,12 @@
 .phon :global(.phonetic) {
   margin: 0;
   white-space: nowrap;
+}
+/* 小卡窄：放不下时允许在 美 / 英 之间折行（全局容器默认 nowrap）；
+   行距收紧，列距沿用全局 .phonetic-container 的 8px */
+.phon :global(.phonetic-container) {
+  flex-wrap: wrap;
+  row-gap: 2px;
 }
 .word {
   font-family: var(--font-read);
@@ -58,15 +64,12 @@
 .senses {
   margin-top: 6px;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
   font-size: var(--t-small);
   line-height: 1.5;
   color: var(--ink);
-}
-.more {
-  margin-top: 6px;
 }
 
 @media (prefers-reduced-motion: reduce) {
