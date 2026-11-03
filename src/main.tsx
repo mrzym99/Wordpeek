@@ -19,7 +19,7 @@ const syncTheme = () =>
 syncTheme();
 // 设置页改了主题后，已存在的弹窗窗口下次获得焦点时跟上
 window.addEventListener("focus", syncTheme);
-watchTheme(() => theme);
+watchTheme();
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

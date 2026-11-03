@@ -1339,8 +1339,81 @@ fn main() {
             translate::save_theme,
             translate::save_selection_icon
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|app_handle, event| {
+            // 系统深浅色切换的原生信号在这里最可靠：Windows 的 WebView2 会翻转
+            // prefers-color-scheme 状态但不向页面派发 change 回调。统一广播解析
+            // 值，各窗口前端按自己的设置（system 档才跟随）落地 DOM 主题
+            if let tauri::RunEvent::WindowEvent {
+                event: tauri::WindowEvent::ThemeChanged(theme),
+                ..
+            } = event
+            {
+                let _ = app_handle.emit(
+                    "system-theme-changed",
+                    match theme {
+                        tauri::Theme::Dark => "dark",
+                        _ => "light",
+                    },
+                );
+                // 只管「跟随系统」档：强制档由前端显式 setTheme(具体值) 走 tao 自己的
+                // 重绘路径，这里不能越俎代庖把它画回去
+                #[cfg(windows)]
+                if app_handle
+                    .state::<parking_lot::Mutex<translate::AppConfig>>()
+                    .lock()
+                    .theme
+                    == "system"
+                {
+                    // 标题栏直接 Win32 补一刀：tao 在 WM_SETTINGCHANGE 路径只写 DWM
+                    // 属性不触发重绘（redraw=false）。绝不可改用 window.set_theme 做
+                    // 「钉住再解除」——那会在同一事件迭代里重入 tao 的主题状态机，
+                    // 读数与钉值不一致时两个 ThemeChanged 来回振荡，事件风暴卡死整界面
+                    use windows::Win32::Graphics::Dwm::{
+                        DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE,
+                    };
+                    use windows::Win32::UI::WindowsAndMessaging::{
+                        SetWindowPos, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+                        SWP_NOZORDER,
+                    };
+                    let dark = windows::Win32::Foundation::BOOL::from(matches!(
+                        theme,
+                        tauri::Theme::Dark
+                    ));
+                    for (_label, window) in app_handle.webview_windows() {
+                        // 无标题栏的透明弹窗（main/icon/screenshot）跳过，避免无谓的 NC 重算
+                        if !window.is_decorated().unwrap_or(false) {
+                            continue;
+                        }
+                        let Ok(hwnd) = window.hwnd() else {
+                            continue;
+                        };
+                        // tauri 的 HWND 来自另一版 windows crate，按裸指针转成本地类型
+                        let hwnd = windows::Win32::Foundation::HWND(hwnd.0 as *mut _);
+                        unsafe {
+                            let _ = DwmSetWindowAttribute(
+                                hwnd,
+                                DWMWA_USE_IMMERSIVE_DARK_MODE,
+                                &dark as *const _ as *const core::ffi::c_void,
+                                std::mem::size_of::<windows::Win32::Foundation::BOOL>() as u32,
+                            );
+                            // 强制 NC 重算/重绘，让刚写入的 DWM 属性立刻显形
+                            let _ = SetWindowPos(
+                                hwnd,
+                                None,
+                                0,
+                                0,
+                                0,
+                                0,
+                                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+                                    | SWP_FRAMECHANGED,
+                            );
+                        }
+                    }
+                }
+            }
+        });
 }
 
 #[cfg(test)]
