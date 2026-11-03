@@ -19,7 +19,7 @@ export default function HotkeyTab({ f }: { f: ConfigForm }) {
         </label>
       </div>
       <div className="field-hint">
-        终端、VS Code 等不向系统暴露选区的应用里不会出现，用快捷键代替
+        拖选或双击选词后出现；读不到选区的应用自动用复制键兜底，仅 Windows 老控制台例外
       </div>
       <label className="field" style={{ marginTop: 12 }}>
         输入翻译快捷键

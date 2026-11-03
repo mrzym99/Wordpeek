@@ -23,7 +23,11 @@
   color: var(--on-accent);
   font-weight: 600;
 }
-.toggle button:disabled {
+/* 禁用只调非选中段的字色：选中段保持白字蓝底，灰掉反而像坏了 */
+.toggle button:disabled:not(:global(.active)) {
   color: var(--ink-3);
+  cursor: default;
+}
+.toggle button:disabled:global(.active) {
   cursor: default;
 }
