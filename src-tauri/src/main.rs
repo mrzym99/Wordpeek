@@ -445,7 +445,17 @@ fn restart_app(app: AppHandle) {
     app.restart();
 }
 
-/// 下载并静默安装已缓存的更新，完成后重启应用（后台线程执行）
+/// 更新下载进度（发给设置页画进度条；total 未知时前端显示不定态进度）
+#[derive(serde::Serialize, Clone)]
+struct UpdateProgress {
+    downloaded: u64,
+    total: Option<u64>,
+}
+
+/// 下载并静默安装已缓存的更新，完成后重启应用（后台线程执行）。
+/// 进度经 `update-progress` 事件推送（按整数百分比/256KB 步进去重，别把 IPC 刷爆）；
+/// 下载失败发 `update-failed` 并把更新放回缓存——命令本身立即返回 Ok，
+/// 线程里的失败只能靠事件通知前端，否则「下载安装中…」会永远转下去
 #[tauri::command]
 fn install_update(app: AppHandle) -> Result<(), String> {
     let update = app
@@ -455,11 +465,33 @@ fn install_update(app: AppHandle) -> Result<(), String> {
         .ok_or_else(|| "没有已缓存的更新".to_string())?;
     std::thread::spawn(move || {
         println!("[updater] downloading & installing...");
-        let install = update.download_and_install(|_chunk, _total| {}, || {});
+        let emitter = app.clone();
+        let mut downloaded: u64 = 0;
+        let mut total: Option<u64> = None;
+        let mut last_anchor: u64 = u64::MAX;
+        let install = update.download_and_install(
+            |chunk, t| {
+                downloaded += chunk as u64;
+                if total.is_none() {
+                    total = t;
+                }
+                // 锚点：有总量按百分比（0-100），无总量按 256KB 步进
+                let anchor = match total {
+                    Some(t) if t > 0 => downloaded * 100 / t,
+                    _ => downloaded / (256 * 1024),
+                };
+                if anchor != last_anchor {
+                    last_anchor = anchor;
+                    let _ = emitter.emit("update-progress", UpdateProgress { downloaded, total });
+                }
+            },
+            || {},
+        );
         if let Err(e) = tauri::async_runtime::block_on(install) {
             eprintln!("[updater] install failed: {e}");
             // 失败把已下载的更新放回缓存，用户重试不用再走一遍检查更新
             *app.state::<UpdateState>().lock() = Some(update);
+            let _ = app.emit("update-failed", e.to_string());
             return;
         }
         // NSIS 静默安装结束后旧进程通常已被安装器接管，restart 兜底

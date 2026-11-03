@@ -41,6 +41,12 @@ export interface UpdateStatus {
   new_version: string | null;
 }
 
+/** 更新包下载进度（update-progress 事件；total 未知时为 null） */
+export interface UpdateProgress {
+  downloaded: number;
+  total: number | null;
+}
+
 export interface WordForm {
   name: string;
   value: string;

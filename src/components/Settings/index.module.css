@@ -181,6 +181,45 @@
   cursor: default;
 }
 
+/* 更新下载进度条：贴在「下载安装中…」按钮行下方，进度由 update-progress 事件驱动。
+   不定态（total 未知）用滑块来回扫，有总量后按宽度推进 */
+.progressTrack {
+  height: 6px;
+  margin-top: 10px;
+  border-radius: var(--r-pill);
+  background: var(--wash);
+  overflow: hidden;
+}
+.progressFill {
+  height: 100%;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  transition: width 120ms var(--ease);
+}
+.progressIndeterminate {
+  width: 40%;
+  animation: update-slide 1.2s var(--ease) infinite;
+}
+@keyframes update-slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(350%); /* 40% 宽的滑块平移 350% 自身宽才完整扫过一遍 */
+  }
+}
+.progressText {
+  margin-top: 6px;
+  color: var(--ink-3);
+  font-size: var(--t-small);
+  font-variant-numeric: tabular-nums; /* 数字跳动时宽度别抖 */
+}
+@media (prefers-reduced-motion: reduce) {
+  .progressIndeterminate {
+    animation: none; /* 静态停在 40% 宽，仅靠下方已下载字节数传达进度 */
+  }
+}
+
 .saveBtn {
   padding: 6px 18px;
   border: none;

@@ -1,14 +1,19 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { UpdateStatus } from "../../../../types";
+import { listen } from "@tauri-apps/api/event";
+import type { UpdateProgress, UpdateStatus } from "../../../../types";
 import { IS_MAC } from "../../../../hooks/useConfigForm";
 import s from "../../index.module.css";
 
-/** 「关于」页：版本信息 + 更新检查/安装 */
+/** 字节数 → 一位数 MB 文本 */
+const mb = (bytes: number) => `${(bytes / 1048576).toFixed(1)} MB`;
+
+/** 「关于」页：版本信息 + 更新检查/安装（下载进度由 update-progress 事件驱动） */
 export default function AboutTab() {
   const [update, setUpdate] = useState<UpdateStatus | null>(null);
   const [checking, setChecking] = useState(false);
   const [updating, setUpdating] = useState(false);
+  const [progress, setProgress] = useState<UpdateProgress | null>(null);
   const [updateError, setUpdateError] = useState("");
   const [checked, setChecked] = useState(false); // 是否检查过更新（用于显示"已是最新"）
 
@@ -20,6 +25,32 @@ export default function AboutTab() {
         setChecked(true);
       })
       .catch(() => {});
+  }, []);
+
+  // 下载进度/失败都由后台线程经事件通知（install_update 命令立即返回）。
+  // 失败时后端已把更新放回缓存，重新拉状态恢复「立即更新」按钮
+  useEffect(() => {
+    let disposed = false;
+    const offs: Array<() => void> = [];
+    listen<UpdateProgress>("update-progress", (e) => setProgress(e.payload)).then((f) => {
+      if (disposed) f();
+      else offs.push(f);
+    });
+    listen<string>("update-failed", (e) => {
+      setUpdating(false);
+      setProgress(null);
+      setUpdateError(`更新下载失败：${e.payload}`);
+      invoke<UpdateStatus>("get_update_status")
+        .then(setUpdate)
+        .catch(() => {});
+    }).then((f) => {
+      if (disposed) f();
+      else offs.push(f);
+    });
+    return () => {
+      disposed = true;
+      offs.forEach((f) => f());
+    };
   }, []);
 
   const checkUpdate = async () => {
@@ -35,9 +66,11 @@ export default function AboutTab() {
     }
   };
 
-  // 下载安装由 Rust 后台线程执行，成功后应用自动重启
+  // 下载安装由 Rust 后台线程执行，成功后应用自动重启；
+  // 进度条随事件更新，失败由 update-failed 复位
   const installUpdate = async () => {
     setUpdating(true);
+    setProgress(null);
     setUpdateError("");
     try {
       await invoke("install_update");
@@ -46,6 +79,12 @@ export default function AboutTab() {
       setUpdating(false);
     }
   };
+
+  // 有总量按百分比，未知总量显示已下载量（不定态进度条）
+  const pct =
+    progress?.total && progress.total > 0
+      ? Math.min(100, Math.floor((progress.downloaded / progress.total) * 100))
+      : null;
 
   return (
     <>
@@ -74,6 +113,28 @@ export default function AboutTab() {
                 {updating ? "下载安装中…" : "立即更新"}
               </button>
             </div>
+            {updating && progress && (
+              <div
+                className={s.progressTrack}
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={pct ?? undefined}
+              >
+                <div
+                  className={
+                    pct === null ? `${s.progressFill} ${s.progressIndeterminate}` : s.progressFill
+                  }
+                  style={pct === null ? undefined : { width: `${pct}%` }}
+                />
+              </div>
+            )}
+            {updating && progress && (
+              <div className={s.progressText}>
+                {mb(progress.downloaded)}
+                {progress.total ? ` / ${mb(progress.total)}（${pct}%）` : ""}
+              </div>
+            )}
           </>
         ) : (
           <>
