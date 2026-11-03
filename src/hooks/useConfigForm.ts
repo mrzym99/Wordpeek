@@ -39,7 +39,6 @@ export function useConfigForm() {
   const [secret, setSecret] = useState("");
   const [tcId, setTcId] = useState("");
   const [tcKey, setTcKey] = useState("");
-  // 源配置 tab 当前在编辑哪个源的密钥
   const [cfgSrc, setCfgSrc] = useState<"baidu" | "tencent">("baidu");
   const [hotkey, setHotkey] = useState("Alt+Z");
   const [screenshotHotkey, setScreenshotHotkey] = useState("Alt+S");
@@ -54,9 +53,8 @@ export function useConfigForm() {
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    // 设置窗口页面在应用启动时就会加载，可能早于后端状态就绪：
-    // get_config 失败不能静默放弃，否则表单停在默认值，
-    // 之后任何一次保存都会把真配置（密钥/快捷键）覆盖掉
+    // 设置窗口加载可能早于后端就绪：get_config 失败不能静默放弃，
+    // 否则表单停在默认值，之后任何一次保存都会把真配置（密钥/快捷键）覆盖掉
     let cancelled = false;
     const load = (tries: number) => {
       invoke<AppConfig>("get_config")
@@ -81,7 +79,6 @@ export function useConfigForm() {
           if (tries > 0) {
             setTimeout(() => load(tries - 1), 300);
           } else {
-            // 表单此刻停在默认值：禁用保存，避免一次保存把真配置（密钥/快捷键）抹成默认
             setSaveError("配置加载失败，保存已停用（重启应用后再试）");
             setLoadFailed(true);
           }
@@ -102,8 +99,8 @@ export function useConfigForm() {
     setTimeout(() => setSaved(false), 1500);
   };
 
-  // 保存密钥后同步勾选：密钥被清空时后端会自动剥掉对应源，这里同步本地状态。
-  // 失败必须上抖——静默失败会让界面显示「已保存」而密钥其实没落盘
+  // 保存密钥后同步本地勾选（密钥清空时后端自动剥掉对应源）；
+  // 失败必须上抖，否则界面显示「已保存」而密钥没落盘
   const syncAfterKeySave = async (id: string, isReady: boolean, save: () => Promise<unknown>) => {
     await save();
     if (!isReady && sources.includes(id)) {

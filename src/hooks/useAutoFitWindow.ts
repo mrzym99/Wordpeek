@@ -6,25 +6,19 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 const CARD_CHROME = 59;
 /** 高度变化小于该值不上报，避免来回抖动 */
 const EPSILON = 3;
-/** 用户手动拖拽窗口后，暂停自动适配的静默期（ms）：拖拽中窗口尺寸由用户主导， */
-/** 自动适配反向 set_size 会和系统拖拽循环互相触发，陷入「拔河」死循环 */
+/** 拖拽后暂停自动适配的静默期（ms）：适配反向 set_size 会和系统拖拽循环互相触发，陷入「拔河」死循环 */
 const USER_RESIZE_QUIET = 300;
 /** 自己 set_size 引发的 onResized 抑制窗口（ms） */
 const RESIZE_SUPPRESS = 80;
-/** 上报高度多留的余量（px）：逻辑高 撞上窗口 DPI 取整（125%/150%）轻易就少 1px， */
-/** 内容刚好顶满时会被裁出个滚动条。余量落进卡片底部 12px 阴影边距里，看不出来 */
+/** 上报高度多留的余量（px）：DPI 取整（125%/150%）轻易少 1px，顶满时被裁出滚动条；余量落进 12px 阴影边距里看不出 */
 const FIT_SLACK = 4;
 
 /**
- * 让窗口高度跟着卡片内容走：内容少时窗口收缩到刚好包住卡片，
- * 内容多时长到屏幕允许的上限（Rust fit_height 钳工作区），再高就框内滚动，
- * 不再留下「透明但吃点击」的空白区域。返回内容容器的 ref。
- * 量的是内容自然高度 max(offsetHeight, scrollHeight)：
- * 调用方须让容器只收缩不拉伸（.card-body 用 flex: 0 1 auto），
- * 否则量到的是被窗口拉伸后的盒子高度，自适应会退化成「永远不变」。
- * min/max：钳制上报高度，内容在两者之间时窗口不动，
- * 避免查词过程中高度反复跳变闪烁；上限一般不传，交给 Rust 按屏幕钳制。
- * 高度一步到位（set_size），不做逐帧动画。
+ * 窗口高度跟着卡片内容走：内容少收缩到刚好包住卡片，多则长到屏幕上限
+ * （Rust fit_height 钳工作区）后框内滚动。返回内容容器的 ref。
+ * 量自然高度 max(offsetHeight, scrollHeight)：容器须只收缩不拉伸
+ * （.card-body 用 flex: 0 1 auto），否则量到被拉伸后的高度，自适应退化成「永远不变」。
+ * min/max 钳制上报高度，避免查词过程中高度反复跳变；上限一般不传，交给 Rust 按屏幕钳制。
  */
 export function useAutoFitWindow(
   label: string,
@@ -33,7 +27,7 @@ export function useAutoFitWindow(
   max = Infinity
 ): { setBody: (el: HTMLDivElement | null) => void; refit: () => void } {
   const [body, setBody] = useState<HTMLDivElement | null>(null);
-  // refit 需要重置 effect 内部的 target/cur 状态，经由 ref 暴露稳定引用给调用方
+  // refit 要重置 effect 内部状态，经 ref 暴露稳定引用给调用方
   const refitRef = useRef<() => void>(() => {});
   useEffect(() => {
     if (!body) return;
@@ -49,18 +43,14 @@ export function useAutoFitWindow(
       invoke("fit_window", { label, height: h, viewport: window.innerHeight })
         .then((applied) => {
           fitFailed = false;
-          // 请求高 > 实际生效高 = Rust 钳到屏幕上限了，内容真装不下，
-          // 这时才允许出滚动条；没顶上限时窗口马上会长到包住内容，
-          // 任何溢出都是暂时的，CSS 据此一直遮条
+          // 请求高 > 实际生效高 = Rust 钳到屏幕上限、内容真装不下，才允许出滚动条；CSS 据此遮条
           document.documentElement.classList.toggle(
             "is-capped",
             h - Number(applied) > 0.5
           );
         })
         .catch(() => {
-          // 偶发失败（窗口暂不可写等）不再永久静默：静默期后补测重试一次。
-          // 必须把 target 清零，否则重试算出的新高度和失败前那次相等，
-          // apply() 里 < EPSILON 直接短路，重试永远空转，窗口卡在错误高度
+          // 偶发失败后补测重试一次；必须清零 target，否则 < EPSILON 短路，重试空转、窗口卡在错误高度
           if (!fitFailed) {
             fitFailed = true;
             target = 0;
@@ -68,8 +58,7 @@ export function useAutoFitWindow(
           }
         });
     };
-    // 一步到位，不做逐帧动画：动画每帧都要一次前端→Rust 的 IPC 往返
-    // 再 set_size，帧率稳不住，肉眼看反而比直接跳变更卡
+    // 不做逐帧动画：每帧一次前端→Rust 的 IPC 往返，帧率稳不住，反而比直接跳变更卡
     const apply = () => {
       // scrollHeight：内容被盒子截断时才是真正的自然高度
       const content = Math.max(body.offsetHeight, body.scrollHeight);
@@ -90,16 +79,13 @@ export function useAutoFitWindow(
     // 不用 requestAnimationFrame：窗口显示前是隐藏状态，rAF 会被节流甚至不触发
     const ro = new ResizeObserver(() => (canApply() ? apply() : schedule()));
     ro.observe(body);
-    // 盒子长到 max-height 封顶后（.card-body 就是这种布局），内容再多盒子也不再变大，
-    // ResizeObserver 不会响 —— 译文/多源结果进来时高度就永远不更新。
-    // 直接盯 DOM 变化：节点增删就是重排的唯一信号
+    // 盒子到 max-height 封顶后 ResizeObserver 不再触发（内容再多盒子不变大），改盯 DOM 节点增删
     const mo = new MutationObserver(() => (canApply() ? apply() : schedule()));
     mo.observe(body, { childList: true, subtree: true, characterData: true });
     apply(); // 首次测量（ResizeObserver 只保证后续变化）
 
-    // 用户拖拽窗口边缘：暂停自动适配，拖完 300ms 后补一次。
-    // 自己 set_size（包成动画则是一连串）引发的 onResized 用抑制时间跳过，
-    // 不当作「用户在拖拽」——否则正常适配会被自己误伤
+    // 用户拖拽：暂停适配，停 300ms 后补一次；自己 set_size 引发的 onResized 用抑制窗口跳过，
+    // 否则正常适配被自己误伤
     let disposed = false;
     let unlistenResize: (() => void) | undefined;
     getCurrentWindow()
@@ -113,8 +99,7 @@ export function useAutoFitWindow(
         else unlistenResize = f;
       });
 
-    // 窗口从隐藏态被 show 出来时，隐藏期间的 set_size 可能没落地：
-    // 拿到焦点即强制重报一次，保证显示出来的尺寸就是内容尺寸（不带动画）
+    // 窗口从隐藏态被 show 出来时，隐藏期间的 set_size 可能没落地：拿到焦点即强制重报一次
     const refit = () => {
       // target 清零强制重报；fitFailed 后 target=0 的重试语义与此一致
       target = 0;

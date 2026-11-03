@@ -1,14 +1,12 @@
-//! 平台层：Windows / macOS 各自实现同一组接口，cfg 门控保证互不影响。
-//! Windows 实现全在 windows.rs，macOS 实现全在 macos.rs；
-//! 共享逻辑（main.rs / translate.rs / ocr.rs / capture.rs 纯函数）不掺平台细节。
+//! 平台层：Windows / macOS 各自实现同一组接口，cfg 门控保证互不影响；
+//! 共享纯函数留在 main.rs / translate.rs / ocr.rs / capture.rs，不掺平台细节
 
 // ---------- 划词图标：全局鼠标监听回调槽（两个平台共用，钩子/监视器从这里取） ----------
 
 /// 鼠标事件回调（进程内只装一次，钩子函数从静态里取）
 pub(crate) type MouseCallback = Box<dyn Fn() + Send + Sync>;
 /// 鼠标移动回调：参数是钩子/事件自带的光标物理像素坐标（不额外调 GetCursorPos）。
-/// macOS 端未用 move：远离图标自动隐藏目前只在 Windows 实现，全局监视器加
-/// mouseMoved 会每帧唤醒主线程，不值得
+/// macOS 未用 move：监视器加 mouseMoved 会每帧唤醒主线程，不值得
 pub(crate) type MoveCallback = Box<dyn Fn(i32, i32) + Send + Sync>;
 pub(crate) static MOUSE_ON_DOWN: std::sync::OnceLock<MouseCallback> = std::sync::OnceLock::new();
 pub(crate) static MOUSE_ON_UP: std::sync::OnceLock<MouseCallback> = std::sync::OnceLock::new();
@@ -25,7 +23,6 @@ pub use windows::inject_copy;
 #[cfg(target_os = "macos")]
 pub use macos::inject_copy;
 
-/// 光标位置（物理像素）
 #[cfg(windows)]
 pub use windows::cursor_pos;
 #[cfg(windows)]
@@ -47,7 +44,6 @@ pub use windows::capture_virtual_screen;
 #[cfg(target_os = "macos")]
 pub use macos::capture_virtual_screen;
 
-/// 虚拟屏边界（物理像素）
 #[cfg(windows)]
 pub use windows::virtual_screen_bounds;
 #[cfg(target_os = "macos")]
@@ -122,9 +118,9 @@ pub use macos::clipboard_fallback_allowed;
 
 // ---------- 划词图标：「这个 app 读不到选区」的记忆（两个平台共用） ----------
 
-/// 整轮探测（唤醒轮询 / UIA 重试 / 扫窗口）一个字都没拿到的 app——终端、自绘 UI——
-/// 记住它，之后直接走剪贴板兜底，不再每次白等（macOS 唤醒轮询约 640ms，Windows
-/// UIA 重试约 360ms）。读到过一次就清掉：pid 会被系统复用，记忆不能是永久的负担
+/// 整轮探测一个字都没拿到的 app（终端、自绘 UI）记住它，之后直接走剪贴板兜底，
+/// 不再每次白等（macOS 唤醒轮询 ~640ms / Windows UIA 重试 ~360ms）；
+/// 读到过一次就清掉——pid 会被系统复用
 static SELECTION_HOPELESS: std::sync::OnceLock<
     parking_lot::Mutex<std::collections::HashSet<i32>>,
 > = std::sync::OnceLock::new();

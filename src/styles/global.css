@@ -12,16 +12,13 @@ body,
   user-select: none;
 }
 
-/* #root 自成 BFC：拦住 .card 上下 12px 阴影边距的 margin 塌缩——
-   塌缩会穿透到文档层，把 html 撑得比视口高 24px，弹窗右缘就长出
-   一条几乎全高的原生粗滚动条（内容明明装得下） */
+/* #root 自成 BFC：拦住 .card 上下 12px 阴影边距的 margin 塌缩——塌缩穿透到文档层会把
+   html 撑得比视口高 24px，弹窗右缘长出一条几乎全高的原生粗滚动条 */
 #root {
   display: flow-root;
 }
 
-/* ===== 设计 token：中性灰 + VS Code 蓝（去掉了早期的靛紫） ===== */
-/* 层次靠三层表面（wash 外壳 < paper 内容 < paper-raised 抬起）与贴身阴影，不靠降对比度；
-   任何 ≤13px 文字都不低于 4.5:1 —— 改色前先算一遍，别凭眼睛。 */
+/* ===== 设计 token：中性灰 + VS Code 蓝；任何 ≤13px 文字不低于 4.5:1，改色前先算一遍 ===== */
 :root {
   color-scheme: light; /* 原生滚动条/表单控件跟着主题走 */
   /* 三层表面照 VS Code：外壳面（深）< 内容面 < 抬起面，内容永远比外壳浅 */
@@ -36,8 +33,7 @@ body,
   --hairline: rgba(0, 0, 0, 0.07); /* 极轻的分界线：给圆角面板描边用，不抢眼 */
   --thumb: rgba(0, 0, 0, 0.22);
   --accent: #005fb8; /* VS Code 蓝，6.3:1（wash 上 5.7） */
-  /* 实心控件（按钮、选中 tab）的底色与字色：比 --accent 再深一档，
-     白字才够 4.5:1。--accent 本身留给文字、描边、焦点环 */
+  /* 实心控件（按钮、选中 tab）的底色与字色：白字才够 4.5:1；--accent 留给文字、描边、焦点环 */
   --accent-solid: #005fb8; /* 白字 6.3:1 */
   --on-accent: #ffffff;
   --accent-wash: #e8f1fb;
@@ -57,9 +53,7 @@ body,
   --r-lg: 18px;
   --r-pill: 999px;
 
-  /* 卡片阴影分三层（贴身接触影 + 中距 + 远距）才有「浮起来」的质感，单层大 blur 只会显脏。
-     划词窗口四周留了 12px 透明边距（.card 的 margin）专供阴影渲染：
-     blur 收在 16px 内，尾巴越出边距时 alpha 已低到看不出裁切。不叠 0 0 0 1px 环（双描边） */
+  /* 阴影分三层才有「浮起来」的质感，单层大 blur 只会显脏；.card 预留 12px 透明边距专供阴影渲染 */
   --shadow-card: 0 1px 2px rgba(38, 36, 70, 0.06), 0 2px 6px rgba(38, 36, 70, 0.06),
     0 6px 16px rgba(38, 36, 70, 0.08);
   --shadow-pop: 0 0 0 1px rgba(38, 36, 70, 0.06), 0 2px 6px rgba(38, 36, 70, 0.06), 0 10px 28px rgba(38, 36, 70, 0.1);
@@ -68,8 +62,7 @@ body,
   --dur: 140ms;
 }
 
-/* 深色不是可选项：弹窗大半时间浮在深色编辑器上。
-   主题由 <html data-theme> 决定（system 在 JS 里先解析成 light/dark），样式表只有两套 token */
+/* 主题由 <html data-theme> 决定（system 在 JS 里先解析成 light/dark），样式表只有两套 token */
 :root[data-theme="dark"] {
   color-scheme: dark;
   --paper: #1f1f1f; /* 内容面 */
@@ -97,9 +90,9 @@ body,
 /* ===== 卡片外壳与内容区（划词卡专用；输入窗用 InputPage 自己的 .layout） ===== */
 .card {
   position: relative;
-  /* 12px 透明边距：阴影的画布，也让 1px 边框远离窗口边缘——无边框窗口最后一行
-     物理像素会被 DPI 取整（125%/150%）裁掉，贴边的下边框「有时看不见」就是它。
-     margin 决定 autofit 的 CARD_CHROME=59 与 Popup 的 chrome=91，改这里要同步改两处 */
+  /* 12px 透明边距：阴影画布，也让 1px 边框远离窗口边缘（DPI 取整会裁掉最后一行物理像素，
+     贴边的下边框「有时看不见」就是它）。margin 决定 autofit 的 CARD_CHROME=59 与
+     Popup 的 chrome=91，改这里要同步改两处 */
   margin: 12px;
   height: calc(100% - 24px);
   box-sizing: border-box;
@@ -117,9 +110,7 @@ body,
   user-select: text;
 }
 
-/* 只收缩不拉伸（flex: 0 1 auto），否则量到的不是内容高度，自适应会退化；
-   max-height 用 100vh − chrome（91，含卡片 12px 阴影边距），窗口到屏幕上限后
-   剩下的内容才能框内滚动（输入窗在其 module.css 里覆盖这条） */
+/* 只收缩不拉伸（flex: 0 1 auto）否则自适应退化；max-height 让顶到屏幕上限后剩余内容框内滚动 */
 .card-body {
   position: relative; /* 划词小卡的包含块 */
   flex: 0 1 auto;
@@ -137,9 +128,7 @@ body,
   border-radius: 3px;
 }
 
-/* 自适应高度过程中不出滚动条：窗口没顶到屏幕上限时永远不出条，
-   只有 fit_window 返回值被上限裁住（html.is-capped）才恢复按需细条。
-   （.card / .shot-text 的同款规则在各自 module.css 里） */
+/* 窗口没顶到屏幕上限时永不出滚动条，只有 fit_window 返回值被上限裁住（html.is-capped）才恢复按需细条 */
 html:not(.is-capped) .card-body {
   scrollbar-width: none;
 }
@@ -147,9 +136,8 @@ html:not(.is-capped) .card-body::-webkit-scrollbar {
   width: 0;
 }
 
-/* ===== macOS 自绘标题栏（Overlay）：Windows 下原生标题栏还在，隐藏 =====
-   Rust 侧设置/输入窗口用了 TitleBarStyle::Overlay + hidden_title，交通灯由系统画在页面最上层，
-   所以这里只要让出 28px 并把外壳面铺满整条。 */
+/* ===== macOS 自绘标题栏（Rust 侧 TitleBarStyle::Overlay）：交通灯由系统画在页面最上层，
+   这里让出 28px 并把外壳面铺满整条；Windows 原生标题栏还在，隐藏 ===== */
 .win-head {
   display: none;
 }
@@ -236,7 +224,7 @@ button svg {
   white-space: pre-wrap;
 }
 
-/* 图标按钮：hover 淡入的复制/关闭等 */
+/* 图标按钮：复制/关闭等 */
 .icon-btn {
   display: inline-flex;
   align-items: center;
@@ -356,8 +344,7 @@ button svg {
   font-size: var(--t-small);
 }
 
-/* ===== 键盘焦点：柔和设计最容易丢掉的东西，全局给一个能看见的环 =====
-   各菜单项/胶囊按钮都是 <button>，这里一条覆盖全部；非 button 的可点元素在各模块里自己补 */
+/* ===== 键盘焦点环：菜单项/胶囊按钮都是 <button>，一条覆盖全部；非 button 的可点元素在各模块里自己补 ===== */
 button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;

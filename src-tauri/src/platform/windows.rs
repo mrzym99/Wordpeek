@@ -1,5 +1,4 @@
-//! Windows 平台实现：光标、工作区、复制注入、GDI 虚拟屏抓取。
-//! 自原 main.rs / capture.rs 原样搬迁，逻辑零改动。
+//! Windows 平台实现：光标、工作区、复制注入、GDI 虚拟屏抓取（自原 main.rs / capture.rs 搬迁）
 
 use enigo::{Direction, Enigo, Key, Keyboard};
 use windows::Win32::Foundation::POINT;
@@ -8,20 +7,12 @@ use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
 
 /// 启动时拆掉 stdout/stderr 上的「死管道炸弹」，必须在任何 println! 之前调用。
 ///
-/// 背景（panic.log 实锤）：进程的 stdout 若是继承来的管道（从终端启动后终端关了、
-/// updater restart 继承旧进程的管道），读者一死，之后**任何一次 println! 都会
-/// panic**（os error 232「管道正在被关闭」）。panic 落在异步命令任务里，invoke 的
-/// promise 永不 settle（前端永远「翻译中」）；落在事件循环/快捷键回调里则是
-/// `panic in a function that cannot unwind`，整个进程直接 abort。
-///
-/// 处理：无效句柄（GUI 方式启动时 stdout 本就是 NULL）和管道句柄一律换成 NUL
-/// 设备——写入永远成功，日志丢弃。release 的 GUI 窗口本就看不到 stdout，不亏；
-/// 从终端启动想看日志的场景用 dev 构建。console（真控制台）和磁盘文件
-/// （重定向到日志文件）保持原样。dev 构建不调用本函数：cargo tauri dev
-/// 的日志全靠 npm 那根活管道。
-///
-/// std 的 Stdout 在首次写入时才取句柄并缓存，所以只要赶在第一次 println! 前
-/// 换掉即可，此后所有 println! 写 NUL 恒成功、永不 panic。
+/// stdout 若是继承来的死管道（终端已关、updater restart），之后任何 println! 都会
+/// panic（os error 232）：落在异步命令任务里 invoke 永不 settle（前端永远「翻译中」），
+/// 落在事件循环/快捷键回调里则 `panic in a function that cannot unwind` 直接 abort。
+/// 处理：无效句柄（GUI 启动时 stdout 本就是 NULL）和管道句柄一律换成 NUL 设备——写入恒成功、
+/// 日志丢弃；console（真控制台）与磁盘文件保持原样；dev 构建不调用（cargo tauri dev 的日志靠 npm 那根活管道）。
+/// std 的 Stdout 首次写入才取句柄并缓存，赶在第一次 println! 前换掉即可。
 pub fn sanitize_stdio() {
     use windows::Win32::Foundation::GENERIC_WRITE;
     use windows::Win32::Storage::FileSystem::{
@@ -54,16 +45,14 @@ pub fn sanitize_stdio() {
     }
 }
 
-/// 注入「复制」按键。快捷键触发时物理按着的修饰键要先松开：
-/// 直接模拟 Ctrl+C 会被应用当成 Ctrl+Alt+C 而拒绝复制。
-/// `app` 参数只为与 macOS 实现对齐（那边必须派发回主线程）。返回是否成功按下。
+/// 注入「复制」按键：先松开物理按着的修饰键，否则 Ctrl+C 会被应用当成 Ctrl+Alt+C 拒绝复制。
+/// `app` 只为与 macOS 实现对齐（那边必须派发回主线程）。返回是否成功按下。
 pub fn inject_copy(_app: &tauri::AppHandle) -> bool {
     let Ok(mut enigo) = Enigo::new(&enigo::Settings::default()) else {
         return false;
     };
-    // C 用 Unicode('c') 而不是 Key::C：Key::C 走 VK 路径（wScan=0），
-    // 部分 App（Chromium、IME 激活时）会忽略无扫描码的注入键导致复制失效；
-    // Unicode 路径带 KEYEVENTF_SCANCODE，与真实键盘事件一致。
+    // C 用 Unicode('c') 而非 Key::C：Key::C 走 VK 路径（wScan=0），部分 App（Chromium、
+    // IME 激活时）忽略无扫描码的注入键；Unicode 路径带 KEYEVENTF_SCANCODE，与真实键盘一致。
     let ok = enigo.key(Key::Alt, Direction::Release).is_ok()
         && enigo.key(Key::Control, Direction::Press).is_ok()
         && enigo.key(Key::Unicode('c'), Direction::Click).is_ok()
@@ -135,8 +124,8 @@ pub fn disable_rounding(win: &tauri::WebviewWindow) {
     }
 }
 
-/// 光标所在显示器的工作区（物理像素，排除任务栏等应用栏）。
-/// 拿不到信息时返回 (0,0,0,0)，前端会退回用虚拟屏边界錨制。
+/// 光标所在显示器的工作区（物理像素，排除任务栏等应用栏）；拿不到时返回 (0,0,0,0)，
+/// 前端会退回用虚拟屏边界锚制。
 pub fn work_area_at(x: i32, y: i32) -> (i32, i32, i32, i32) {
     use windows::Win32::Graphics::Gdi::{
         GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST,
@@ -153,8 +142,7 @@ pub fn work_area_at(x: i32, y: i32) -> (i32, i32, i32, i32) {
     (0, 0, 0, 0)
 }
 
-/// 虚拟屏边界（SM_X/Y/CX/CYVIRTUALSCREEN，物理像素）；宽或高非正时返回 None。
-/// 抓屏与 virtual_screen_bounds 共用这一份读数
+/// 虚拟屏边界（SM_X/Y/CX/CYVIRTUALSCREEN，物理像素）；宽或高非正时返回 None。抓屏与 virtual_screen_bounds 共用
 fn virtual_screen_metrics() -> Option<(i32, i32, i32, i32)> {
     use windows::Win32::UI::WindowsAndMessaging::{
         GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
@@ -279,8 +267,7 @@ unsafe extern "system" fn mouse_hook(
     windows::Win32::UI::WindowsAndMessaging::CallNextHookEx(None, code, wparam, lparam)
 }
 
-/// 装全局鼠标监听：左键按下/松开各回调一次。低级钩子必须装在自带消息循环的线程上，
-/// 所以这里起一个常驻线程把它跑起来。
+/// 装全局鼠标监听：左键按下/松开各回调一次。低级钩子必须装在自带消息循环的线程上，起常驻线程跑它。
 pub fn start_mouse_watch(
     on_down: MouseCallback,
     on_up: MouseCallback,
@@ -294,8 +281,7 @@ pub fn start_mouse_watch(
     let _ = MOUSE_ON_DOWN.set(on_down);
     let _ = MOUSE_ON_UP.set(on_up);
     let _ = MOUSE_ON_MOVE.set(on_move);
-    // 钩子安装结果同步传回：装不上时调用方要明确知道（划词图标不可用），
-    // 而不是永远返回 true 静默失败
+    // 钩子安装结果同步传回：装不上时调用方要明确知道（划词图标不可用），不能静默失败
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || unsafe {
         let hmod = GetModuleHandleW(None).unwrap_or_default();
@@ -335,8 +321,7 @@ pub fn focused_selection() -> Option<String> {
         let automation: IUIAutomation =
             CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
         // Chromium / Electron 的 UIA 树是懒建的，第一次常拿到空节点；负载高时
-        // 120ms 也不够，逐次加长重试到 360ms（选词后图标本就不弹在鼠标按下瞬间，
-        // 这里慢几十毫秒无感）
+        // 120ms 也不够，逐次加长重试到 360ms（图标本就不弹在按下瞬间，慢几十毫秒无感）
         let mut text = None;
         for attempt in 0..3 {
             if attempt > 0 {
@@ -358,7 +343,6 @@ pub fn focused_selection() -> Option<String> {
     text
 }
 
-/// 前台窗口所属进程的 pid
 pub fn foreground_pid() -> Option<i32> {
     use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
 
@@ -373,11 +357,8 @@ pub fn foreground_pid() -> Option<i32> {
     }
 }
 
-/// 能不能用 Ctrl+C 读剪贴板做兜底。
-///
-/// 传统控制台（cmd.exe / PowerShell / conhost，窗口类 ConsoleWindowClass）里
-/// Ctrl+C 是「中断」不是复制，注入下去会把用户正在跑的命令打断；Windows Terminal
-/// 有选区时才是复制，所以只排除老控制台。宁可不出图标，也不动用户进程
+/// 能不能用 Ctrl+C 读剪贴板做兜底：传统控制台（窗口类 ConsoleWindowClass）里 Ctrl+C 是
+/// 「中断」不是复制，注入会打断用户命令；Windows Terminal 有选区时才是复制，只排除老控制台。
 pub fn clipboard_fallback_allowed() -> bool {
     use windows::Win32::UI::WindowsAndMessaging::{GetClassNameW, GetForegroundWindow};
 

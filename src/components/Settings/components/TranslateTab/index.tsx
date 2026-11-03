@@ -39,9 +39,7 @@ function SourceList({ f }: { f: ConfigForm }) {
               className={s.sourceItem}
               draggable
               onDragStart={(e) => {
-                // 拖拽失效两个根因：① 窗口 dragDropEnabled 默认开启会吞掉
-                // HTML5 拖拽（已在 tauri.conf.json 关掉）；② setData 必须调，
-                // 否则 WebView2 里 drop 不触发
+                // 窗口已关 dragDropEnabled；setData 不调 WebView2 里 drop 不触发
                 e.dataTransfer.setData("text/plain", id);
                 e.dataTransfer.effectAllowed = "move";
                 f.setDragId(id);
@@ -87,7 +85,7 @@ function SourceList({ f }: { f: ConfigForm }) {
         ))}
       </div>
       <div className="field-hint">
-        默认源：单词用有道、句子用必应，两者都失败时自动降级到有道翻译（免 Key）。其他源配置后可选择。
+        默认源免 Key：单词用有道、句子用必应，失败自动降级；额外源在「源配置」填好密钥后勾选
       </div>
     </>
   );

@@ -19,14 +19,14 @@ export default function HotkeyTab({ f }: { f: ConfigForm }) {
         </label>
       </div>
       <div className="field-hint">
-        鼠标选中文字后，光标旁会出现一个小按钮，点一下直接翻译；终端、VS Code 这类不向系统暴露选区文本的应用里不会出现
+        终端、VS Code 等不向系统暴露选区的应用里不会出现，用快捷键代替
       </div>
       <label className="field" style={{ marginTop: 12 }}>
         输入翻译快捷键
         <HotkeyRecorder value={f.inputHotkey} onChange={f.setInputHotkey} />
       </label>
       <div className="field-hint">
-        点击输入框后按下组合键即可更换，需包含 {IS_MAC ? "Control / ⌥ Option / Shift / ⌘ Cmd" : "Ctrl / Alt / Shift"} 之一；划词、截图、输入翻译三个快捷键不能相同
+        点击输入框录入新组合键；需包含 {IS_MAC ? "Control / ⌥ Option / Shift / ⌘ Cmd" : "Ctrl / Alt / Shift"} 之一，三个快捷键不能相同
         {/* 存的是 Alt / Super，mac 上分别对应 ⌥ Option 和 ⌘ Cmd */}
       </div>
     </>

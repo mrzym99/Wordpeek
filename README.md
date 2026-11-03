@@ -10,12 +10,13 @@
 
 - **划词翻译**：选中文字后光标旁冒出一个小翻译按钮，点一下就地出卡片（默认开启，设置 → 快捷键可关）；也可以沿用全局快捷键 `Alt+Z` 抓取选中文本，鼠标位置弹出翻译卡片
 - **输入翻译**：`Alt+X`（或托盘菜单）唤出窗口，打字/粘贴即译，固定译为英文
-- **丰富的词典卡片**：音标（美/英）、词性、多释义、词形变化、同义词（可点击跳查）、考试标签
+- **丰富的词典卡片**：音标（美/英）、词性、多释义、词形变化、同义词（可点击跳查）、考试标签；卡片内再选中单词可弹迷你释义卡
 - **翻译策略**：默认源内置（单词→有道词典，句子→必应翻译，两者都失败时自动降级到有道翻译 demo，全免 Key 开箱即用），可在设置里关闭（不能全关，至少保留一个源）；**额外源**：腾讯翻译（腾讯云密钥）、百度翻译（开放平台密钥）——都需先在「源配置」（左侧菜单切换源）填好密钥才能勾选，删密钥自动取消勾选
 - **多源对比**：有道/必应视为同一个「默认源」（单词/句子各司其职），对比区不单独出现；额外源（如百度）以浅色背景分区展示在卡片末尾或输入窗口「默认翻译」行之后，逐行可复制
 - **截图翻译**：`Alt+S` 框选屏幕区域，系统 OCR 本地离线识别（免 Key）后自动翻译，详见[截图翻译](#截图翻译)
 - **可配置**：独立设置窗口——额外翻译源勾选、API 密钥、三个快捷键（支持录制组合键）
 - **外观**：跟随系统 / 亮色 / 暗色三档（设置 → 外观），划词卡片、输入翻译、截图结果、设置窗口共用同一套配色；深色下整套颜色重新取值，不是简单反色
+- **自动更新**：设置 → 关于里检查更新，下载（带进度条）安装后自动重启，无需手动换包
 
 ## 下载安装
 
@@ -102,7 +103,7 @@ npm run tauri build   # 打包
 3. 翻译卡片出现在鼠标旁，点击同义词可在卡片内继续跳查
 4. 按 **Alt+X**（或托盘菜单「输入翻译」）唤出输入窗口，打字/粘贴后 `Ctrl+Enter` 译为英文
 5. 卡片点「对比各源」可一次查看各勾选源的译文（划词、截图卡片都支持）；输入翻译窗口默认就按源逐行列出
-6. 托盘菜单或卡片右上角 ⚙ 打开设置；「外观」里可切换跟随系统 / 亮色 / 暗色（默认跟随系统，切换即时生效，无需重启）
+6. 托盘菜单或卡片右上角 ⚙ 打开设置；「外观」里可切换跟随系统 / 亮色 / 暗色（默认跟随系统，切换即时生效，无需重启）；「关于」里可检查更新、一键下载安装
 
 翻译源配置：
 
@@ -125,11 +126,13 @@ npm run tauri build   # 打包
 ## 目录
 
 ```
-src/components/Popup.tsx         # 划词/输入弹窗 UI + 事件监听
-src/components/InputPage.tsx     # 输入翻译窗口（?page=input）
-src/components/ScreenshotPage.tsx  # 截图遮罩框选（?page=screenshot）
-src/components/SettingsPage.tsx  # 设置窗口
-src-tauri/src/main.rs            # 全局快捷键、截图会话、托盘
+src/App.tsx                      # 所有窗口共用一个前端，按 URL 参数分发到各页
+src/components/Popup/            # 划词/截图结果卡片
+src/components/InputPage/        # 输入翻译窗口（?page=input）
+src/components/ScreenshotPage/   # 截图遮罩框选（?page=screenshot）
+src/components/Settings/         # 设置窗口（?page=settings）
+src/components/SelectionIcon/    # 划词小图标（?page=icon）
+src-tauri/src/main.rs            # 全局快捷键、窗口管理、托盘、更新安装
 src-tauri/src/platform/          # 平台差异：抓屏/鼠标坐标/剪贴板注入/权限
 src-tauri/src/platform/windows.rs  # GDI BitBlt 抓屏、GetCursorPos、权限恒为已授
 src-tauri/src/platform/macos.rs    # CoreGraphics 抓屏、NSEvent、AXIsProcessTrusted/CG 权限
@@ -146,7 +149,7 @@ src-tauri/tauri.macos.conf.json  # macOS 打包覆盖：app+dmg、icon.icns、ad
 
 ## 改名记录
 
-原名 pot-mini，为避免与 [pot-desktop](https://github.com/pot-app/pot-desktop) 项目产生混淆，已更名为 Wordpeek（本项目为独立实现）。首次启动会自动把旧目录（`%APPDATA%\com.potmini.app`）的配置迁移到新目录。
+原名 pot-mini，为避免与 [pot-desktop](https://github.com/pot-app/pot-desktop) 项目产生混淆，已更名为 Wordpeek（本项目为独立实现）。
 
 ## 截图翻译
 

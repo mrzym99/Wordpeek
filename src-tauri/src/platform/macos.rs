@@ -28,9 +28,7 @@ pub fn accessibility_allowed() -> bool {
     unsafe { AXIsProcessTrusted() }
 }
 
-/// 未授权时弹系统授权对话框（把当前进程/它的父应用加进「辅助功能」列表）。
-/// 没有这个提示，用户只能自己去系统设置里手动加，而 dev 模式下真正需要授权的是
-/// 启动应用的终端，不是 Wordpeek 自己——很容易白折腾一轮。
+/// 未授权时弹系统授权对话框；没有这个提示，dev 模式下用户常白折腾——真正需要授权的往往是启动应用的终端
 pub fn request_accessibility() -> bool {
     use objc2::runtime::AnyObject;
     use objc2_foundation::{NSDictionary, NSNumber, NSString};
@@ -150,8 +148,8 @@ pub fn cursor_pos() -> (i32, i32) {
     ((p.x * scale).round() as i32, (p.y * scale).round() as i32)
 }
 
-/// 光标所在显示器的工作区（物理像素，排除菜单栏/Dock）。
-/// 拿不到信息时返回 (0,0,0,0)，前端会退回用虚拟屏边界锚制。
+/// 光标所在显示器的工作区（物理像素，排除菜单栏/Dock）；拿不到时返回 (0,0,0,0)，
+/// 前端会退回用虚拟屏边界锚制。
 pub fn work_area_at(x: i32, y: i32) -> (i32, i32, i32, i32) {
     if let Some(screens) = MAC_SCREENS.get() {
         for s in screens {
@@ -174,12 +172,9 @@ pub fn work_area_at(x: i32, y: i32) -> (i32, i32, i32, i32) {
 
 // ---------- 复制注入 ----------
 
-/// 注入 Cmd+C。
-///
-/// 直接用 CGEvent 发键盘事件：enigo 的 Unicode 路径只设置字符、不设置物理键位，
-/// AppKit 应用匹配不到「复制」菜单命令（实测 TextEdit 里选中文本后无任何反应），
-/// 而 Cmd+C 是快捷键匹配，与字符无关。
-/// 事件自带 flags，目标应用看到的就是这里设的修饰键，不必先物理松开用户按着的 Ctrl/Alt。
+/// 注入 Cmd+C。用 CGEvent 发键盘事件：enigo 的 Unicode 路径只设字符、不设物理键位，
+/// AppKit 应用匹配不到「复制」菜单命令（实测 TextEdit 无反应）；Cmd+C 是快捷键匹配，与字符无关。
+/// 事件自带 flags，不必先物理松开用户按着的修饰键
 pub fn inject_copy(_app: &tauri::AppHandle) -> bool {
     use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation};
     use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
@@ -204,15 +199,12 @@ pub fn inject_copy(_app: &tauri::AppHandle) -> bool {
 
 // ---------- 划词图标：全局鼠标监听 + 系统选区 ----------
 
-// 回调类型与回调槽（MOUSE_ON_*）在 super（platform/mod.rs），两个平台共用；
-// MOUSE_ON_MOVE 在 macOS 未用（见 super 里的 MoveCallback 注释）
+// 回调槽（MOUSE_ON_*）在 super（platform/mod.rs）共用；MOUSE_ON_MOVE 在 macOS 未用（见 super 的 MoveCallback 注释）
 use super::{MOUSE_ON_DOWN, MOUSE_ON_UP, MouseCallback, MoveCallback};
 
-/// 装全局鼠标监听：左键按下/松开各回调一次。
-///
-/// 用 AppKit 的全局监视器，不用 CGEventTap：鼠标事件不需要额外授权，也不会
-/// 让全系统的鼠标事件排队等我们的回调。监视器必须在主线程注册，返回的 token
-/// 一旦释放监视器就失效——泄漏掉最省心（进程活多久它就活多久）。
+/// 装全局鼠标监听：左键按下/松开各回调一次。用 AppKit 全局监视器而非 CGEventTap：鼠标事件
+/// 不需要额外授权，也不会让全系统鼠标事件排队等回调。监视器必须主线程注册，token 一释放
+/// 监视器就失效——泄漏掉最省心（进程活多久它就活多久）。
 pub fn start_mouse_watch(
     on_down: MouseCallback,
     on_up: MouseCallback,
@@ -306,29 +298,24 @@ pub fn foreground_pid() -> Option<i32> {
     Some(NSWorkspace::sharedWorkspace().frontmostApplication()?.processIdentifier())
 }
 
-/// macOS 的 Cmd+C 在任何 app 里都是「复制」，不会误伤（不像 Windows 控制台里
-/// Ctrl+C 是中断），所以兜底一律允许
+/// macOS 的 Cmd+C 在任何 app 里都是「复制」（不像 Windows 控制台的 Ctrl+C 是中断），兜底一律允许
 pub fn clipboard_fallback_allowed() -> bool {
     true
 }
 
 /// 读焦点控件里被选中的文本（辅助功能 API，不碰剪贴板也不注入按键）。
-///
-/// 三步，越往后越慢，所以前面的不中才走后面：
-/// 1. 当前前台 app 的 AXFocusedUIElement 直接读 AXSelectedText——原生 app 一次就中；
-/// 2. 中不了就先叫醒它的无障碍树（Chromium / Electron 靠这个才建树），等一小会儿再读；
-/// 3. 还不行就按窗口往下翻几层找带选区的元素（有些 app 焦点元素是个空壳容器）。
-///
-/// 系统级元素（AXUIElementCreateSystemWide）在非 GUI 进程里稳定返回 -25204
-/// CannotComplete，所以一律按前台 app 的 pid 建元素。终端、conhost 这类根本没有
-/// 选区概念的应用三步都读不到，返回 None——那时不弹图标，用户照常用划词快捷键。
+/// 三步越往后越慢，前面的不中才走后面：1. 前台 app 的 AXFocusedUIElement 直接读
+/// AXSelectedText；2. 先唤醒无障碍树（Chromium / Electron 靠这个才建树）再重试；
+/// 3. 按窗口往下翻找带选区的元素（有的焦点元素是空壳容器）。
+/// 系统级元素（AXUIElementCreateSystemWide）在非 GUI 进程稳定返回 -25204
+/// CannotComplete，一律按前台 pid 建元素。终端这类没有选区概念的三步都读不到，
+/// 返回 None——那时不弹图标，用户照常用划词快捷键。
 pub fn focused_selection() -> Option<String> {
     if !accessibility_allowed() {
         return None;
     }
     let pid = foreground_pid()?;
-    // 整轮读完（含唤醒等待、扫窗口）一个字都没拿到的 app——终端、自绘 UI——不再试：
-    // 每次重试光唤醒轮询就要 640ms，用户体感就是「划完半天没反应」
+    // 整轮读完（含唤醒等待、扫窗口）一个字都没拿到的 app（终端、自绘 UI）不再试：重试光唤醒轮询就要 640ms
     if super::selection_hopeless(pid) {
         return None;
     }
@@ -342,9 +329,8 @@ pub fn focused_selection() -> Option<String> {
         let mut text = read_focused(app);
         if text.is_none() && should_wake(pid) {
             wake_accessibility(app);
-            // Chromium 建树是异步的（实测 100ms 常常不够）：每 80ms 试一次，
-            // 最多 ~640ms，读到就停。成功就不 restore，让树保持醒着，
-            // 否则下次又得从零唤醒。
+            // Chromium 建树是异步的（实测 100ms 常常不够）：每 80ms 试一次、最多 ~640ms。
+            // 成功就不 restore，让树保持醒着，否则下次又得从零唤醒
             for _ in 0..8 {
                 std::thread::sleep(std::time::Duration::from_millis(80));
                 if let Some(t) = read_focused(app) {
@@ -370,7 +356,6 @@ pub fn focused_selection() -> Option<String> {
     }
 }
 
-/// 读前台 app 焦点元素里的选区。
 unsafe fn read_focused(app: *const std::ffi::c_void) -> Option<String> {
     let focused = ax_attr(app, "AXFocusedUIElement")?;
     let text = selection_in(focused);
@@ -386,8 +371,7 @@ unsafe fn selection_in(el: *const std::ffi::c_void) -> Option<String> {
     text.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
 }
 
-/// 从焦点窗口往下翻，找第一个带选区的元素。`depth`/`budget` 卡住开销：
-/// 每次属性读都是一趟进程间通信，翻太宽会比不弹图标还糟。
+/// 从焦点窗口往下翻，找第一个带选区的元素；depth/budget 卡开销——每次属性读都是一趟 IPC，翻太宽得不偿失。
 unsafe fn scan_window(app: *const std::ffi::c_void, depth: usize, budget: usize) -> Option<String> {
     let win = ax_attr(app, "AXFocusedWindow")?;
     let mut left = budget;
@@ -508,8 +492,6 @@ fn should_wake(pid: i32) -> bool {
     true
 }
 
-/// 整轮都读不到选区的 app（终端、自绘 UI）：跳过整个 AX 流程直接走 Cmd+C 兜底
-
 static WAKE_TRIES: std::sync::OnceLock<parking_lot::Mutex<std::collections::HashMap<i32, u8>>> =
     std::sync::OnceLock::new();
 
@@ -524,8 +506,7 @@ unsafe fn wake_accessibility(app: *const std::ffi::c_void) {
     set_ax_bool(app, "AXManualAccessibility", true);
 }
 
-/// 读完把增强界面关回去，别把别的 app 长期留在无障碍模式里。
-/// AXManualAccessibility 没有「关」的说法，留着不碍事。
+/// 读完把增强界面关回去，别把别的 app 长期留在无障碍模式里（AXManualAccessibility 没有「关」，留着不碍事）。
 unsafe fn restore_accessibility(app: *const std::ffi::c_void) {
     set_ax_bool(app, "AXEnhancedUserInterface", false);
 }
@@ -605,8 +586,7 @@ pub fn capture_virtual_screen() -> Result<CapturedScreen, String> {
     for &id in &displays {
         let d = CGDisplay::new(id);
         let b = d.bounds();
-        // CGDisplayCreateImage 返回的是 autorelease 对象：worker 线程没有 autorelease pool，
-        // 不自己圈一块就会攒到线程结束，连拍十几张能把 RSS 顶到几百 MB
+        // CGDisplayCreateImage 返回 autorelease 对象：worker 线程不自己圈 pool 会攒到线程结束，连拍能把 RSS 顶到几百 MB
         objc2::rc::autoreleasepool(|_| {
             let Some(img) = d.image() else {
                 return Err(format!("抓取显示器 {} 失败", id));
@@ -628,7 +608,7 @@ pub fn capture_virtual_screen() -> Result<CapturedScreen, String> {
             let dx = ((b.origin.x - min_x) * scale).round() as i32;
             let dy = ((b.origin.y - min_y) * scale).round() as i32;
 
-            // 常见情况（单屏 / 各屏缩放一致）：不需要重采样，直接逐行转 BGRA→RGBA 写进画布，
+            // 常见情况（单屏 / 各屏缩放一致）：直接逐行转 BGRA→RGBA 写进画布，
             // 省掉 disp 与 scale_rgba 两份全屏缓冲（3024x1964 各约 24MB）
             if dw == iw && dh == ih {
                 for row in 0..dh {
@@ -703,7 +683,6 @@ fn display_scale(d: &CGDisplay) -> f64 {
 }
 
 /// 虚拟屏边界（点，左上原点）与每屏像素缩放（Retina 为 2.0）；混合 DPI 时取最大缩放，尽力而为。
-/// capture_virtual_screen 和 virtual_screen_bounds 共用
 fn virtual_screen_extents(displays: &[u32]) -> Option<(f64, f64, f64, f64, f64)> {
     let mut min_x = f64::MAX;
     let mut min_y = f64::MAX;

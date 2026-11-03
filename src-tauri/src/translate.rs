@@ -7,7 +7,6 @@ use md5::{Digest, Md5};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
-/// 百度翻译 API 的鉴权配置
 #[derive(Serialize, Deserialize, Clone, Default)]
 pub struct BaiduConfig {
     #[serde(default)]
@@ -16,7 +15,6 @@ pub struct BaiduConfig {
     pub secret: String,
 }
 
-/// 腾讯云机器翻译的鉴权配置（SecretId + SecretKey）
 #[derive(Serialize, Deserialize, Clone, Default)]
 pub struct TencentConfig {
     #[serde(default)]
@@ -34,10 +32,8 @@ pub struct AppConfig {
     /// 参与翻译的源，按优先级排序（空 = 未设置过，加载时迁移补默认）
     #[serde(default)]
     pub sources: Vec<String>,
-    /// 划词快捷键，如 "Alt+Z"
     #[serde(default = "default_hotkey")]
     pub hotkey: String,
-    /// 截图翻译快捷键，如 "Alt+S"
     #[serde(default = "default_screenshot_hotkey")]
     pub screenshot_hotkey: String,
     /// 截图 OCR 识别语言："auto" | "zh" | "en"
@@ -46,7 +42,6 @@ pub struct AppConfig {
     /// 内置默认源（有道词典/必应翻译）是否启用；关闭后仅用勾选的额外源
     #[serde(default = "default_builtin_sources")]
     pub builtin_sources: bool,
-    /// 输入翻译窗口的唤出快捷键，如 "Alt+X"
     #[serde(default = "default_input_hotkey")]
     pub input_hotkey: String,
     /// 划词弹窗宽度（逻辑像素）：用户拖拽后落盘，重启恢复；高度自适应不存
@@ -112,10 +107,8 @@ fn default_sources() -> Vec<String> {
     Vec::new()
 }
 
-/// 只保留合法的额外源并去重。主翻译的两个源（有道/必应）已内置化，不再作为
-/// 可配置项：老配置里残留的 youdao/bing 在这里被剥掉，否则会作为额外源
-/// 重复出现在对比区。需要密钥的源（百度）没配密钥时同样剥掉——保存密钥时
-/// 删掉密钥，勾选状态会随本次落盘自动移除。空列表合法——主翻译不依赖额外源。
+/// 只保留合法的额外源并去重：内置化的 youdao/bing、没配密钥的源（如百度）都剥掉，
+/// 否则会重复出现在对比区。空列表合法——主翻译不依赖额外源。
 pub(crate) fn enabled_sources(cfg: &AppConfig) -> Vec<String> {
     let baidu_ready = !cfg.baidu.appid.is_empty() && !cfg.baidu.secret.is_empty();
     let tencent_ready =
@@ -123,7 +116,6 @@ pub(crate) fn enabled_sources(cfg: &AppConfig) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for s in &cfg.sources {
         let usable = match s.as_str() {
-            // 需密钥的源：没配密钥时自动剥掉
             "baidu" => baidu_ready,
             "tencent" => tencent_ready,
             _ => false,
@@ -135,8 +127,7 @@ pub(crate) fn enabled_sources(cfg: &AppConfig) -> Vec<String> {
     out
 }
 
-/// 老配置迁移：曾用 source = "baidu" 表达「百度作主源」。
-/// sources 为空时不补默认——额外源是可选项，主翻译不依赖它
+/// 老配置迁移：source = "baidu" 曾表「百度作主源」，等价于勾选百度作额外源
 fn migrate_sources(cfg: &mut AppConfig) {
     if !cfg.sources.is_empty() {
         return;
@@ -168,8 +159,7 @@ impl Default for AppConfig {
 
 type SharedConfig = Mutex<AppConfig>;
 
-/// TODO(诊断): 定位“翻译中”永久卡死用的带时间戳日志，破案后删。
-/// 追加写 %TEMP%\wordpeek-diag.log，保留现场证据
+/// TODO(诊断): 定位“翻译中”永久卡死的时间戳日志（追加写 %TEMP%\wordpeek-diag.log），破案后删
 pub(crate) fn diag(msg: &str) {
     use std::io::Write;
     if let Ok(mut f) = std::fs::OpenOptions::new()
@@ -185,8 +175,7 @@ pub(crate) fn diag(msg: &str) {
     }
 }
 
-/// 落盘串行锁：所有写盘都持它，保证磁盘写入顺序与内存修改顺序一致；
-/// 配置锁内绝不做磁盘 I/O（否则杀软/系统卡住写盘会冻住 translate 等所有读配置路径）
+/// 落盘串行锁：写盘顺序与内存修改顺序一致；配置锁内绝不做磁盘 I/O（杀软/系统卡住写盘会冻住所有读配置路径）
 static CONFIG_WRITE: Mutex<()> = Mutex::new(());
 
 /// 网页端免 Key 接口都按浏览器 UA 放行
@@ -195,8 +184,7 @@ const WEB_UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKi
 /// 降级源单独给短超时：境外端点不通时会挂到 15s，把整条链拖死
 const FALLBACK_TIMEOUT: Duration = Duration::from_secs(6);
 
-/// 全局共享的 HTTP 客户端：连接池 + TLS 配置只建一次。
-/// 之前每次请求都 Client::new()，翻译/对比高频调用时池子来不及回收，内存缓慢上涨
+/// 全局共享的 HTTP 客户端：连接池只建一次（曾每次 Client::new()，高频调用内存缓慢上涨）
 fn http() -> &'static reqwest::Client {
     static HTTP: OnceLock<reqwest::Client> = OnceLock::new();
     HTTP.get_or_init(|| {
@@ -208,8 +196,7 @@ fn http() -> &'static reqwest::Client {
     })
 }
 
-/// 微软翻译（免 Key）：Edge 浏览器内部的 translate/translatetext 端点，无需凭证。
-/// 老的 cn.bing.com/ttranslatev3 仍在，但对非浏览器客户端一律回 200 + 空 body，已不可用
+/// 微软翻译（免 Key）：Edge 的 translate/translatetext 端点；老的 cn.bing.com/ttranslatev3 对非浏览器一律回 200 + 空 body，已不可用
 async fn translate_bing(text: &str, to: &str) -> Result<WordInfo, String> {
     let url = format!(
         "https://edge.microsoft.com/translate/translatetext?from=&to={}&isEnterpriseClient=false",
@@ -245,8 +232,7 @@ async fn translate_bing(text: &str, to: &str) -> Result<WordInfo, String> {
     })
 }
 
-/// 有道翻译（免 Key）：有道智云的公开 demo 端点，form 表单直传。
-/// 是开放 demo，有频率限制，所以只当降级用
+/// 有道翻译（免 Key）：有道智云公开 demo 端点，有频率限制，只当降级用
 async fn translate_youdao_ai(text: &str, to: &str) -> Result<WordInfo, String> {
     let to = if to == "en" { "en" } else { "zh-CHS" };
     let resp: serde_json::Value = http()
@@ -273,14 +259,12 @@ async fn translate_youdao_ai(text: &str, to: &str) -> Result<WordInfo, String> {
     })
 }
 
-/// 词形变化，如 { name: "复数", value: "errors" }
 #[derive(Serialize, Deserialize, Clone, Default, Debug)]
 pub struct WordForm {
     pub name: String,
     pub value: String,
 }
 
-/// 按词性分组的同义词
 #[derive(Serialize, Deserialize, Clone, Default, Debug)]
 pub struct SynoGroup {
     pub pos: String,
@@ -299,7 +283,6 @@ pub struct WordInfo {
     pub senses: Vec<String>,
     pub word_forms: Vec<WordForm>,
     pub synos: Vec<SynoGroup>,
-    /// 适用考试，如 CET4 / 考研 / IELTS
     pub exam_types: Vec<String>,
 }
 
@@ -307,9 +290,7 @@ fn config_path(app: &AppHandle) -> Option<PathBuf> {
     app.path().app_config_dir().ok().map(|d| d.join("config.json"))
 }
 
-/// identifier 曾为 com.wordpeek.app（macOS 包扩展名冲突被迫改名），
-/// app_config_dir 随之变化；仅此一次性把旧目录的 config.json 搬过来，
-/// 且仅在新配置不存在时——绝不覆盖用户当前配置。
+/// identifier 曾为 com.wordpeek.app，app_config_dir 随之变化；仅在新配置不存在时搬旧目录的 config.json，绝不覆盖当前配置
 fn migrate_identifier_rename(app: &AppHandle) {
     let Some(path) = config_path(app) else { return };
     if path.exists() {
@@ -327,11 +308,8 @@ fn migrate_identifier_rename(app: &AppHandle) {
     }
 }
 
-/// 启动时调用：读配置文件，不存在或损坏则用默认值，并补齐老配置缺少的字段。
-/// 卸载重装后不做旧目录迁移：把远古配置搬回来反而会覆盖用户的当前设置
-/// （如翻译源被复旧为 baidu）。
-/// 原子落盘：先写 .tmp 再 rename 覆盖，断电/崩溃不会留下截断的 config.json
-/// （直接 fs::write 覆盖原文件，中途失败 = 配置丢失）
+/// 原子落盘：先写 .tmp 再 rename，中途失败不会留下截断的 config.json（fs::write 直写 = 配置丢失）。
+/// 卸载重装不做旧目录迁移：搬回远古配置会覆盖用户当前设置（如翻译源复旧为 baidu）
 fn write_config(path: &std::path::Path, cfg: &AppConfig) -> Result<(), String> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("创建配置目录失败: {e}"))?;
@@ -375,8 +353,7 @@ pub fn load_config(app: &AppHandle) -> AppConfig {
 #[tauri::command]
 pub fn get_config(state: State<SharedConfig>) -> AppConfig {
     let mut cfg = state.lock().clone();
-    // 密钥打码后再发：所有窗口都能调 get_config，明文密钥不该离开后端。
-    // 设置页保存时 "***" 按未修改处理（见 save_baidu/save_tencent）
+    // 密钥打码后再发：明文密钥不该离开后端；设置页保存时 "***" 按未修改处理
     if !cfg.baidu.appid.is_empty() {
         cfg.baidu.appid = "***".into();
     }
@@ -402,41 +379,31 @@ fn keep_masked(masked: &str, current: &str) -> String {
     }
 }
 
-/// 模块化落盘：以后端当前配置为基底，只改调用方负责的字段后整体写回。
-/// 设置页每个区域只调自己的命令，互不可见对方的字段，
-/// 从结构上杜绝「一处保存覆盖另一处配置」的问题。
+/// 模块化落盘：以后端当前配置为基底，只改调用方负责的字段后整体写回，杜绝「一处保存覆盖另一处」
 fn persist<F: FnOnce(&mut AppConfig)>(
     app: AppHandle,
     state: State<SharedConfig>,
     mutate: F,
 ) -> Result<(), String> {
     let path = config_path(&app).ok_or("无法定位配置目录")?;
-    // 落盘串行锁：保证写盘顺序与内存修改顺序一致（否则并发保存时，
-    // 后改内存的快照可能先写盘、被后写盘的旧快照覆盖掉字段）。
-    // 磁盘 I/O 只发生在这把锁内，配置锁绝不被磁盘读写拖住——
-    // 否则杀软扫描卡住 write_config 时，translate 等所有读配置的路径全部冻住
+    // 落盘串行锁：写盘顺序与内存修改顺序一致，否则并发保存时旧快照可能覆盖新字段（I/O 只在这把锁内）
     let _write = CONFIG_WRITE.lock();
     let cfg = {
-        // 读-改-内存写很快，只在锁内做这些；磁盘写在锁外
         let mut guard = state.lock();
         let mut cfg = guard.clone();
         mutate(&mut cfg);
-        // 快捷键重复会被后端拦下，设置页直接显示这条错误
         crate::validate_hotkeys(&[&cfg.hotkey, &cfg.screenshot_hotkey, &cfg.input_hotkey])?;
         // 快捷键格式不对会在注册时静默失败，保存时就拦住
         for h in [&cfg.hotkey, &cfg.screenshot_hotkey, &cfg.input_hotkey] {
             crate::parse_hotkey(h)?;
         }
-        // 勾选列表去重并剔除非法项，避免空列表导致没有可用源
         cfg.sources = enabled_sources(&cfg);
         *guard = cfg.clone();
         cfg
     };
-    // 磁盘写在配置锁外：锁内 I/O 被杀软/系统卡住时会冻住所有读配置的路径
     write_config(&path, &cfg)?;
     println!("[config] saved");
 
-    // 快捷键可能被修改：按新配置重新注册全部快捷键
     let failed = crate::register_hotkeys(&app, &cfg);
     if !failed.is_empty() {
         return Err(format!(
@@ -444,14 +411,12 @@ fn persist<F: FnOnce(&mut AppConfig)>(
             failed.join("、")
         ));
     }
-    // 广播配置变化：已打开的窗口（如划词卡片）据此作废按旧配置算出的结果，
-    // 典型场景是设置里拖拽排序后，对比区的顺序要跟上新配置
+    // 广播配置变化：已打开的窗口据此作废按旧配置算出的结果（如对比区的排序要跟上新配置）
     let _ = app.emit("config-changed", ());
     Ok(())
 }
 
-/// 翻译源：内置源开关 + 额外源勾选（翻译源 tab）。
-/// 至少保留一个源的约束只在这里拦——删密钥导致的自动剥离允许清空到零
+/// 翻译源（翻译源 tab）：至少保留一个源的约束只在这里拦——删密钥的自动剥离允许清空到零
 #[tauri::command]
 pub fn save_sources(
     app: AppHandle,
@@ -518,9 +483,7 @@ pub fn save_settings(
     })
 }
 
-/// 弹窗宽度（用户拖拽后落盘）：只写这一个字段并直接写盘。
-/// 刻意不走 persist()：宽度保存不需要重注册快捷键，也不该发 config-changed
-/// （会无谓作废划词卡片里的对比区缓存）
+/// 弹窗宽度（拖拽后落盘）：不走 persist——不重注册快捷键、不发 config-changed（不无谓作废对比区缓存）
 #[tauri::command]
 pub fn save_popup_width(app: AppHandle, state: State<SharedConfig>, width: f64) -> Result<(), String> {
     let path = config_path(&app).ok_or("无法定位配置目录")?;
@@ -537,8 +500,7 @@ pub fn save_popup_width(app: AppHandle, state: State<SharedConfig>, width: f64) 
     write_config(&path, &snapshot)
 }
 
-/// 设置窗口当前停留的一级菜单：切页即落盘，重开设置窗口时回到上次页。
-/// 直接写盘不走 persist：不重挂快捷键、不发 config-changed（表单状态没变）
+/// 设置页当前一级菜单：切页即落盘，重开时回到上次页；不走 persist（不碰快捷键、不发 config-changed）
 #[tauri::command]
 pub fn save_settings_section(
     app: AppHandle,
@@ -558,8 +520,7 @@ pub fn save_settings_section(
     write_config(&path, &snapshot)
 }
 
-/// 外观主题：system / light / dark。直接写盘不走 persist（不碰快捷键，不发 config-changed），
-/// 各窗口下次加载/获得焦点时自己按 get_config 重新落地
+/// 外观主题：不走 persist（不碰快捷键、不发 config-changed），各窗口下次加载/获焦时自己重新落地
 #[tauri::command]
 pub fn save_theme(app: AppHandle, state: State<SharedConfig>, theme: String) -> Result<(), String> {
     if !matches!(theme.as_str(), "system" | "light" | "dark") {
@@ -578,8 +539,7 @@ pub fn save_theme(app: AppHandle, state: State<SharedConfig>, theme: String) -> 
     write_config(&path, &snapshot)
 }
 
-/// 划词图标开关：直接写盘不走 persist（不碰快捷键，不发 config-changed）；
-/// 鼠标监听一直在跑，后台探测时每次现读这个字段，所以改完立即生效
+/// 划词图标开关：不走 persist；鼠标监听后台探测时每次现读该字段，改完立即生效
 #[tauri::command]
 pub fn save_selection_icon(
     app: AppHandle,
@@ -728,8 +688,7 @@ async fn translate_baidu(
     hasher.update(format!("{appid}{text}{salt}{secret}"));
     let sign = format!("{:x}", hasher.finalize());
 
-    // POST 表单而不是 GET query：截图翻译是整页文本，q 会被塞进 URL，
-    // GET 的 URL 长度限制（百度 q 上限 ~6000 字节）必炸；该端点两种方式都收
+    // POST 表单而非 GET：整页文本塞 URL 会撞长度限制（百度 q 上限 ~6000 字节）；该端点两种都收
     let resp: serde_json::Value = http()
         .post("https://fanyi-api.baidu.com/api/trans/vip/translate")
         .form(&[
@@ -789,8 +748,7 @@ fn hex_str(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// 腾讯云机器翻译（tmt.tencentcloudapi.com TextTranslate，TC3-HMAC-SHA256 签名）
-/// 单词、整句通吃；密钥在腾讯云控制台「访问管理 → API 密钥」申请
+/// 腾讯云机器翻译（tmt.tencentcloudapi.com TextTranslate，TC3-HMAC-SHA256 签名），单词整句通吃
 async fn translate_tencent(text: &str, to: &str, tc: &TencentConfig) -> Result<WordInfo, String> {
     use hmac::Mac;
     use sha2::{Digest, Sha256};
@@ -881,13 +839,12 @@ pub(crate) fn baidu_target(to: &str) -> &'static str {
 /// 仅作降级用的免 Key 源：不进「对比各源」列表，避免白名单外多跑几个开放 demo 端点
 pub(crate) const FALLBACK_SOURCES: [&str; 1] = ["youdaoai"];
 
-/// 翻译/对比顺序：内置默认源（单词→有道，句子自动落到必应）在前，
-/// 必应之后接免 Key 降级源；用户勾选的额外源排在最后。内置源关闭后只剩额外源。
+/// 翻译/对比顺序：内置默认源（有道→必应→免 Key 降级源）在前，勾选的额外源在后；内置关闭后只剩额外源
 pub(crate) fn build_order(cfg: &AppConfig, to: &str) -> Vec<String> {
     let mut order: Vec<String> = Vec::new();
     if cfg.builtin_sources {
         if to == "zh" {
-            order.push("youdao".into()); // 有道 jsonapi 只支持英→中
+            order.push("youdao".into());
         }
         order.push("bing".into());
         for s in FALLBACK_SOURCES {
@@ -915,7 +872,6 @@ async fn try_translate(
         }
         "bing" => translate_bing(text, to).await,
         "youdaoai" => translate_youdao_ai(text, to).await,
-        // 腾讯云机器翻译双向都支持
         "tencent" => translate_tencent(text, to, &cfg.tencent).await,
         // 有道 jsonapi 只能英→中（词典 + 已下线的整句节点），译为其它语言交给降级链
         _ if to == "zh" => translate_youdao(text).await,
@@ -923,10 +879,8 @@ async fn try_translate(
     }
 }
 
-/// 翻译核心：按用户勾选顺序逐个尝试源（首个成功即返回）；勾选内的源全失败才报错。
-/// to: "zh" | "en"（其它值按 "zh" 处理）。
-/// 从 translate 命令抽出，供截图翻译管线在无 State 的上下文直接调用。
-/// 单源超时上限：与 http() 客户端超时一致；即使请求层超时失灵也由运行时层兜底
+/// 翻译核心：按勾选顺序逐源尝试，首个成功即返回、全失败才报错；to: "zh" | "en"。
+/// 供截图翻译管线在无 State 的上下文直接调用。SOURCE_TIMEOUT：单源超时上限，请求层失灵时由运行时层兜底
 const SOURCE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
 pub async fn translate_text(cfg: &AppConfig, text: &str, to: &str) -> Result<WordInfo, String> {
@@ -937,9 +891,8 @@ pub async fn translate_text(cfg: &AppConfig, text: &str, to: &str) -> Result<Wor
     }
     let mut errors: Vec<String> = Vec::new();
     for src in order {
-        // 每源独立异步超时：reqwest 客户端自带 15s 超时，但若底层任务
-        // 偶发停止被 poll（报不到错也收不到响应），请求级超时不会触发，
-        // 这里用 tokio 计时器在运行时层强制断开，保证永远能降级到下一个源
+        // 每源独立异步超时：底层任务偶发停止被 poll 时请求级超时不会触发，
+        // 用 tokio 计时器强制断开，保证永远能降级到下一个源
         diag(&format!("源 {src} 开始"));
         let attempt = tokio::time::timeout(SOURCE_TIMEOUT, try_translate(&src, text, cfg, to));
         match attempt.await {
@@ -960,10 +913,8 @@ pub async fn translate_text(cfg: &AppConfig, text: &str, to: &str) -> Result<Wor
     Err(errors.join("；"))
 }
 
-/// 语言方向检测：按「中文词数 vs 英文词数」加权判定主体语言，译为对方语言。
-/// 不直接比字符数：一个中文词平均 ≈ 2 个汉字，而一个英文词平均 5~6 个字母，
-/// 比字母会把「请检查 API timeout 的返回值」这类中文句误判成英文为主。
-/// 纯中/纯英/空串结果和旧的「见 CJK 就 →en」一致，只有中英混排会变
+/// 语言方向检测：按「中文词数 vs 英文词数」加权判定主体语言（中文词 ≈2 汉字、英文词 5~6 字母，
+/// 比字符数会把「请检查 API timeout 的返回值」这类中文句误判成英文），译为对方语言；打平算中文为主
 pub(crate) fn detect_to(text: &str) -> &'static str {
     let mut cjk = 0usize;
     let mut words = 0usize;
@@ -1002,8 +953,7 @@ fn resolve_to(text: &str, to: Option<&str>) -> &'static str {
     }
 }
 
-/// 轻量崩溃日志：tokio 任务里的 panic 默认只打到看不见的 stderr，
-/// 落一份到配置目录方便事后排查（追加写，不轮转——panic 应当极少发生）
+/// 崩溃日志落配置目录：tokio 任务里的 panic 默认只打到看不见的 stderr（追加写，不轮转）
 pub(crate) fn log_panic(dir: &Path, msg: &str) {
     use std::io::Write;
     if std::fs::create_dir_all(dir).is_ok() {
@@ -1048,7 +998,6 @@ pub struct SourceResult {
     pub error: Option<String>,
 }
 
-/// 源展示名（对比行标题）
 pub(crate) fn source_label(source: &str) -> &'static str {
     match source {
         "youdao" => "有道词典",
@@ -1132,9 +1081,8 @@ pub async fn translate_all_sources(
     out
 }
 
-/// 对比命令：一次列出各勾选源译文（输入翻译窗口 / 划词卡片「对比各源」按钮）。
-/// Tauri 要求带引用参数（State）的 async 命令必须返回 Result，这里恒为 Ok：
-/// 单个源的失败已经在各自行里呈现，不该让整次对比失败。
+/// 对比命令：一次列出各勾选源译文（输入翻译窗口 / 划词卡片「对比各源」按钮）。Tauri 要求带
+/// State 的 async 命令必须返回 Result，这里恒为 Ok——单源失败已在各自行里呈现，不让整次对比失败
 #[tauri::command]
 pub async fn translate_all(
     state: State<'_, SharedConfig>,
@@ -1190,13 +1138,11 @@ mod tests {
 
     #[test]
     fn enabled_sources_keeps_only_extra_sources() {
-        // 默认无额外源
         let cfg = AppConfig::default();
         assert!(enabled_sources(&cfg).is_empty());
         // 有道/必应已内置化：老配置残留的会被剥掉，避免对比区重复主翻译
         let mut cfg = AppConfig::default();
         cfg.sources = vec!["youdao".into(), "baidu".into(), "bing".into(), "baidu".into()];
-        // 百度需密钥：没配密钥时同样剥掉
         assert!(enabled_sources(&cfg).is_empty());
         cfg.baidu = BaiduConfig {
             appid: "a".into(),
@@ -1219,18 +1165,15 @@ mod tests {
     #[test]
     fn build_order_puts_builtin_first() {
         let mut cfg = AppConfig::default();
-        // 内置源开启：默认翻译在前，额外源在后
         assert_eq!(build_order(&cfg, "zh"), vec!["youdao", "bing", "youdaoai"]);
         assert_eq!(build_order(&cfg, "en"), vec!["bing", "youdaoai"]);
         cfg.sources = vec!["baidu".into()];
-        // 百度需密钥：没配密钥时进不了队列
         assert_eq!(build_order(&cfg, "zh"), vec!["youdao", "bing", "youdaoai"]);
         cfg.baidu = BaiduConfig {
             appid: "a".into(),
             secret: "b".into(),
         };
         assert_eq!(build_order(&cfg, "zh"), vec!["youdao", "bing", "youdaoai", "baidu"]);
-        // 内置源关闭：只剩额外源
         cfg.builtin_sources = false;
         assert_eq!(build_order(&cfg, "zh"), vec!["baidu"]);
         // 内置源关闭且无额外源：空队列（persist 层会拦住这种配置落盘）
@@ -1247,7 +1190,6 @@ mod tests {
             secret_key: "key".into(),
         };
         cfg.sources = vec!["tencent".into()];
-        // 对比区：默认翻译的源排第一，额外源跟在后面
         assert_eq!(compare_sources(&cfg, "zh"), vec!["youdao", "bing", "tencent"]);
         cfg.builtin_sources = false;
         assert_eq!(compare_sources(&cfg, "zh"), vec!["tencent"]);
@@ -1289,7 +1231,6 @@ mod tests {
 
     #[test]
     fn config_defaults_fill_input_hotkey() {
-        // 旧配置文件没有这个字段，serde 默认值必须兜底
         let cfg: AppConfig = serde_json::from_str("{}").unwrap();
         assert_eq!(cfg.input_hotkey, "Alt+X");
         assert_eq!(cfg.popup_width, 400.0);
@@ -1323,7 +1264,6 @@ mod tests {
         assert_eq!(bing_target("en"), "en");
         assert_eq!(baidu_target("zh"), "zh");
         assert_eq!(baidu_target("en"), "en");
-        // 非法值按中文处理
         assert_eq!(bing_target("fr"), "zh-Hans");
         assert_eq!(baidu_target("fr"), "zh");
     }
@@ -1398,7 +1338,6 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn bing_translates_full_sentence() {
-        // 必应免 Key 兜底：整句应返回译文
         let info = translate_bing("The quick brown fox jumps over the lazy dog", "zh")
             .await
             .expect("必应整句应能翻译");

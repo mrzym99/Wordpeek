@@ -19,9 +19,8 @@ pub struct CapturedScreen {
     pub rgba: Vec<u8>,
 }
 
-/// 把前端发来的选区钳制到快照范围内（至少 1×1）：screenshot_finish 需要在裁剪前
-/// 拿到钳制后的坐标（sel json / encode_png 尺寸都要用），统一从这里出，避免
-/// 与 crop 内部各套一套钳制逻辑
+/// 把前端选区钳制到快照范围（至少 1×1）：screenshot_finish 需在裁剪前拿到钳制后
+/// 的坐标（sel json / encode_png 都要用），统一从这里出，避免两套钳制逻辑
 pub fn clamp_rect(x: i32, y: i32, w: i32, h: i32, width: i32, height: i32) -> Rect {
     let x = x.clamp(0, (width - 1).max(0));
     let y = y.clamp(0, (height - 1).max(0));

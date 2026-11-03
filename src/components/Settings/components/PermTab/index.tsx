@@ -27,7 +27,6 @@ export default function PermTab() {
           Wordpeek 需要两项系统权限：划词翻译靠<b>辅助功能</b>模拟 Cmd+C 读取选中文本，
           截图翻译靠<b>屏幕录制</b>截取屏幕像素。
         </p>
-        <p>授权后请重启应用（修改权限后系统需要重启进程才生效）。</p>
       </div>
       <PermRow
         label="辅助功能"

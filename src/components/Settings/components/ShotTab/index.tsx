@@ -19,7 +19,7 @@ export default function ShotTab({ f }: { f: ConfigForm }) {
           <option value="en">英文优先</option>
         </select>
       </label>
-      <div className="field-hint">按截图快捷键框选屏幕区域即可识别并翻译；整句翻译自动使用必应（免 Key，失败自动降级到有道），无需额外配置</div>
+      <div className="field-hint">框选屏幕区域即可识别并翻译；OCR 走系统引擎，离线、免 Key、数据不出本机</div>
     </>
   );
 }

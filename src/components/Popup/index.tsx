@@ -19,26 +19,22 @@ import { isSentenceText } from "../../lib/text";
 
 /** 划词/截图统一弹窗：同一张卡片，标题行 = 可编辑原文 + 「对比各源」按钮 */
 export default function Popup() {
-  // 卡片内容高度上报给 Rust，窗口按内容收缩（防止透明区域吞掉下层窗口的点击）
-  // 阴影边距+padding+border 59 + header 32 = 91；最小高度防查词时塌成一条，上限交给 Rust 按屏幕钳制
+  // chrome=91（阴影边距+padding+border 59 + header 32）：内容高度上报 Rust 让窗口收缩，
+  // 防透明区域吞掉下层点击；min 防查词时塌成一条，上限交给 Rust 按屏幕钳制
   const { setBody, refit } = useAutoFitWindow("main", 91, 214);
   const [word, setWord] = useState("");
-  // 最近一次实际发起查词的词：改词框失焦时只在真正变化后才重查，避免回车+失焦查两次
+  // 最近一次实际查词的词：改词框只在真正变化后才重查，避免回车+失焦查两次
   const lastLooked = useRef("");
-  // 查词序号：lookup 用它丢弃晚到的旧请求结果，避免快速连查时结果错乱
+  // 查词序号：丢弃晚到的旧请求结果，避免快速连查时结果错乱
   const seqRef = useRef(0);
   // 「对比各源」请求序号：收起对比/新配置到达时作废在途请求
   const compareSeq = useRef(0);
   const [info, setInfo] = useState<WordInfo | null>(null);
   const [error, setError] = useState("");
-  // 划词小释义卡整体封装在 DictPop 组件里（选词检测/定位/查词/渲染），
-  // 宿主只需挂容器 ref + 把「详细释义」接回 lookup
   const cardRef = useRef<HTMLDivElement | null>(null);
-  // 小卡的锚定/测量容器：绝对定位在 .card-body 内，溢出底部时计入 scrollHeight，
-  // 窗口自适应长高包住小卡（不被窗口边框裁切）
+  // 小卡锚定/测量容器：溢出底部时计入 scrollHeight，窗口自适应长高包住小卡
   const cardBodyRef = useRef<HTMLDivElement | null>(null);
-  // 自适应 hook 与 DictPop 共用同一 DOM：一个存 state 启动测量，一个存 ref 当锚点。
-  // 必须 useCallback 稳定引用：内联函数每次 render 换新 ref，React 会 null/el 来回卸载重挂，
+  // 须 useCallback 稳定引用：内联 ref 回调每次 render 换新，null/el 来回卸载重挂，
   // setBody 跟着翻转 → 无限重渲染
   const bindBody = useCallback(
     (el: HTMLDivElement | null) => {
@@ -47,20 +43,17 @@ export default function Popup() {
     },
     [setBody]
   );
-  // 多源对比：开启时在卡片底部追加各源译文（不隐藏原有内容）
   const [compareOpen, setCompareOpen] = useState(false);
-  // 已勾选的额外源个数：0 时隐藏「对比各源」按钮（persist 保证 sources 里
-  // 只留密钥就绪的合法源，所以这里不用再判密钥）
-  // -1 = 还没查到（不展示按钮，避免闪现），0 = 无额外源
+  // 已勾选额外源个数：-1 = 未查到（避免按钮闪现），0 = 无；persist 已保证只含密钥就绪的源
   const [extrasCount, setExtrasCount] = useState(-1);
   const [rows, setRows] = useState<SourceResult[] | null>(null);
-  // rows 对应的原文：展开对比时原文没变就直接复用缓存，不重新翻译
+  // rows 对应的原文：没变就直接复用缓存，不重新翻译
   const [compareText, setCompareText] = useState("");
   const [compareLoading, setCompareLoading] = useState(false);
   const [compareError, setCompareError] = useState("");
   // 截图翻译结果（screenshot-result 事件）；非空时卡片切到截图模式
   const [shotResult, setShotResult] = useState<ShotResult | null>(null);
-  // 截图原文可编辑副本：用户修掉 OCR 错误换行后可重新翻译
+  // 截图原文可编辑副本：修掉 OCR 错误换行后可重新翻译
   const [draft, setDraft] = useState("");
   // 截图重译的目标语言：auto = 交给后端按汉字/英文词加权检测
   const [shotTo, setShotTo] = useState<"auto" | "en" | "zh">("auto");
@@ -75,10 +68,8 @@ export default function Popup() {
       .catch(() => {});
   };
 
-  // 划词/截图模式的对比原文：截图用编辑后的 draft，划词用单词
   const inShot = !!shotResult;
   const activeText = (inShot ? draft : word).trim();
-  // 默认翻译进行中：划词模式 = 还没结果也没报错；截图模式 = shotLoading
   const mainLoading = inShot
     ? !!shotResult!.text && !shotResult!.info && !shotResult!.error
     : !info && !error && activeText !== "";
@@ -104,8 +95,7 @@ export default function Popup() {
     }
   };
 
-  // 对比各源：展开/收起卡片底部的多源对比区。
-  // 只在第一次（或原文变了）时请求，之后切换是纯显示/隐藏，不销毁结果
+  // 对比各源：只在第一次（或原文变了）时请求，之后切换是纯显示/隐藏，结果不销毁
   const toggleCompare = () => {
     if (compareOpen) {
       setCompareOpen(false);
@@ -115,14 +105,12 @@ export default function Popup() {
     if (rows === null || compareText !== activeText) runCompare(activeText);
   };
 
-  // 用 ref 持有最新状态：监听器只注册一次，避免每次查词都重建；
-  // listen() 是异步的，若 cleanup 先于 resolve 执行，旧监听器会泄漏
-  // （泄漏的监听器还持有旧 runCompare 闭包，配置一变就触发僵尸请求）
+  // ref 持最新状态给只注册一次的监听器读；listen() 异步，cleanup 先于 resolve
+  // 会泄漏监听器（旧闭包持有旧 runCompare，配置一变触发僵尸请求）
   const compareState = useRef({ open: compareOpen, text: activeText });
   compareState.current = { open: compareOpen, text: activeText };
 
-  // 设置里改了配置（勾选/排序/密钥）：旧对比结果作废、额外源个数刷新；
-  // 对比区正开着就立刻按新配置重拉，收着就只清缓存（下次展开再拉）
+  // config-changed：对比区开着就按新配置重拉，收着只清缓存（下次展开再拉）
   useEffect(() => {
     let disposed = false;
     const refreshExtras = () => {
@@ -143,7 +131,6 @@ export default function Popup() {
       if (disposed) f(); // 晚到的订阅：立刻退订，不留泄漏
       else unlisten = f;
     });
-    // 初始加载一次：决定「对比各源」按钮显示与否
     refreshExtras();
     return () => {
       disposed = true;
@@ -152,7 +139,7 @@ export default function Popup() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 用编辑后的截图原文重新翻译，结果回填卡片（不清空 draft）
+  // 用编辑后的截图原文重译，结果回填卡片（不清空 draft）
   const retranslate = (text: string, to: string = shotTo) => {
     if (!text.trim()) return;
     setCompareOpen(false); // 原文变了，旧对比结果作废
@@ -182,14 +169,11 @@ export default function Popup() {
     let unlistenFocus: (() => void) | undefined;
     let unlistenShot: (() => void) | undefined;
     let unlistenResized: (() => void) | undefined;
-    // 拖宽防抖的 timer 引用（setup 内赋值，cleanup 里清）
     let widthTimer: number | undefined;
     let selSeq = 0; // selection 处理器序号（见 sel 回调内注释）
 
-    // 点击窗外自动隐藏。不能在 blur 时直接 hide：
-    // 拖拽/缩放窗口（系统模态循环）开始时也会触发一次 blur，
-    // 立即隐藏会中断操作。所以 blur 后延迟复核 isFocused，
-    // 窗口实际仍有焦点（拖拽中）就不隐藏。
+    // 不能在 blur 时直接 hide：拖拽/缩放窗口开始时也触发一次 blur，立即隐藏会中断操作，
+    // 故 blur 后延迟复核 isFocused
     let hideCheck: number | undefined;
     const stopHideCheck = () => {
       if (hideCheck !== undefined) {
@@ -205,16 +189,14 @@ export default function Popup() {
       }, 150);
     };
 
-    // 失焦复查：窗口没焦点且鼠标不在卡片里才收。鼠标在卡片里时不藏——
-    // 用户可能只是点了别的窗口想边看边打字；等鼠标离开时由 onLeave 补查
+    // 鼠标在卡片里不藏（用户可能只是点了别的窗口边看边打字），离开时由 onLeave 补查
     const maybeHide = async () => {
       if (document.documentElement.matches(":hover")) return;
       if (!(await win.isFocused())) hideAndReset();
     };
     const onLeave = () => maybeHide();
 
-    // 收起即清空：下次打开从空态开始，残留内容不会影响首帧布局；
-    // 顺带序号+1，丢掉还在路上的旧翻译结果
+    // 收起即清空：下次打开从空态开始；序号+1 丢掉在途的旧结果
     const hideAndReset = () => {
       win.hide();
       seqRef.current++;
@@ -234,24 +216,22 @@ export default function Popup() {
       setCopied("");
     };
 
-    // 异步订阅竞态防护：StrictMode 会 挂载→清理→再挂载，
-    // listen 的 Promise 若在清理后才 resolve，不判 disposed 的话监听器永远退不掉
+    // 异步订阅竞态防护：StrictMode 会 挂载→清理→再挂载，listen 的 Promise
+    // 若在清理后才 resolve，不判 disposed 的话监听器永远退不掉
     let disposed = false;
 
     const setup = async () => {
-      // Rust 端抓取到选中文本后通过 "selection" 事件发过来；
       // x/y 已在 Rust 端钳制到光标所在屏幕内
       const sel = await listen<Selection>("selection", async (e) => {
-        // 定位序号：连续两次划词时，旧处理器（跨屏 DPI 轮询最长等 500ms）
-        // 醒来后不得把窗口挪回旧位置/覆盖新处理器已 show 的窗口
+        // 连续两次划词：旧处理器（跨屏 DPI 轮询最长等 500ms）醒来后
+        // 不得把窗口挪回旧位置/覆盖新处理器已 show 的窗口
         const mySel = ++selSeq;
         const stale = () => mySel !== selSeq;
         const { text, x, y } = e.payload;
         setShotResult(null); // 新的划词到达，退出截图模式
         setCompareOpen(false);
-        // 双屏不同 DPI：跨屏 setPosition 会触发 WM_DPICHANGED，tao 异步按「保持逻辑尺寸」
-        // 重设窗口，会覆盖随后 refit 设的尺寸 → 卡片尺寸/位置错乱看似划词没反应。
-        // 同屏时 scale 不变直接过；scale 变了就等窗口尺寸稳定再 show+refit
+        // 跨屏 setPosition 触发 WM_DPICHANGED，tao 异步按「保持逻辑尺寸」重设窗口会覆盖
+        // refit 的尺寸；scale 变了就等窗口尺寸稳定再 show+refit
         const sf0 = await win.scaleFactor();
         await win.setPosition(new PhysicalPosition(x, y));
         if ((await win.scaleFactor()) !== sf0) {
@@ -273,9 +253,8 @@ export default function Popup() {
       if (disposed) sel();
       else unlistenSelection = sel;
 
-      // 截图结果回来时主窗口多半隐藏着：先定位到框选区附近再 show+focus。
-      // 卡片弹在选区下方，空间不足放上方，并錨制在虚拟屏内。
-      // 用真实窗口尺寸（outerSize，物理像素）錨制，避免估算偏差导致位置漂移
+      // 截图结果回来时主窗口多半隐藏着：先定位到鼠标旁再 show+focus；
+      // 用真实窗口尺寸（outerSize，物理像素）锚制，避免估算偏差导致漂移
       const shot = await listen<ShotResult>("screenshot-result", async (e) => {
         setShotResult(e.payload);
         setCompareOpen(false); // 新一轮结果收起旧对比
@@ -283,9 +262,8 @@ export default function Popup() {
         setShotTo("auto"); // 新一轮回到自动检测，不沿用上轮手动方向
         const { virtual, mouse, work } = e.payload;
         try {
-          // 两步定位：先粗移到鼠标旁——窗口落到目标屏后，Windows 会按该屏缩放
-          // 重新解释窗口尺寸，此时再量真实尺寸（outerSize）做钳制，
-          // 避免跨屏 DPI 尺寸漂移导致卡片超出边界
+          // 两步定位：先粗移到鼠标旁——窗口落到目标屏后 Windows 按该屏缩放重新解释尺寸，
+          // 此时再量真实尺寸（outerSize）钳制，避免跨屏 DPI 漂移
           await win.setPosition(new PhysicalPosition(mouse.x + 4, mouse.y + 4));
           const size = await win.outerSize();
           // 钳制在光标所在屏的工作区内（排除任务栏）；拿不到则退回虚拟屏
@@ -325,8 +303,7 @@ export default function Popup() {
       document.documentElement.addEventListener("mouseleave", onLeave);
       if (disposed) document.documentElement.removeEventListener("mouseleave", onLeave);
 
-      // 用户拖宽弹窗后防抖落盘，重启恢复；高度动画引发的 resize 宽度不变，
-      // 会被「与上次已存宽度比较」过滤掉，不会频繁写盘
+      // 用户拖宽弹窗后防抖落盘；高度动画引发的等宽 resize 被「与上次已存宽度比较」过滤，不频繁写盘
       let savedWidth = 0;
       const resized = await win.onResized(async (e) => {
         const s = await win.scaleFactor();
@@ -356,8 +333,7 @@ export default function Popup() {
     };
   }, []);
 
-  // 点击同义词 / 词形变化：在弹窗内继续查词，不重新定位窗口
-  // seq 计数保证慢的旧请求不会覆盖新查询的结果
+  // 点击同义词/词形变化：弹窗内继续查词不重新定位；seq 计数丢弃慢的旧请求
   const lookup = async (w: string) => {
     lastLooked.current = w;
     setWord(w);
@@ -376,10 +352,8 @@ export default function Popup() {
   };
 
 
-  // 截图重新翻译进行中：info/error 均空且原文存在
   const shotLoading = inShot && !!shotResult!.text && !shotResult!.info && !shotResult!.error;
-  // 对比区只列勾选的额外源：默认翻译就是上方卡片内容，不重复展示；
-  // 主翻译本身就是某个额外源（如默认源关闭时百度兜底）时跳过该行避免重复
+  // 对比区只列勾选的额外源：主翻译本身就是某个额外源（如默认源关闭时百度兜底）时跳过该行避免重复
   const mainSource = inShot ? shotResult?.info?.source : info?.source;
   const compareRows: SourceResult[] | null = rows?.filter(
     (r) => r.source !== mainSource
@@ -389,7 +363,6 @@ export default function Popup() {
     <div className={"card " + s.card} ref={cardRef}>
       {/* 顶部 padding 区是隐形拖拽热区：按住可移动窗口；窗口边缘仍可拉伸 */}
       <div className={s.dragStrip} data-tauri-drag-region />
-      {/* header 固定不随内容滚动；body 才是滚动区 */}
       <div className={s.wordHead}>
         {/* 品牌独占标题行左侧；版本号留在设置 → 关于，弹窗里只留名字 */}
         <div className={s.appTitle}>
@@ -420,8 +393,7 @@ export default function Popup() {
       {error && <div className="error">{error}</div>}
       {!inShot && !info && !error && <div className="loading">翻译中...</div>}
 
-      {/* 划词模式：有道词典 → 经典排版「单词 + 音标/发音」一行，无原文框；
-          其它源（整句翻译降级）→ 保留原文框 */}
+      {/* 划词模式：有道词典 → 经典排版「单词 + 音标」一行；其它源（整句翻译降级）→ 保留原文框 */}
       {!inShot && info && info.source === "youdao" && (
         <div className="word-line">
           <input
@@ -438,7 +410,6 @@ export default function Popup() {
               if (w && w !== lastLooked.current) lookup(w);
             }}
           />
-          {/* 点击播放有道词典发音（美音/英音），与翻译源无关 */}
           <Phonetic word={info.word} usphone={info.usphone} ukphone={info.ukphone} />
         </div>
       )}
@@ -466,7 +437,6 @@ export default function Popup() {
         </div>
       )}
 
-      {/* 截图模式：可编辑原文 + 复制/重译 + 译文 */}
       {inShot && shotResult && (
         <>
           {shotResult.text && (
@@ -500,9 +470,7 @@ export default function Popup() {
         </>
       )}
 
-      {/* 划词模式：词典卡片 */}
-      {/* 句子翻译跟截图译文同款：套灰框、不带行首序号（序号在多行译文里看起来像行号）；
-          单词仍是平铺词典卡片（音标/词形/同义词），套框反而显得孤立 */}
+      {/* 划词模式：句子套灰框不带行首序号（多行译文里序号像行号），单词仍平铺词典卡片 */}
       {!inShot && info && (
         <>
           {isSentenceText(info.word) ? (
@@ -554,7 +522,6 @@ export default function Popup() {
           ))}
         </>
       )}
-      {/* 对比区：放在卡片末尾（额外源跟在词典卡片/截图译文后面） */}
       {compareOpen && (
         <>
           {compareLoading && <div className="loading">对比中…</div>}

@@ -13,15 +13,14 @@ import s from "./index.module.css";
 /** 输入翻译窗口（?page=input）：打字/粘贴 → 默认翻译 + 勾选的额外源逐源给出译文，目标语言可智能/手动切换 */
 export default function InputPage() {
   const [text, setText] = useState("");
-  // 目标语言：智能 = 自动检测（中文→英文，其它→中文），也可手动固定方向
   const [mode, setMode] = useState<"auto" | "en" | "zh">("auto");
   const [rows, setRows] = useState<SourceResult[] | null>(null);
-  // 默认源（有道/必应，各司其职）的结果，单独一行排在最前
+  // 默认源（有道/必应）的结果，单独一行排在最前
   const [defaultInfo, setDefaultInfo] = useState<WordInfo | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [copiedKey, setCopiedKey] = useState("");
-  // .input-layout 上下 padding 14×2 + 1px 余量；min 只防塌，空态窗口贴着内容走，避免底部大片空白
+  // chrome=29（.input-layout 上下 padding 14×2 + 1px 余量）；min 只防塌，空态窗口贴着内容走；
   // macOS 比 Windows 多一条 28px 自绘头部（Overlay 标题栏），窗口高度要一起加
   const headHeight = document.documentElement.dataset.os === "mac" ? 28 : 0;
   const { setBody, refit } = useAutoFitWindow("input", 29 + headHeight, 180);
@@ -57,8 +56,7 @@ export default function InputPage() {
     setRows(null);
     setDefaultInfo(null);
     try {
-      // 翻译请求由 Rust 端发出（避免 CORS，且 API 密钥不进前端）。
-      // 默认源（有道/必应）单独出结果，额外源并发对比；有道/必应不作为独立行出现
+      // 翻译请求由 Rust 端发出（避免 CORS，API 密钥不进前端）；有道/必应不作为独立行出现
       const [d, rs] = await Promise.allSettled([
         invoke<WordInfo>("translate", { text: q, to: target }),
         invoke<SourceResult[]>("translate_all", { text: q, to: target, includeBuiltin: false }),
@@ -116,8 +114,7 @@ export default function InputPage() {
         {error && <div className="error">{error}</div>}
         {loading && <div className="loading">翻译中…</div>}
         {(() => {
-          // 默认源一行排最前（有道/必应看成一个源，各司其职），额外源跟在后面；
-          // 主翻译本身就是某个额外源时跳过该行避免重复
+          // 默认源一行排最前，额外源跟在后面；主翻译本身就是某个额外源时跳过该行避免重复
           if (!rows) return null;
           const all: CompareRow[] = [
             ...(defaultInfo

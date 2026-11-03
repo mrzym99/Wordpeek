@@ -12,14 +12,10 @@ const EDGE = 4;
 const MAX_W = 220;
 
 /**
- * 划词小释义卡（类似百度词典划词）：监听 rootRef 容器内松手，
- * 选中单个单词（拖动选词或双击选词）时在单词下方弹迷你词典卡，
- * 主内容不变；小卡只展示头几行释义（顶部释义按钮行已省，最多三行）。
- *
+ * 划词小释义卡：rootRef 容器内松手选中单个单词（拖选/双击）时在词下方弹迷你词典卡，主内容不变。
  * - resetKey：宿主主内容变化（换词/关窗清空）时收起，避免残留旧锚点
- * - 小卡用 fixed 定位挂视口坐标：不在文档流里，不参与父容器 scrollHeight，
- *   宿主的窗口自适应完全不受它影响（窗口尺寸不会因为划过单词而变）
- * - 下方放不下就翻到单词上方，横向按实测宽度钳进视口（窗口可被拖得比小卡还窄）
+ * - fixed 定位挂视口坐标，不在文档流里，不参与父容器 scrollHeight（窗口自适应不受影响）
+ * - 下方放不下就翻到词上方，横向按实测宽度钳进视口（窗口可被拖得比小卡还窄）
  */
 export default function DictPop({
   rootRef,
@@ -49,9 +45,8 @@ export default function DictPop({
     setPos(null);
   }, [resetKey]);
 
-  // 宽度必须跟着内容重算：换词弹出时内容已定，量一次就是最终宽高。
-  // 位置在弹出时算一次（resize 例外重算）：落位用的就是最终尺寸，一次到位不瞬移
-  // useLayoutEffect 在绘制前跑，不会闪一帧错误位置。
+  // 宽度跟内容重算、位置弹出时算一次（resize 例外重算）：落位用的就是最终尺寸，
+  // 一次到位不瞬移；useLayoutEffect 在绘制前跑，不闪一帧错误位置
   useLayoutEffect(() => {
     if (!pop) return;
     const place = (reposition: boolean) => {
@@ -59,16 +54,13 @@ export default function DictPop({
       if (!el) return;
       const vw = window.innerWidth;
       const vh = window.innerHeight;
-      // 宽度随内容收缩（短词不铺满 MAX_W），且不超过视口
-      // 先量内容宽再定宽：窗口能被拖得比小卡还窄，横向钳位才有解
+      // 先量内容宽再定宽：窗口能被拖得比小卡还窄，横向钳位才有解；短词不铺满 MAX_W
       el.style.width = "max-content";
       const w = Math.min(el.offsetWidth, MAX_W, vw - EDGE * 2);
       el.style.width = `${w}px`;
       if (!reposition && posRef.current) {
-        // 出结果后卡片宽高都会变（加载中只有「查询中…」）：不翻面、不大跳，
-        // 但要补两次碰撞复查——横向：右侧锚定的卡变宽会长出窗口被裁；
-        // 纵向：弹出时高度按 PLACE_H 估算，结果回来真实高度往往矮一截，
-        // 按当前侧面重新贴回锚点词，消掉卡片和词之间的大空隙
+        // 出结果后卡片宽高都会变：不翻面、不大跳，但要补碰撞复查——
+        // 横向：右侧锚定的卡变宽会长出窗口被裁；纵向：重新贴回锚点词，消掉大空隙
         const h = el.offsetHeight;
         const above = posRef.current.top < pop.at.top;
         const anchored = above ? pop.at.top - h - GAP : pop.at.bottom + GAP;
@@ -81,8 +73,7 @@ export default function DictPop({
         }
         return;
       }
-      // 查到结果才弹卡：量到的就是最终高度，直接按它定上下方向和落点，
-      // 不存在「加载中矮卡 → 结果高卡」的高度变化，落位一次到位
+      // 查到结果才弹卡：量到的就是最终高度，直接定上下方向和落点，落位一次到位
       const h = el.offsetHeight;
       let top = pop.at.bottom + GAP;
       if (top + h > vh - EDGE) top = pop.at.top - h - GAP;
@@ -105,7 +96,7 @@ export default function DictPop({
     const onMouseUp = (e: MouseEvent) => {
       const t = e.target as HTMLElement;
       if (popRef.current?.contains(t)) return; // 小卡内部的选择/点击不重置小卡
-      // 单词框（单行 input）、按钮、音标不触发；原文 textarea 要触发（原文框划词也是常见查词手势）
+      // 单词框（单行 input）、按钮、音标不触发；原文 textarea 要触发（划词也是常见查词手势）
       if (t.closest("input, button, .phonetic")) return;
       // textarea 的选区不进 window.getSelection，得读 selectionStart/End；
       // 也没有选区 range rect，改用鼠标坐标锚定小卡位置
@@ -120,13 +111,10 @@ export default function DictPop({
         return;
       }
       const rect = !ta && sel && sel.rangeCount ? sel.getRangeAt(0).getBoundingClientRect() : null;
-      // 鼠标锚点兼容 textarea（它没有 range rect）
       const vp = rect ?? { left: e.clientX, top: e.clientY, bottom: e.clientY + 4 };
       posRef.current = null;
       setPos(null);
-      // 查到结果才弹卡：没有加载占位，落位时量到的就是最终宽高，
-      // 也就没有「先按估算高度落位、出结果再挪」的瞬移；
-      // 查不到（非词文本、网络错）就保持收起，等待期用户无感知
+      // 查到结果才弹卡（无加载占位，落位时量到的就是最终宽高，不瞬移）；查不到就保持收起
       if (w !== wordRef.current || !popRef.current) {
         wordRef.current = w;
         const seq = ++seqRef.current;
@@ -139,7 +127,7 @@ export default function DictPop({
             setPop({ word: w, at: { left: vp.left, top: vp.top, bottom: vp.bottom } });
           })
           .catch(() => {
-            // 查不到就静默收起（非词文本、网络错都走这里）
+            // 非词文本、网络错都走这里：静默收起
             if (seqRef.current === seq) setPop(null);
           });
       } else {

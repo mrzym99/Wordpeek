@@ -6,7 +6,7 @@ import { applyTheme, watchTheme, type Theme } from "./lib/theme";
 import "./styles/global.css";
 
 // 四个窗口共用这一份页面：主题在这里统一落地，页面组件不必各自处理
-// 设置/输入窗口在 macOS 上自绘标题栏（Rust 侧 TitleBarStyle::Overlay），CSS 靠这个标记决定要不要让出头部
+// 设置/输入窗口在 macOS 上自绘标题栏（Rust 侧 TitleBarStyle::Overlay），CSS 靠 data-os 决定要不要让出头部
 if (navigator.userAgent.includes("Mac")) document.documentElement.dataset.os = "mac";
 let theme: Theme = "system";
 const syncTheme = () =>

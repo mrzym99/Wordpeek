@@ -15,9 +15,8 @@ pub struct OcrLine {
     pub h: i32,
 }
 
-/// 从系统可用语言标签里挑识别语言。
-/// "zh" 优先 zh-Hans（简体），退而求其次任意 zh 开头；
-/// "en" 优先 en-US，其次任意 en；"auto" 返回 None（引擎按用户语言创建）
+/// 从系统可用语言标签里挑识别语言："zh" 优先 zh-Hans 其次任意 zh 开头，"en" 优先
+/// en-US 其次任意 en；"auto" 返回 None（引擎按用户语言创建）
 fn pick_language(available: &[String], lang: &str) -> Option<String> {
     match lang {
         "zh" => available
@@ -137,7 +136,6 @@ mod tests {
         }];
         scale_lines(&mut lines, 4);
         assert_eq!((lines[0].x, lines[0].y, lines[0].w, lines[0].h), (25, 13, 10, 5));
-        // 未放大时不改坐标
         let mut same = lines.clone();
         scale_lines(&mut same, 1);
         assert_eq!((same[0].x, same[0].y), (25, 13));
@@ -164,7 +162,7 @@ mod tests {
             let img = image::load_from_memory(&bytes).expect("变体应是合法 PNG");
             assert_eq!((img.width(), img.height()), (200, 80));
         }
-        // 已够大的图不放大，但仍有二值化变体
+        // 已够大的图不放大
         let big = encode_png(&vec![255u8; 800 * 400 * 4], 800, 400).expect("编码应成功");
         assert_eq!(preprocess(&big).expect("预处理应成功").scale, 1);
     }
@@ -172,8 +170,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn preprocess_inverts_dark_backgrounds_and_binarizes() {
-        // 深底（20）浅字（230）：用 800×400 让缩放为 1；竖条宽 12px、间隔 40px
-        // （窗口半径 = 短边/32 = 12px，笔画比窗口窄，局部均值才有对比度）
+        // 深底（20）浅字（230）：用 800×400 让缩放为 1；竖条窄于窗口半径（短边/32）才有局部均值对比度
         let (w, h) = (800u32, 400u32);
         let mut img = image::GrayImage::from_pixel(w, h, image::Luma([20]));
         for x in (40..760).step_by(40) {
@@ -333,7 +330,6 @@ mod tests {
     }
 }
 
-/// OCR 前的图像处理方式
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PrepMode {
     /// 分位拉伸：保留灰度层次，适合浅底深字、背景明暗不均
@@ -351,7 +347,6 @@ impl PrepMode {
     }
 }
 
-/// 一个可直接送 OCR 的图像变体
 #[derive(Debug, Clone)]
 pub(crate) struct Prep {
     pub mode: PrepMode,
@@ -388,8 +383,7 @@ impl Prepped {
     }
 }
 
-/// 短边放大到至少 300px（Windows OCR 对小字号识别极差），倍数 1~4，
-/// 且放大后最长边不超过 4000px（远低于引擎上限，避免超大图把识别拖慢）。
+/// 短边放大到至少 300px（Windows OCR 对小字号识别极差），倍数 1~4，放大后最长边不超过 4000px
 pub(crate) fn upscale_factor(w: u32, h: u32) -> u32 {
     if w == 0 || h == 0 {
         return 1;
@@ -427,8 +421,7 @@ pub(crate) fn percentile_bounds(hist: &[u32; 256], low_pct: f32, high_pct: f32) 
     let mut lo_done = false;
     for v in 0..256u32 {
         acc += hist[v as usize] as u64;
-        // `.max(1)`：小图（几百像素）时 lo_target 会算成 0，
-        // 不兜底会让 lo 直接落在 0，灰度被整体压暗
+        // `.max(1)`：小图时 lo_target 会算成 0，不兜底会让灰度整体压暗
         if !lo_done && acc >= lo_target.max(1) {
             lo = v as u8;
             lo_done = true;
@@ -462,14 +455,13 @@ pub(crate) fn stretch_contrast(img: &image::GrayImage) -> image::GrayImage {
     image::GrayImage::from_vec(img.width(), img.height(), out).expect("尺寸固定，from_vec 不会失败")
 }
 
-/// 局部自适应二值化：阈值取窗口均值减去偏置 c，用积分图 O(1) 取窗口和，
-/// 对背景明暗渐变、纸张纹理、照片底色都稳。输出纯黑白：文字 0 / 背景 255。
+/// 局部自适应二值化：阈值取窗口均值减去偏置 c（积分图 O(1) 取窗口和），对背景明暗
+/// 渐变、纸张纹理、照片底色都稳。输出纯黑白：文字 0 / 背景 255。
 pub(crate) fn adaptive_binarize(img: &image::GrayImage, c: i32) -> image::GrayImage {
     let (w, h) = (img.width() as usize, img.height() as usize);
     let src = img.as_raw();
-    // 积分图带一圈 0 边界：int[y][x] = 左上角 y×x 区域的和。
-    // u32 够用：放大后最长边封顶 4000（upscale_factor），总和 ≤ 4000×4000×255 < u32::MAX；
-    // 只有容斥四项相减那一步可能越界，显式升 u64。比 u64 积分图省一半峰值内存。
+    // 积分图带一圈 0 边界，int[y][x] = 左上角 y×x 区域的和；u32 够用（总和 < u32::MAX），
+    // 仅容斥相减那步显式升 u64，比 u64 积分图省一半峰值内存
     let mut integral = vec![0u32; (w + 1) * (h + 1)];
     for y in 0..h {
         let mut row_sum = 0u32;
@@ -535,8 +527,7 @@ pub(crate) fn scale_lines(lines: &mut [OcrLine], f: u32) {
     }
 }
 
-/// 灰度图编码成 PNG（写回给 Windows 解码器）
-/// 收所有权：借用版要 `img.clone()` 整张图才能包成 DynamicImage
+/// 灰度图编码成 PNG（写回给 Windows 解码器）；收所有权：借用版要 clone 整张图才能包成 DynamicImage
 fn encode_gray(img: image::GrayImage) -> Result<Vec<u8>, String> {
     let mut out = Vec::new();
     image::DynamicImage::ImageLuma8(img)
@@ -545,9 +536,8 @@ fn encode_gray(img: image::GrayImage) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
-/// 生成 OCR 用的图像变体：
-/// 1) 小图放大（小字号是最大失分点）；2) 深底浅字反色；3) 分别做分位拉伸与自适应二值化。
-/// 设 `WORDPEEK_OCR_RAW=1` 时跳过全部预处理，仅用于人工 A/B 对照。
+/// 生成 OCR 用的图像变体：小图放大（小字号是最大失分点）、深底浅字反色、
+/// 分位拉伸与自适应二值化。`WORDPEEK_OCR_RAW=1` 跳过全部预处理（人工 A/B 对照用）。
 pub(crate) fn preprocess(png: &[u8]) -> Result<Prepped, String> {
     if std::env::var_os("WORDPEEK_OCR_RAW").is_some() {
         return Ok(Prepped {
@@ -588,7 +578,6 @@ pub(crate) fn preprocess(png: &[u8]) -> Result<Prepped, String> {
     })
 }
 
-/// 候选 OCR 引擎
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum EngineSpec {
     /// 跟随用户语言（ocr_lang = "auto"）
@@ -606,8 +595,8 @@ impl EngineSpec {
     }
 }
 
-/// 候选引擎：显式 zh/en 时该语言在前、另一种语言兜底；
-/// auto 时跟随系统语言在前，其后是可用的中英文备用引擎（中英混排、异体字场景用得上）。
+/// 候选引擎：显式 zh/en 该语言在前、另一种兜底；auto 时跟随系统在前，其后是
+/// 可用的中英文备用引擎（中英混排、异体字场景用得上）。
 pub(crate) fn candidate_engines(
     lang: &str,
     available: &[String],
@@ -750,7 +739,6 @@ pub(crate) fn recognize_report(png: &[u8], lang: &str) -> Result<OcrReport, Stri
     }
 }
 
-/// 枚举系统已安装的 OCR 语言标签
 #[cfg(windows)]
 fn available_languages() -> Result<Vec<String>, String> {
     use windows::Media::Ocr::OcrEngine;
@@ -765,7 +753,6 @@ fn available_languages() -> Result<Vec<String>, String> {
     Ok(tags)
 }
 
-/// 按候选创建引擎
 #[cfg(windows)]
 fn create_engine(spec: &EngineSpec) -> Result<windows::Media::Ocr::OcrEngine, String> {
     use windows::core::HSTRING;
@@ -785,8 +772,7 @@ fn create_engine(spec: &EngineSpec) -> Result<windows::Media::Ocr::OcrEngine, St
     }
 }
 
-/// PNG 字节 → 可直接送 OCR 的 Bgra8 位图。
-/// 显式转 Bgra8：预处理后会产生灰度 PNG，而引擎只接受 Bgra8。
+/// PNG 字节 → 可直接送 OCR 的 Bgra8 位图（预处理产出灰度 PNG，引擎只接受 Bgra8）
 #[cfg(windows)]
 fn decode_bitmap(png: &[u8]) -> Result<windows::Graphics::Imaging::SoftwareBitmap, String> {
     use windows::Graphics::Imaging::{

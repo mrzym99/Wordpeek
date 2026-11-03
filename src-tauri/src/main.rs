@@ -14,8 +14,7 @@ mod ocr;
 mod platform;
 mod translate;
 
-// 平台相关实现（光标/工作区/复制注入/抓屏/权限）全在 platform/ 模块：
-// Windows → platform/windows.rs，macOS → platform/macos.rs
+// 平台相关实现（光标/工作区/复制注入/抓屏/权限）在 platform/windows.rs 与 platform/macos.rs
 
 #[derive(serde::Serialize, Clone)]
 struct Selection {
@@ -24,8 +23,7 @@ struct Selection {
     y: i32,
 }
 
-/// 抓取互斥量：grab_selection 会改写剪贴板（备份→哨兵→恢复），
-/// 两个并发实例交错会把用户的剪贴板顶成哨兵串，必须串行
+/// 抓取互斥量：grab_selection 会改写剪贴板（备份→哨兵→恢复），并发交错会顶掉用户内容，必须串行
 static GRAB_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 /// 截图会话互斥量：遮罩窗是全局唯一的，连续触发会两个会话抢同一扇遮罩
 static SCREENSHOT_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
@@ -40,7 +38,7 @@ impl Drop for FlagGuard {
 
 /// 模拟复制键抓取当前选中文本，并把原剪贴板内容还原
 fn grab_selection(app: &AppHandle) -> Option<String> {
-    // 已有一轮在跑（热键连按）：直接放弃本次，上一轮的结果会正常弹出
+    // 热键连按：上一轮未结束就放弃本次，上一轮结果照常弹出
     if GRAB_IN_PROGRESS
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
         .is_err()
@@ -49,13 +47,12 @@ fn grab_selection(app: &AppHandle) -> Option<String> {
         return None;
     }
     let _guard = FlagGuard(&GRAB_IN_PROGRESS);
-    // 诊断打印：foreground_app 只有 Windows 实现（macOS 要走 NSWorkspace，暂不缺）
+    // 诊断打印：foreground_app 仅 Windows 实现（macOS 走 NSWorkspace，暂缺）
     #[cfg(windows)]
     println!("[grab] foreground app: {}", crate::platform::foreground_app());
     let mut clipboard = Clipboard::new().ok()?;
 
-    // 备份原剪贴板：文本优先；读不到文本（可能是图片/文件）就备份图片，
-    // 否则恢复时会把用户复制的非文本内容顶成空文本
+    // 备份原剪贴板：文本读不到（可能是图片/文件）时备份图片，否则恢复会顶成空文本
     let old_text = clipboard.get_text().ok();
     let old_image = if old_text.is_none() {
         clipboard.get_image().ok()
@@ -63,23 +60,18 @@ fn grab_selection(app: &AppHandle) -> Option<String> {
         None
     };
 
-    // 先把剪贴板替换成哨兵值：若 Ctrl+C 成功，剪贴板必然变成选中文本。
-    // 不能用"剪贴板内容是否变化"来判断，否则选中与剪贴板相同的文本时会被误判。
+    // 预置哨兵值判断复制是否生效；不能用"剪贴板内容是否变化"判断，选中与剪贴板相同会误判
     const SENTINEL: &str = "\u{200b}__pot-mini-sentinel__\u{200b}";
     clipboard.set_text(SENTINEL).ok()?;
 
-    // 松开物理按着的修饰键再注入复制键（Windows: Ctrl+C；macOS: Cmd+C）
+    // 注入复制键（Windows Ctrl+C / macOS Cmd+C）
     let injected = crate::platform::inject_copy(app);
     let ax = crate::platform::accessibility_allowed();
     if !injected || !ax {
         println!("[grab] inject_copy={injected}, accessibility={ax}");
     }
 
-    // 目标应用写入选中文本有快有慢（PDF、大文档可能超过百毫秒），
-    // 固定 sleep 会在慢应用上误判“没选中内容”，且恢复时可能被慢应用
-    // 后写入的内容覆盖；轮询到内容不再是哨兵值为止，最多 ~600ms。
-    // 首轮没等到就再注入一次复制键再等 ~300ms：偶发目标应用吞掉第一次 Ctrl+C
-    // （焦点刚切回来/输入法吞键），重试一次能救回来。
+    // 轮询到内容不再是哨兵值（慢应用写入可能超百毫秒，固定 sleep 会误判），最多 ~600ms；首轮没等到再注入一次复制键重试，再等 ~300ms
     let mut text = SENTINEL.to_string();
     if injected {
         for attempt in 0..2 {
@@ -103,14 +95,13 @@ fn grab_selection(app: &AppHandle) -> Option<String> {
         }
     }
 
-    // 恢复原剪贴板（文本或图片）
     if let Some(t) = old_text {
         let _ = clipboard.set_text(&t);
     } else if let Some(img) = old_image {
         let _ = clipboard.set_image(img);
     }
 
-    // 剪贴板还是哨兵值说明复制没有生效（按键注入失败或目标应用没有可复制的内容）
+    // 仍是哨兵值说明复制没生效（注入失败或目标应用无可复制内容）
     if text == SENTINEL {
         println!("[grab] clipboard 未被替换：目标应用没响应复制键");
         return None;
@@ -124,8 +115,7 @@ fn grab_selection(app: &AppHandle) -> Option<String> {
     }
 }
 
-/// 内容高度 → 窗口客户区（inner）逻辑高度：下限 60px，上限为工作区（逻辑像素）扣掉标题栏
-/// 再留 40px 边距，内容真超出才内部滚动（拿不到工作区信息时退回 800px；工作区极小时仍不低于下限）
+/// 内容高度 → 客户区逻辑高度：夹在 60px 与「工作区−标题栏−40px」间，超出才内部滚动；拿不到工作区退回 800
 fn fit_height(content_h: f64, work_h: f64, chrome_h: f64) -> f64 {
     let max = if work_h > 0.0 {
         work_h - chrome_h - 40.0
@@ -135,14 +125,12 @@ fn fit_height(content_h: f64, work_h: f64, chrome_h: f64) -> f64 {
     content_h.clamp(60.0, max.max(60.0))
 }
 
-/// 逻辑像素 → 物理像素（向上语义：四舍五入，至少 1px）。显示器矩形/位置都是物理像素，
-/// 缩放 ≠100% 时钳位前必须先乘 scale，否则钳不住，窗口会伸出屏幕外
+/// 逻辑像素 → 物理像素（四舍五入、至少 1px）；钳位前必须乘 scale，否则缩放 ≠100% 时钳不住
 fn to_physical(logical: f64, scale: f64) -> i32 {
     (logical * scale).round().max(1.0) as i32
 }
 
-/// 把「左上角在 (x, y)、尺寸 win_w×win_h」的窗口钳进显示器矩形内。
-/// 窗口比屏还大时贴左上角（不弹到屏外）。
+/// 把左上角在 (x, y)、尺寸 win_w×win_h 的窗口钳进显示器矩形；窗口比屏大时贴左上角
 fn clamp_rect_to_monitor(
     monitor: (i32, i32, i32, i32),
     win_w: i32,
@@ -169,8 +157,7 @@ fn monitor_rect_at(win: &tauri::WebviewWindow, x: i32, y: i32) -> Option<(i32, i
     Some((p.x, p.y, s.width as i32, s.height as i32))
 }
 
-/// 位置钳制矩形：优先工作区（macOS 排除菜单栏与 Dock，Windows 排除任务栏），
-/// 拿不到工作区（全 0）才退回显示器整块。用整块钳会让贴底的卡片钻到 Dock 下面。
+/// 钳制矩形优先用工作区（排除菜单栏/Dock/任务栏），全 0 才退回整屏——整屏钳会让贴底卡片钻到 Dock 下
 fn clamp_rect_prefer_work(
     work: (i32, i32, i32, i32),
     monitor: Option<(i32, i32, i32, i32)>,
@@ -190,8 +177,7 @@ fn usable_rect_at(win: &tauri::WebviewWindow, x: i32, y: i32) -> Option<(i32, i3
     )
 }
 
-/// 把弹窗位置钳制在光标所在屏幕内，避免边缘选词时弹窗伸出屏幕外。
-/// 任一步骤拿不到信息（找不到窗口/显示器）就原样返回，不钳制。
+/// 把弹窗位置钳进光标所在屏幕；任一步骤拿不到信息（找不到窗口/显示器）就原样返回不钳制
 fn clamp_to_screen(app: &AppHandle, label: &str, x: i32, y: i32) -> (i32, i32) {
     let Some(win) = app.get_webview_window(label) else {
         return (x, y);
@@ -232,11 +218,8 @@ fn viewport_inset(label: &str, win_h: f64, viewport_h: f64) -> f64 {
     inset
 }
 
-/// 前端量好卡片内容高度后调用：把窗口调整到刚好包住卡片，并重新钳制位置。
-/// 只改高度——宽度保持用户当前宽度（长文本可手动拉宽）。
-/// 位置钳制用「自己算出的新外框尺寸」，不依赖 set_size 之后立刻回读（那是异步消息）。
-/// 返回实际生效的窗口高度（可能被屏幕上限钳小）：前端用它判断「内容真的
-/// 装不下了」（is-capped），没顶到上限前一律不出滚动条，避免高度动画中闪条
+/// 前端量好内容高度后调用：只调高不调宽，按算出的新外框重新钳位（不依赖 set_size 后回读，那是异步消息）；
+/// 返回实际生效高度（可能被钳小），前端据此判断 is-capped，未顶上限不出滚动条，避免高度动画中闪条
 #[tauri::command]
 fn fit_window(app: AppHandle, label: String, height: f64, viewport: Option<f64>) -> Result<f64, String> {
     let win = app
@@ -249,14 +232,11 @@ fn fit_window(app: AppHandle, label: String, height: f64, viewport: Option<f64>)
     // 标题栏/边框占掉的逻辑像素：无边框弹窗为 0，带标题栏的窗口约 31
     let chrome_w = outer.width.saturating_sub(inner.width) as f64 / scale;
     let chrome_h = outer.height.saturating_sub(inner.height) as f64 / scale;
-    // 高度上限用窗口所在屏的工作区（排除任务栏）；work_area_at 给的是物理像素，
-    // 内容高度是逻辑像素，先除以缩放再钳制（多屏不同 DPI 时上限才不偏大）
+    // 高度上限用窗口所在屏的工作区；work_area_at 给物理像素，内容高度是逻辑像素，先除以 scale 再钳制
     let (_, _, _, work_h) = crate::platform::work_area_at(pos.x + 8, pos.y + 8);
     let inner_w = inner.width as f64 / scale;
-    // 带标题栏/边框的窗口（输入翻译窗）里，窗口高 ≠ webview 视口高：前端拿到的 100vh 少一条标题栏，
-    // 直接按内容 set_size 会被吃掉 32px。无边框弹窗（划词）差值为 0，行为不变。
-    // 差值只测一次并缓存：前端报上来的视口高可能落后于刚 set_size 的窗口，现算会把差值放大，
-    // 窗口越长越离谱（实测一次长出 200px 的空白）
+    // 带标题栏的窗口里窗口高 ≠ webview 视口高（前端拿到的 100vh 少一条标题栏）需补差值，无边框弹窗为 0；
+    // 差值只测一次并缓存：前端上报的视口高可能落后于刚 set_size 的窗口，现算会把差值越滚越大
     let chrome_extra = viewport.map(|vh| viewport_inset(&label, inner.height as f64 / scale, vh)).unwrap_or(0.0);
     let inner_h = fit_height(
         height + chrome_extra,
@@ -266,9 +246,7 @@ fn fit_window(app: AppHandle, label: String, height: f64, viewport: Option<f64>)
     win.set_size(tauri::LogicalSize::new(inner_w, inner_h))
         .map_err(|e| e.to_string())?;
 
-    // 新外框尺寸 = 客户区 + 边框/标题栏，用它重新钳一次位置。
-    // 逻辑尺寸必须换算成物理像素再和显示器矩形比：缩放 150% 的屏上把逻辑高当
-    // 物理高钳位，卡片会伸出屏幕底 (scale−1)×高，内容被裁掉又没滚动条，只能拖窗口（issue #8）
+    // 新外框尺寸 = 客户区 + 边框/标题栏，换算成物理像素再钳位；否则 150% 缩放下卡片伸出屏幕底且无滚动条（issue #8）
     let new_w = to_physical(inner_w + chrome_w, scale);
     let new_h = to_physical(inner_h + chrome_h, scale);
     let (nx, ny) = match usable_rect_at(&win, pos.x + 8, pos.y + 8) {
@@ -280,8 +258,7 @@ fn fit_window(app: AppHandle, label: String, height: f64, viewport: Option<f64>)
     Ok(inner_h)
 }
 
-/// 把窗口摆到主屏工作区中央（macOS 上 Dock / 菜单栏、Windows 上任务栏不会遮住它）。
-/// 不用 win.center()：它按整块屏幕居中，而且窗口还隐藏时可能取不到屏幕直接 no-op。
+/// 摆到主屏工作区中央（Dock/菜单栏/任务栏不遮挡）；不用 win.center()：按整屏居中且隐藏时可能 no-op
 fn center_window(win: &tauri::WebviewWindow) {
     let Ok(Some(mon)) = win.primary_monitor() else {
         return;
@@ -301,10 +278,8 @@ fn center_window(win: &tauri::WebviewWindow) {
     let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
 }
 
-/// 已存在则 show+置前；没建过就在事件循环线程按需创建为隐藏态（内容就绪后由前端自己 show）。
-/// 首次创建摆到屏幕中央；已打开时只 show，尊重用户拖到的位置。
-/// macOS：页面画到标题栏下面（Overlay），头部底色由前端画，交通灯浮在上面。
-/// drag_drop: true 时加 disable_drag_drop_handler（设置窗里要拖拽排序，输入窗不需要）
+/// 已存在则 show+置前；没建过就在事件循环线程按需创建为隐藏态（内容就绪后前端自己 show），首次创建居中。
+/// macOS 用 Overlay 标题栏（交通灯浮在自绘头部上）；drag_drop: true 加 disable_drag_drop_handler（设置窗要拖拽排序）
 fn spawn_or_show_window(
     app: &AppHandle,
     label: &str,
@@ -356,9 +331,7 @@ fn spawn_or_show_window(
     }
 }
 
-/// 显示独立的设置窗口（弹窗齿轮按钮 / 托盘菜单共用）。
-/// 点 ✕ 即销毁，回收它那个常驻 WebView2 renderer；一级菜单选择已存配置，
-/// 重开时设置页自动回到上次停留的菜单
+/// 显示设置窗口（齿轮按钮/托盘菜单共用）。点 ✕ 即销毁回收常驻 renderer；一级菜单选择已存配置，重开自动回到上次停留的菜单
 #[tauri::command]
 fn open_settings(app: AppHandle) {
     spawn_or_show_window(
@@ -373,8 +346,7 @@ fn open_settings(app: AppHandle) {
     );
 }
 
-/// 显示输入翻译窗口（托盘菜单 / 输入翻译快捷键共用）。
-/// 点 ✕ 即销毁，回收它那个常驻 WebView2 renderer（~60MB）
+/// 显示输入翻译窗口（托盘菜单/快捷键共用）。点 ✕ 即销毁，回收常驻 WebView2 renderer（~60MB）
 fn open_input_window(app: &AppHandle) {
     spawn_or_show_window(
         app,
@@ -408,7 +380,7 @@ fn status_of(app: &AppHandle, update: Option<&Update>) -> UpdateStatus {
 
 /// 检查更新并把结果缓存到应用状态（async：同步命令在主线程跑，block_on 会冻结整个 UI）
 async fn check_update(app: &AppHandle) -> Result<UpdateStatus, String> {
-    // macOS 端还没有签名/公证的产物，latest.json 里也没有 darwin 平台，检查只会报错
+    // macOS 还没有签名/公证的产物，latest.json 里也没有 darwin 平台，检查只会报错
     if cfg!(target_os = "macos") {
         return Err("macOS 版暂不提供自动更新，请到 GitHub Releases 手动下载".into());
     }
@@ -431,15 +403,13 @@ fn get_update_status(app: AppHandle) -> UpdateStatus {
     status_of(&app, cached.as_ref())
 }
 
-/// 手动检查更新（设置页「检查更新」按钮）。async 命令由 tauri 丢到异步运行时，
-/// 网络等待期间主线程（事件循环）不阻塞，弱网下应用不再假死
+/// 手动检查更新（设置页「检查更新」按钮）。async 命令由 tauri 丢到异步运行时，网络等待不阻塞主线程
 #[tauri::command]
 async fn check_update_now(app: AppHandle) -> Result<UpdateStatus, String> {
     check_update(&app).await
 }
 
-/// 重启自己。改完系统权限后必须换进程才生效，而 macOS 那个「退出并重新打开」
-/// 只对 .app 包有效——从终端起的进程被关掉就没了，所以给个应用内按钮。
+/// 重启自己：改完系统权限必须换进程才生效；macOS「退出并重新打开」对终端起的进程无效，故用应用内按钮
 #[tauri::command]
 fn restart_app(app: AppHandle) {
     app.restart();
@@ -452,10 +422,8 @@ struct UpdateProgress {
     total: Option<u64>,
 }
 
-/// 下载并静默安装已缓存的更新，完成后重启应用（后台线程执行）。
-/// 进度经 `update-progress` 事件推送（按整数百分比/256KB 步进去重，别把 IPC 刷爆）；
-/// 下载失败发 `update-failed` 并把更新放回缓存——命令本身立即返回 Ok，
-/// 线程里的失败只能靠事件通知前端，否则「下载安装中…」会永远转下去
+/// 后台线程下载并静默安装已缓存的更新，完成后重启。进度经 `update-progress` 事件按整数
+/// 百分比/256KB 步进去重推送；失败发 `update-failed` 并把更新放回缓存——命令立即返回 Ok，线程内失败只能靠事件通知前端
 #[tauri::command]
 fn install_update(app: AppHandle) -> Result<(), String> {
     let update = app
@@ -549,14 +517,11 @@ fn parse_code(s: &str) -> Option<Code> {
     None
 }
 
-/// 划词图标最近一次探测到的选中文本：点图标时直接用。
-/// 点击会把焦点转给我们的窗口，那时候再去读源应用的选区已经读不到了
+/// 划词图标最近一次探测到的选中文本，点图标时直接用；点击后焦点已转走，再读源应用选区就读不到了
 #[derive(Default)]
 struct IconSelection(parking_lot::Mutex<Option<String>>);
 
-/// 刚点过图标的时刻（毫秒）。点击的那一下会先收起图标，紧接着的鼠标松开事件
-/// 还会触发一次探测——那时源应用的选区还在（点我们自己的窗口不会取消选区），
-/// 图标就会立刻又弹回来。所以点完图标 400ms 内的探测直接跳过
+/// 刚点过图标的时刻（毫秒）。点击后的松开事件仍会触发探测且源应用选区还在，图标会立刻弹回，故 400ms 内的探测跳过
 static ICON_CLICKED_AT: AtomicU64 = AtomicU64::new(0);
 
 /// 左键按下的位置与时刻（物理像素, 毫秒）：用来区分「选词手势」和普通单击
@@ -567,14 +532,11 @@ static MOUSE_UP: std::sync::OnceLock<parking_lot::Mutex<(i32, i32, u64)>> =
     std::sync::OnceLock::new();
 /// 本次松手是否值得探测选区；mouse-up 回调里算好，worker 直接读
 static PROBE_INTENT: AtomicBool = AtomicBool::new(false);
-/// 选区代次：每次按下 +1。探测在独立线程里异步做（UIA 重试要 sleep，
-/// 不能堵 worker，否则后续鼠标信号会撑爆 sync_channel 被丢弃），
-/// show 前对一下代次，期间有新的按下（用户已开始新选区）就放弃本次结果
+/// 选区代次：每次按下 +1。探测异步做（不能堵 worker），show 前对代次，期间有新按下（用户已开始新选区）就放弃
 static SELECTION_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 /// 本次按下时光标是否落在划词图标矩形内（钩子回调只做廉价判断，hide 由 worker 做）
 static DOWN_ON_ICON: AtomicBool = AtomicBool::new(false);
-/// 划词图标最近一次 show 的屏幕矩形（物理像素 x,y,w,h）：钩子回调用它判断
-/// 点下的是不是图标自己，避免在回调里跨线程查窗口位置/尺寸
+/// 划词图标最近一次 show 的屏幕矩形（物理像素 x,y,w,h）：钩子回调用它判断是否点在图标上，避免回调里跨线程查窗口
 static ICON_RECT: parking_lot::Mutex<Option<(i32, i32, u32, u32)>> = parking_lot::Mutex::new(None);
 
 fn record_mouse_down() {
@@ -582,10 +544,8 @@ fn record_mouse_down() {
     *MOUSE_DOWN.get_or_init(Default::default).lock() = (x, y, now_ms());
 }
 
-/// 只有真的做了选词手势才探测：拖动（位移 ≥ 6 物理像素）或连击（350ms 内同一点再松手，
-/// 双击选词/三击选行）。普通单击不算——很多应用会记住上一次选区，单击后
-/// AXSelectedText 照样返回旧文本，不拦就会出现「随便点一下也冒图标」。
-/// 位移阈值：曼哈顿距离超过 6px 视为拖拽选区（低于此值是普通点击的抖动）
+/// 只有真的做了选词手势才探测：拖动（位移 ≥ 6 物理像素，曼哈顿距离）或连击（双击选词/三击选行）；
+/// 普通单击不算——很多应用单击后 AXSelectedText 仍返回旧选区，不拦会「随便点一下也冒图标」
 const GESTURE_MOVE_PX: i32 = 6;
 const GESTURE_REPEAT_PX: i32 = 8;
 
@@ -600,7 +560,7 @@ fn gesture_selects(
     let (x, y) = up;
     let (px, py, prev_at) = prev_up;
     let moved = (x - dx).abs() + (y - dy).abs() >= GESTURE_MOVE_PX;
-    // 本次按下紧跟上一次松手（系统双击间隔内、同一点）= 连击：双击选词/三击选行
+    // 本次按下紧跟上一次松手（系统双击间隔内、同一点）= 连击
     let repeated = prev_at != 0
         && down_at.saturating_sub(prev_at) < repeat_ms
         && (dx - px).abs() + (dy - py).abs() < GESTURE_REPEAT_PX;
@@ -618,8 +578,7 @@ fn mouse_gesture_selects(x: i32, y: i32) -> bool {
     gesture_selects(down, (x, y), (px, py, prev_at), repeat_ms())
 }
 
-/// 连击判定窗口取系统「双击间隔」：系统里调到 900ms 时慢速双击也是双击，
-/// 硬编码 500ms 会把它们判成两次单击。极端值（0 或超长）夹到 250–1000
+/// 连击判定窗口取系统双击间隔（系统调到 900ms 时慢速双击也是双击，硬编码 500ms 会误判），极端值夹到 250–1000
 fn repeat_ms() -> u64 {
     crate::platform::double_click_interval_ms().clamp(250, 1000)
 }
@@ -636,8 +595,7 @@ fn cursor_on_window(app: &AppHandle, label: &str) -> bool {
     let Some(win) = app.get_webview_window(label) else {
         return false;
     };
-    // 藏起来的窗口还留着上次的位置和尺寸：不判可见的话，卡片收起后它那块屏幕区域
-    // 就再也划不出图标了（logs 里 skip 光标在自家窗口 的根源）
+    // 藏起来的窗口还留着上次的位置尺寸，不判可见的话卡片收起后那块屏幕区域就再也划不出图标
     if !win.is_visible().unwrap_or(false) {
         return false;
     }
@@ -655,9 +613,8 @@ fn hide_selection_icon(app: &AppHandle) {
     }
 }
 
-/// 在松手位置显示图标（窗口已在 tauri.conf.json 里预建，这里只是挪位置 + show）。
-/// 锚定松手位置而不是实时光标：探测是异步的（要等 120ms+），用实时位置的话
-/// 用户探测期间挪开鼠标，图标会追着光标在别处冒出来
+/// 在松手位置显示图标（窗口已在 tauri.conf.json 预建，只挪位置 + show）。锚定松手点而非实时光标：
+/// 探测要等 120ms+，追光标的话用户挪开鼠标，图标会在别处冒出来
 fn show_selection_icon(app: &AppHandle, text: String, ax: i32, ay: i32) {
     *app.state::<IconSelection>().0.lock() = Some(text);
     let app = app.clone();
@@ -674,8 +631,7 @@ fn show_selection_icon(app: &AppHandle, text: String, ax: i32, ay: i32) {
     });
 }
 
-/// 光标是否落在缓存的图标矩形内。只在钩子回调用：只碰 GetCursorPos + 内存读，
-/// 绝不做跨线程窗口查询/ShowWindow（回调慢了全系统鼠标卡，超时还会被系统摘钩）
+/// 光标是否落在缓存的图标矩形内；只在钩子回调用，只碰 GetCursorPos + 内存读，绝不做跨线程窗口查询
 fn cursor_on_icon_rect() -> bool {
     let Some((x, y, w, h)) = *ICON_RECT.lock() else {
         return false;
@@ -684,9 +640,8 @@ fn cursor_on_icon_rect() -> bool {
     cx >= x && cx < x + w as i32 && cy >= y && cy < y + h as i32
 }
 
-/// 划词图标：鼠标松开后读一次系统选区（不碰剪贴板、不注入按键），有选中文字就在
-/// 光标旁弹按钮，点一下走热键同一套翻译链路。读不到选区（终端、Electron 等
-/// 不实现 AX/UIA 文本接口的应用）就什么都不做，用户照旧用划词快捷键。
+/// 划词图标：鼠标松开后读一次系统选区（不碰剪贴板、不注入按键），有选中文字就在光标旁弹按钮，
+/// 点一下走热键同一套翻译链路；读不到选区（终端、Electron 等不实现 AX/UIA 文本接口）就什么都不做
 fn start_selection_icon(app: &AppHandle) {
     /// 鼠标信号：Down=按下、Up=松开（带松手位置，锚点用）、Leave=图标可见时鼠标飘远
     enum Signal {
@@ -694,22 +649,17 @@ fn start_selection_icon(app: &AppHandle) {
         Up { x: i32, y: i32 },
         Leave,
     }
-    // 队列只留一个信号：钩子回调绝不做窗口操作（跨线程查询/ShowWindow 会拖慢全系统鼠标，
-    // 超时还会被 Windows 静默摘钩），hide 一律在 worker 线程里做
+    // 队列只留一个信号：钩子回调绝不做窗口操作（跨线程查询/ShowWindow 拖慢全系统鼠标且会被摘钩），hide 都在 worker 里做
     let (tx, rx) = std::sync::mpsc::sync_channel::<Signal>(1);
     let tx_down = tx.clone();
     let tx_move = tx.clone();
-    /// 光标离开图标矩形这么远（物理像素）就收起图标：说明用户已经去别处了，
-    /// 图标留在原地碍事。留这一圈余量是给「把鼠标挪过去点图标」的路径
+    /// 光标离开图标矩形这么远（物理像素）就收起图标；留这一圈余量是给「把鼠标挪过去点图标」的路径
     const ICON_LEAVE_PX: i32 = 48;
-    /// 探测完成时光标离松手点超过这么远就丢弃结果：用户已去别处，且很多应用会一直
-    /// 报旧选区，人不在那就不该弹。取 400px 物理（200pt）：AX 读不到时还要走 Cmd+C
-    /// 兜底（≥300ms），期间手一动就超 150px
+    /// 探测完成时光标离松手点超过这么远就丢弃：很多应用一直报旧选区，人不在不该弹；400px 给 Cmd+C 兜底（≥300ms）留余量
     const ICON_NEAR_PX: i32 = 400;
     let watch = crate::platform::start_mouse_watch(
         Box::new(move || {
-            // 点在图标窗口自身上时不能收起：Windows 低级钩子连自己窗口的鼠标事件也收，
-            // down 就把窗口藏掉会吞掉这次 click（macOS 全局监视器不收自身应用的事件，无此问题）
+            // 点在图标自身上不能收起：Windows 低级钩子连自家窗口的鼠标事件也收，down 就藏会吞掉这次 click
             DOWN_ON_ICON.store(cursor_on_icon_rect(), Ordering::Relaxed);
             record_mouse_down();
             let _ = tx_down.try_send(Signal::Down);
@@ -717,11 +667,9 @@ fn start_selection_icon(app: &AppHandle) {
         Box::new(move || {
             let (x, y) = crate::platform::cursor_pos();
             PROBE_INTENT.store(mouse_gesture_selects(x, y), Ordering::Relaxed);
-            // 队列里只留一个待处理的探测：连点鼠标时不堆积，也不会每点一下就开条线程
             let _ = tx.try_send(Signal::Up { x, y });
         }),
-        // 移动：图标可见且光标已飘远（要开始别的事了）→ 发 Leave 收起。
-        // 只碰内存读 + 坐标比较，保持回调轻量；图标已收起时这里近乎免费
+        // 移动：图标可见且光标已飘远 → 发 Leave 收起；只碰内存读 + 坐标比较，保持回调轻量
         Box::new(move |x, y| {
             if let Some((ix, iy, iw, ih)) = *ICON_RECT.lock() {
                 if x < ix - ICON_LEAVE_PX
@@ -746,8 +694,7 @@ fn start_selection_icon(app: &AppHandle) {
     std::thread::spawn(move || {
         while let Ok(sig) = rx.recv() {
             match sig {
-                // 按下/飘远：收起图标（开始新一轮选区）；点在图标上按下则保留，
-                // 等随后的 click 命令（translate_selection_icon）接管
+                // 按下/飘远收起图标（开始新一轮选区）；点在图标上则保留，等 click 命令（translate_selection_icon）接管
                 Signal::Down | Signal::Leave => {
                     SELECTION_GEN.fetch_add(1, Ordering::Relaxed);
                     if matches!(sig, Signal::Leave)
@@ -776,8 +723,7 @@ fn probe_selection(worker: &AppHandle, ux: i32, uy: i32, near_px: i32) {
         hide_selection_icon(worker);
         return;
     }
-    // 在自家窗口里划词（卡片内选中跳查、设置页复制等）不弹图标，
-    // 否则用户在自己卡片里选个词，光标旁边又冒出一个翻译图标
+    // 在自家窗口里划词（卡片内选中跳查、设置页复制等）不弹图标，否则在自己卡片里选词又冒出图标
     if ["main", "icon", "settings", "input"]
         .iter()
         .any(|&l| cursor_on_window(worker, l))
@@ -785,12 +731,10 @@ fn probe_selection(worker: &AppHandle, ux: i32, uy: i32, near_px: i32) {
         hide_selection_icon(worker);
         return;
     }
-    // 探测放进独立线程：UIA 对 Chromium 应用要重试等 120ms+，堵在这里
-    // 会让 sync_channel(1) 溢出，丢掉后续鼠标信号 → 图标时灵时不灵
+    // 探测放独立线程：UIA 对 Chromium 应用要重试等 120ms+，堵住会撑爆 sync_channel(1) 丢鼠标信号
     let gen = SELECTION_GEN.load(Ordering::Relaxed);
     let prober = worker.clone();
-    // 探测线程要自己开 autorelease pool：worker 线程没有主线程那个池，
-    // Obj-C 临时对象会攒到线程结束
+    // 探测线程要自己开 autorelease pool：worker 线程没有主线程那个池，Obj-C 临时对象会攒到线程结束
     std::thread::spawn(move || {
         crate::platform::with_release_pool(|| probe_and_show(&prober, ux, uy, near_px, gen))
     });
@@ -798,17 +742,15 @@ fn probe_selection(worker: &AppHandle, ux: i32, uy: i32, near_px: i32) {
 
 /// 探测选区并弹图标。`gen` 是发起时的选区代次：期间用户开始了新选区就丢弃本次结果
 fn probe_and_show(worker: &AppHandle, ux: i32, uy: i32, near_px: i32, gen: u64) {
-    // 上一轮的 Cmd+C 兜底还没收尾（连点、连按快捷键）：放弃本次，但**不 hide**——
-    // 上一轮可能刚把图标弹出来，hide 会让它闪一下就消失
-    // shortcut: 只读标志不排队，真撞在同一毫秒会少弹一次，为这点概率上锁不值
+    // 上一轮的 Cmd+C 兜底还没收尾（连点、连按快捷键）：放弃本次，但**不 hide**——上一轮可能
+    // 刚把图标弹出来，hide 会让它闪一下就消失；只读标志不上锁，真撞同一毫秒少弹一次，不值
     if GRAB_IN_PROGRESS.load(Ordering::SeqCst) {
         return;
     }
     let mut text = crate::platform::focused_selection();
     if text.is_none() && crate::platform::clipboard_fallback_allowed() {
-        // AX 读不到（终端、部分 Electron、自绘 UI）。没选区时应用不会响应复制键，
-        // grab_selection 会还原剪贴板，所以这一步白跑也不会顶掉用户内容。
-        // Windows 老控制台里 Ctrl+C 是中断，clipboard_fallback_allowed 会拦掉
+        // AX 读不到（终端、部分 Electron、自绘 UI）时走复制键兜底：没选区时应用不会响应复制键，
+        // grab_selection 会还原剪贴板，白跑也不顶掉用户内容。Windows 老控制台 Ctrl+C 是中断，由 clipboard_fallback_allowed 拦掉
         text = grab_selection(worker);
     }
     match text {
@@ -850,23 +792,20 @@ fn translate_selection_icon(app: AppHandle) -> Result<(), String> {
 /// 快捷键触发：抓取选中文本并通知弹窗
 fn handle_hotkey_trigger(app: &AppHandle) {
     println!("[shortcut] triggered");
-    // 抓取选中文本需要模拟按键并等待剪贴板，放到独立线程，
-    // 避免阻塞主线程；且此时用户可能已松开按键。
+    // 模拟按键+等剪贴板耗时，放独立线程避免阻塞主线程
     let app = app.clone();
     std::thread::spawn(move || {
         match grab_selection(&app) {
             Some(text) => {
                 let (cx, cy) = crate::platform::cursor_pos();
                 println!("[grab] got text: {:?} at ({}, {})", text, cx, cy);
-                // 在 Rust 端钳制到屏幕内后再发事件，前端直接使用
                 let (x, y) = clamp_to_screen(&app, "main", cx + 12, cy + 16);
                 hide_selection_icon(&app);
                 let _ = app.emit("selection", Selection { text, x, y });
             }
             None => {
                 println!("[grab] no text captured");
-                // macOS 上抓词失败最常见原因是辅助功能权限未授予，
-                // 直接打开设置页引导授权（Windows/已授权时恒 true，静默）
+                // macOS 抓词失败最常见是辅助功能权限未授予，开设置页引导授权（Windows/已授权时恒 true，静默）
                 if !crate::platform::accessibility_allowed() {
                     open_settings(app.clone());
                 }
@@ -875,8 +814,7 @@ fn handle_hotkey_trigger(app: &AppHandle) {
     });
 }
 
-/// 权限缺失时弹原生对话框，一键跳到对应系统设置面板。
-/// 只在后台线程调用：blocking_show 会阻塞当前线程，主线程调用会卡住事件循环
+/// 权限缺失时弹原生对话框，一键跳到对应系统设置面板；只能在后台线程调用（blocking_show 会阻塞当前线程）
 fn alert_permission(app: &AppHandle, message: &str, settings_url: &str) {
     use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
@@ -907,8 +845,7 @@ struct ScreenshotSession {
     main_was_visible: bool,
 }
 
-/// 藏起自家窗口并返回藏之前的真实可见性（供事后恢复）；窗口不存在/读不到状态都按
-/// “本来就没开”处理返回 false。与 show_window 是截图会话专用的配对原语
+/// 藏起自家窗口并返回藏之前的真实可见性（供事后恢复）；与 show_window 是截图会话专用的配对原语
 fn hide_window(app: &AppHandle, label: &str) -> bool {
     match app.get_webview_window(label) {
         Some(w) if w.is_visible().unwrap_or(false) => {
@@ -942,10 +879,8 @@ fn handle_screenshot_trigger(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
         let _guard = FlagGuard(&SCREENSHOT_IN_PROGRESS);
-        // 没权限时抓屏只会拿到桌面壁纸，必须明确告诉用户去哪开，而不是静默失败。
-        // 先 request：只有它会弹系统授权框并把 Wordpeek 登记进「屏幕录制」列表
-        //（只 preflight 的话列表里没有这一项，用户根本没法勾）。
-        // 用户当场勾了也常常要重启进程才生效，所以仍继续走提示。
+        // 没权限时抓屏只会拿到桌面壁纸，必须明确引导而不是静默失败。只有 request 会弹授权框并把
+        // Wordpeek 登记进「屏幕录制」列表（只 preflight 没法勾）；当场勾了也常要重启进程才生效，仍继续走提示
         if !crate::platform::screen_capture_allowed() {
             let granted = crate::platform::request_screen_capture();
             if !granted {
@@ -957,8 +892,7 @@ fn handle_screenshot_trigger(app: &AppHandle) {
                 return;
             }
         }
-        // 抓屏前先把自家窗口藏起来：否则设置窗/上次的结果卡片会被拍进截图，
-        // 而且新遮罩弹出时旧卡片还压在屏幕上（用户看到的「卡片不消失」）
+        // 抓屏前先藏自家窗口：否则设置窗/结果卡片会被拍进截图，且新遮罩弹出时旧卡片还压在屏幕上
         let was_visible = hide_window(&app, "settings");
         let main_was_visible = hide_window(&app, "main");
         // 抓屏失败/找不到遮罩窗时要恢复刚才藏掉的窗口，否则设置窗凭空消失
@@ -993,8 +927,7 @@ fn handle_screenshot_trigger(app: &AppHandle) {
             }
         }
 
-        // 存快照供 finish/cancel 清理（was_visible 是抓屏前读到的真实值，
-        // 窗口此刻已被藏起，不能再重新 is_visible）
+        // 存快照供 finish/cancel 清理（was_visible 是抓屏前读到的真实值，此刻窗口已藏起不能再 is_visible）
         let state = app.state::<ScreenshotState>();
         {
             let mut session = state.0.lock();
@@ -1003,8 +936,7 @@ fn handle_screenshot_trigger(app: &AppHandle) {
             session.main_was_visible = main_was_visible;
         }
 
-        // 遮罩内容常驻就绪（纯 CSS，无大图传输），立即显示即可框选；
-        // screenshot-start 仅作轻量信号让前端重置选区
+        // 遮罩内容常驻就绪（纯 CSS），立即显示即可框选；screenshot-start 仅让前端重置选区
         let _ = app.emit_to(
             "screenshot",
             "screenshot-start",
@@ -1014,10 +946,8 @@ fn handle_screenshot_trigger(app: &AppHandle) {
         let _ = win.set_focus();
         crate::platform::prepare_overlay(&win);
 
-        // 双屏不同 DPI：set_position 跨屏移动会触发 WM_DPICHANGED，tao 在事件循环里
-        // 异步按「保持逻辑尺寸」重设窗口，覆盖刚设的虚拟屏尺寸 → 首次遮罩只盖一块屏
-        //（第二次触发 DPI 已稳定不再触发，所以正常）。显示后校验几何，被 churn 改动
-        // 就重设，直到连续两次读数稳定。
+        // 跨屏 set_position 触发 WM_DPICHANGED 后 tao 会异步按「保持逻辑尺寸」重设窗口，覆盖刚设的
+        // 虚拟屏尺寸（首次遮罩只盖一块屏，第二次触发时 DPI 已稳定）。显示后校验几何，被 churn 改动就重设，连续两次稳定为止
         let mut stable = 0;
         for _ in 0..30 {
             std::thread::sleep(std::time::Duration::from_millis(20));
@@ -1050,8 +980,8 @@ fn handle_screenshot_trigger(app: &AppHandle) {
     });
 }
 
-/// 截图结果 payload：ctx 里带 sel/virtual/mouse/work 四组坐标（物理像素），
-/// 前端用它们把卡片弹到框选位置附近；四个分支只差 ok/text/info/error，其余手抄三遍太脆
+/// 截图结果 payload：ctx 里带 sel/virtual/mouse/work 四组坐标（物理像素）供前端把卡片弹到框选位置附近；
+/// 四个分支只差 ok/text/info/error，其余字段统一在这里拼，避免各分支手抄三遍
 fn shot_payload(
     ok: bool,
     text: Option<String>,
@@ -1080,12 +1010,12 @@ fn screenshot_finish(app: AppHandle, x: i32, y: i32, w: i32, h: i32) -> Result<(
     let was_visible = session.settings_was_visible;
     let win = app.get_webview_window("screenshot").ok_or("截图窗口不存在")?;
     let _ = win.hide();
-    // 松手瞬间的光标位置（物理像素），结果卡片弹到鼠标旁边；OCR 完再取会被用户摌走
+    // 松手瞬间的光标位置（物理像素），结果卡片弹到鼠标旁边；OCR 完再取会被用户移走
     let (mx, my) = crate::platform::cursor_pos();
     // 光标所在屏的工作区（排除任务栏），前端锚制用
     let (wx, wy, ww, wh) = crate::platform::work_area_at(mx, my);
 
-    // 钳制到快照范围内（capture::clamp_rect，有单测），避免越界尺寸与裁剪像素长度不符
+    // 钳制到快照范围内（capture::clamp_rect，有单测）
     let rect = crate::capture::clamp_rect(x, y, w, h, screen.width, screen.height);
     let (cx, cy, cw, ch) = (rect.x, rect.y, rect.w, rect.h);
 
@@ -1093,7 +1023,6 @@ fn screenshot_finish(app: AppHandle, x: i32, y: i32, w: i32, h: i32) -> Result<(
     // 定位信息先提取，随后释放全屏像素（OCR 期间不再需要 ~23MB RGBA）
     let (vx, vy, vw, vh) = (screen.origin_x, screen.origin_y, screen.width, screen.height);
     drop(screen.rgba);
-    // 选区/虚拟屏/鼠标/工作区坐标（物理像素）随结果发前端，用于把卡片弹到框选位置附近
     let ctx = serde_json::json!({
         "sel": { "x": cx, "y": cy, "w": cw, "h": ch },
         "virtual": { "x": vx, "y": vy, "width": vw, "height": vh },
@@ -1185,14 +1114,14 @@ pub(crate) fn validate_hotkeys(hotkeys: &[&str]) -> Result<(), String> {
     Ok(())
 }
 
-/// 注册全部全局快捷键（先注销旧的全部再注册）；返回注册失败的快捷键名（
-/// 通常是键位被其他程序占用）。保存配置时把它作为 Err 返回给设置页展示
+/// 注册全部全局快捷键（先注销旧的全部再注册）；返回注册失败的键名（通常是键位被其他程序占用），
+/// 保存配置时作为 Err 返回给设置页展示
 pub(crate) fn register_hotkeys(app: &AppHandle, cfg: &translate::AppConfig) -> Vec<String> {
     let mut failed = Vec::new();
     if let Err(e) = app.global_shortcut().unregister_all() {
         eprintln!("[shortcut] 注销旧快捷键失败: {e}");
     }
-    // 任意两个快捷键相同都会导致行为歧义，直接都不注册
+    // 有重复直接全不注册
     if let Err(e) = validate_hotkeys(&[&cfg.hotkey, &cfg.screenshot_hotkey, &cfg.input_hotkey]) {
         eprintln!("[shortcut] {e}");
         return vec![e];
@@ -1225,8 +1154,7 @@ pub(crate) fn register_hotkeys(app: &AppHandle, cfg: &translate::AppConfig) -> V
     failed
 }
 
-/// 系统权限状态（设置页「系统权限」区块展示 + 跳系统设置；
-/// Windows 恒可用，macOS 实现在 platform/macos.rs）
+/// 系统权限状态（设置页「系统权限」区块展示 + 跳系统设置；Windows 恒可用，macOS 实现在 platform/macos.rs）
 #[derive(serde::Serialize)]
 struct PermissionStatus {
     accessibility: bool,
@@ -1257,8 +1185,7 @@ fn main() {
 
     let builder = tauri::Builder::default();
     builder
-        // 单实例：第二次启动不再起新进程，直接在已有实例里把设置窗拉到前台。
-        // 必须排在其它 plugin 之前（官方要求），否则可能先拿到已注册的系统资源
+        // 单实例：二次启动把设置窗拉到前台；必须排在其它 plugin 之前（官方要求），否则可能先拿到已注册的系统资源
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             open_settings(app.clone());
         }))
@@ -1291,8 +1218,7 @@ fn main() {
             app.manage(ScreenshotState::default());
             app.manage(IconSelection::default());
 
-            // Win11 会给透明弹窗再叠一层 ~8px 系统圆角，CSS 圆角外多出一道弧；
-            // 弹窗类窗口全关掉，圆角只留 CSS 一层（设置/输入窗有标题栏，保留系统圆角）
+            // Win11 给透明弹窗再叠一层 ~8px 系统圆角，弹窗类全关掉只留 CSS 一层（设置/输入窗有标题栏，保留系统圆角）
             #[cfg(windows)]
             for label in ["main", "icon", "screenshot"] {
                 if let Some(win) = app.get_webview_window(label) {
@@ -1300,8 +1226,7 @@ fn main() {
                 }
             }
 
-    // panic 钩子：tokio 任务里的 panic 默认只打到 stderr（release 下不可见），
-    // 落一份到配置目录的 panic.log 方便事后排查
+    // panic 钩子：tokio 任务里的 panic 默认只打到 stderr（release 下不可见），落一份到配置目录 panic.log 供排查
     let panic_dir = app
         .path()
         .app_config_dir()
@@ -1321,8 +1246,7 @@ fn main() {
             // 划词图标：全局鼠标监听（跟设置里的开关无关，开关在探测时现读）
             start_selection_icon(&handle);
 
-            // 启动后后台把截图遮罩窗口预铺到虚拟屏尺寸（常驻隐藏），
-            // 首次截图时窗口无需 resize，避免闪动
+            // 启动后后台把截图遮罩窗口预铺到虚拟屏尺寸（常驻隐藏），首次截图无需 resize，避免闪动
             let shot_handle = handle.clone();
             std::thread::spawn(move || {
                 std::thread::sleep(std::time::Duration::from_millis(800));
@@ -1335,15 +1259,14 @@ fn main() {
                 }
             });
 
-            // 启动后在后台预热 OCR（仅 macOS）：进程内第一次调 Vision 要加载模型（实测 30-60s），
-            // 不预热的话「第一次截图翻译」就会卡半分钟。Windows 用 Windows.Media.Ocr 无需预热
+            // 预热 OCR（仅 macOS）：首次调 Vision 加载模型要 30-60s，不预热第一次截图翻译会卡半分钟；Windows 无需预热
             #[cfg(target_os = "macos")]
             std::thread::spawn(|| {
                 std::thread::sleep(std::time::Duration::from_secs(2));
                 crate::ocr::warmup();
             });
 
-            // 启动后延迟几秒静默检查一次更新，结果缓存供设置页查询            // （macOS 拿不到更新产物，启动时不检查，避免每次启动一条错误日志）
+            // 启动后延迟几秒静默检查一次更新，结果缓存供设置页查询（macOS 拿不到更新产物，启动时不检查）
             if !cfg!(target_os = "macos") {
                 let updater_handle = handle.clone();
                 std::thread::spawn(move || {
@@ -1354,11 +1277,9 @@ fn main() {
                 });
             }
 
-            // 设置窗口也改为按需创建（open_settings），点 ✕ 即销毁，
-            // 不再需要关闭时隐藏的守卫
+            // 设置窗口按需创建（open_settings），点 ✕ 即销毁，无需关闭时隐藏的守卫
 
-            // 系统托盘：应用常驻后台的唯一可见入口，
-            // 左键/右键弹出菜单，可打开设置或退出
+            // 系统托盘：应用常驻后台的唯一可见入口
             let input = MenuItem::with_id(app, "input", "输入翻译", true, None::<&str>)?;
             let settings =
                 MenuItem::with_id(app, "settings", "设置", true, None::<&str>)?;
@@ -1385,7 +1306,6 @@ fn main() {
                 })
                 .build(app)?;
 
-            // 按配置注册全部全局快捷键（划词+截图；失败仅打日志，不阻断启动）
             let cfg = app
                 .state::<parking_lot::Mutex<translate::AppConfig>>()
                 .lock()

@@ -23,13 +23,10 @@ export interface AppConfig {
   screenshot_hotkey: string;
   ocr_lang: string;
   input_hotkey: string;
-  /** 内置默认源（有道词典/必应翻译）是否启用 */
   builtin_sources: boolean;
   /** 设置窗口上次停留的一级菜单，重开时恢复 */
   settings_section?: string;
-  /** 外观主题：跟随系统 / 强制亮 / 强制暗 */
   theme?: "system" | "light" | "dark";
-  /** 选中文字后在光标旁弹翻译按钮（默认开） */
   selection_icon?: boolean;
   baidu: BaiduConfig;
   tencent: TencentConfig;
