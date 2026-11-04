@@ -173,7 +173,8 @@ export default function Popup() {
     let selSeq = 0; // selection 处理器序号（见 sel 回调内注释）
 
     // 不能在 blur 时直接 hide：拖拽/缩放窗口开始时也触发一次 blur，立即隐藏会中断操作，
-    // 故 blur 后延迟复核 isFocused
+    // 故 blur 后延迟复核 isFocused；且必须持续轮询——macOS Accessory 应用失焦后
+    // 不会再有新 blur，一次性复核被 ：hover 豁免跳过后卡片会永久滞留
     let hideCheck: number | undefined;
     const stopHideCheck = () => {
       if (hideCheck !== undefined) {
@@ -183,10 +184,7 @@ export default function Popup() {
     };
     const startHideCheck = () => {
       if (hideCheck !== undefined) return;
-      hideCheck = setInterval(() => {
-        stopHideCheck();
-        maybeHide();
-      }, 150);
+      hideCheck = setInterval(maybeHide, 300);
     };
 
     // 鼠标在卡片里不藏（用户可能只是点了别的窗口边看边打字），离开时由 onLeave 补查
@@ -198,6 +196,7 @@ export default function Popup() {
 
     // 收起即清空：下次打开从空态开始；序号+1 丢掉在途的旧结果
     const hideAndReset = () => {
+      stopHideCheck();
       win.hide();
       seqRef.current++;
       lastLooked.current = "";
@@ -214,6 +213,12 @@ export default function Popup() {
       setCompareLoading(false);
       setCompareError("");
       setCopied("");
+    };
+
+    // 点卡片外即收起（.card 的 12px 透明阴影边距也算窗口内）：这类点击不产生
+    // blur，macOS 失焦后无新 blur，卡片会滞留；dragStrip/DictPop 都在 .card 内不受影响
+    const onDocMouseDown = (e: MouseEvent) => {
+      if (!cardRef.current?.contains(e.target as Node)) hideAndReset();
     };
 
     // 异步订阅竞态防护：StrictMode 会 挂载→清理→再挂载，listen 的 Promise
@@ -249,6 +254,12 @@ export default function Popup() {
         await win.setFocus();
         refit(); // 不依赖焦点事件：窗口重开时残留的拖拽高度立刻按内容纠正
         lookup(text.trim());
+        // macOS Accessory 应用 makeKey 偶发不生效：焦点没立起来 blur 通道就整个
+        // 失灵，卡片失去「点外面收起」的触发器，稍候补一次
+        if (!(await win.isFocused())) {
+          await new Promise((r) => setTimeout(r, 150));
+          if (!stale()) await win.setFocus();
+        }
       });
       if (disposed) sel();
       else unlistenSelection = sel;
@@ -303,6 +314,9 @@ export default function Popup() {
       document.documentElement.addEventListener("mouseleave", onLeave);
       if (disposed) document.documentElement.removeEventListener("mouseleave", onLeave);
 
+      document.addEventListener("mousedown", onDocMouseDown, true);
+      if (disposed) document.removeEventListener("mousedown", onDocMouseDown, true);
+
       // 用户拖宽弹窗后防抖落盘；高度动画引发的等宽 resize 被「与上次已存宽度比较」过滤，不频繁写盘
       let savedWidth = 0;
       const resized = await win.onResized(async (e) => {
@@ -329,6 +343,7 @@ export default function Popup() {
       unlistenResized?.();
       if (widthTimer !== undefined) clearTimeout(widthTimer);
       document.documentElement.removeEventListener("mouseleave", onLeave);
+      document.removeEventListener("mousedown", onDocMouseDown, true);
       stopHideCheck();
     };
   }, []);
