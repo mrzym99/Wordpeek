@@ -1,6 +1,5 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
-use arboard::Clipboard;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
@@ -23,7 +22,7 @@ struct Selection {
     y: i32,
 }
 
-/// 抓取互斥量：grab_selection 会改写剪贴板（备份→哨兵→恢复），并发交错会顶掉用户内容，必须串行
+/// 抓取互斥量：grab_selection 会读改写剪贴板（备份→注入复制键→恢复），并发交错会顶掉用户内容，必须串行
 static GRAB_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 /// 截图会话互斥量：遮罩窗是全局唯一的，连续触发会两个会话抢同一扇遮罩
 static SCREENSHOT_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
@@ -36,7 +35,14 @@ impl Drop for FlagGuard {
     }
 }
 
-/// 模拟复制键抓取当前选中文本，并把原剪贴板内容还原
+/// 模拟复制键抓取当前选中文本（热键路径的兜底；划词图标路径绝不走这里）。
+/// 全程对剪贴板只有两次写入：目标应用响应复制键的一次 + 我们恢复备份的一次。
+/// 不再写哨兵——注入前先取剪贴板「变更序号」基线，序号一动即有人写入，
+/// 选中内容与旧内容相同也不会漏判（旧哨兵法是比内容，相同即误判），
+/// 轮询窗口内用户的粘贴也再不会看到零宽垃圾。
+/// 旧文本备份带锁竞争重试（旧实现的洞：目标应用瞬时持锁时备份无声失败 → 无从恢复）；
+/// 备份读不到就整轮放弃——宁可这次不翻译，也不动用户剪贴板里我们看不见的内容。
+/// 慢应用（Word/大网页）在轮询窗口后才写完，由 platform::spawn_second_chance 盯住打回
 fn grab_selection(app: &AppHandle) -> Option<String> {
     // 热键连按：上一轮未结束就放弃本次，上一轮结果照常弹出
     if GRAB_IN_PROGRESS
@@ -47,71 +53,82 @@ fn grab_selection(app: &AppHandle) -> Option<String> {
         return None;
     }
     let _guard = FlagGuard(&GRAB_IN_PROGRESS);
+    // 新一轮开始：上一轮的「二次恢复」watcher 立即收手，两轮备份互不打架
+    let gen = crate::platform::bump_watch_gen();
     // 诊断打印：foreground_app 仅 Windows 实现（macOS 走 NSWorkspace，暂缺）
     #[cfg(windows)]
     println!("[grab] foreground app: {}", crate::platform::foreground_app());
-    let mut clipboard = Clipboard::new().ok()?;
-
-    // 备份原剪贴板：文本读不到（可能是图片/文件）时备份图片，否则恢复会顶成空文本
-    let old_text = clipboard.get_text().ok();
-    let old_image = if old_text.is_none() {
-        clipboard.get_image().ok()
-    } else {
-        None
+    // 老控制台 Ctrl+C 是「中断」不是复制，注入会打断用户前台命令（macOS 恒 true）
+    if !crate::platform::clipboard_fallback_allowed() {
+        println!("[grab] 前台是老式控制台，不注入复制键，放弃本次");
+        return None;
+    }
+    // 备份原文本（带重试）。读不到内容 = 不知道剪贴板里是什么，绝不继续；
+    // Ok(None) = 确定没有文本（图片/文件/空），照常恢复（恢复到空态）
+    const BACKUP_RETRIES: u32 = 8;
+    let Ok(backup) = crate::platform::clipboard_read_text(BACKUP_RETRIES) else {
+        println!("[grab] 剪贴板被其他程序占用，放弃本次");
+        return None;
     };
-
-    // 预置哨兵值判断复制是否生效；不能用"剪贴板内容是否变化"判断，选中与剪贴板相同会误判
-    const SENTINEL: &str = "\u{200b}__pot-mini-sentinel__\u{200b}";
-    clipboard.set_text(SENTINEL).ok()?;
+    let base_seq = crate::platform::clipboard_seq();
 
     // 注入复制键（Windows Ctrl+C / macOS Cmd+C）
     let injected = crate::platform::inject_copy(app);
     let ax = crate::platform::accessibility_allowed();
     if !injected || !ax {
         println!("[grab] inject_copy={injected}, accessibility={ax}");
+        crate::platform::clipboard_restore(backup);
+        return None;
     }
 
-    // 轮询到内容不再是哨兵值（慢应用写入可能超百毫秒，固定 sleep 会误判），最多 ~600ms；首轮没等到再注入一次复制键重试，再等 ~300ms
-    let mut text = SENTINEL.to_string();
-    if injected {
-        for attempt in 0..2 {
-            let rounds = if attempt == 0 { 30 } else { 15 };
-            for _ in 0..rounds {
-                std::thread::sleep(std::time::Duration::from_millis(20));
-                text = clipboard.get_text().unwrap_or_default();
-                if text != SENTINEL {
-                    break;
-                }
+    // 轮询到序号变化（慢应用写入可能超百毫秒，固定 sleep 会误判），最多 ~600ms；
+    // 首轮没等到再注入一次复制键重试，再等 ~300ms
+    let mut grabbed: Option<String> = None;
+    for attempt in 0..2 {
+        let rounds = if attempt == 0 { 30 } else { 15 };
+        for _ in 0..rounds {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            if crate::platform::clipboard_seq() == base_seq {
+                continue;
             }
-            if text != SENTINEL {
-                break;
-            }
-            if attempt == 0 {
-                println!("[grab] 首轮复制未生效，重试注入一次");
-                if !crate::platform::inject_copy(app) {
+            // 序号动了 = 有应用写了剪贴板；文本还读不到（先清后写中/非文本/瞬时锁）就等下一拍
+            if let Ok(Some(t)) = crate::platform::clipboard_read_text(0) {
+                let trimmed = t.trim().to_string();
+                if !trimmed.is_empty() {
+                    grabbed = Some(trimmed);
                     break;
                 }
             }
         }
+        if grabbed.is_some() {
+            break;
+        }
+        if attempt == 0 {
+            println!("[grab] 首轮复制未生效，重试注入一次");
+            if !crate::platform::inject_copy(app) {
+                break;
+            }
+        }
     }
 
-    if let Some(t) = old_text {
-        let _ = clipboard.set_text(&t);
-    } else if let Some(img) = old_image {
-        let _ = clipboard.set_image(img);
-    }
+    // 把用户原内容放回去（有文本还原文本；原本无文本则清空）
+    crate::platform::clipboard_restore(backup.clone());
+    // 以恢复完成的这一刻为基线：之后再有写入才是待纠正的「事后背刺」
+    let restored_seq = crate::platform::clipboard_seq();
 
-    // 仍是哨兵值说明复制没生效（注入失败或目标应用无可复制内容）
-    if text == SENTINEL {
-        println!("[grab] clipboard 未被替换：目标应用没响应复制键");
-        return None;
-    }
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        println!("[grab] clipboard 被清空：选中内容为空");
-        None
-    } else {
-        Some(trimmed.to_string())
+    match grabbed {
+        Some(text) => {
+            // 选中词与旧文本逐字相同 → 恢复即原样，无需盯梢（也避免把目标应用的
+            // 重复写入误判成背刺）；否则交给 watcher 纠正慢应用的事后写入
+            if backup.as_deref().map(str::trim) != Some(text.as_str()) {
+                crate::platform::spawn_second_chance(backup, text.clone(), restored_seq, gen);
+            }
+            Some(text)
+        }
+        None => {
+            println!("[grab] 序号未变/未读到文本：目标应用没响应复制键");
+            None
+        }
     }
 }
 
@@ -747,12 +764,10 @@ fn probe_and_show(worker: &AppHandle, ux: i32, uy: i32, near_px: i32, gen: u64) 
     if GRAB_IN_PROGRESS.load(Ordering::SeqCst) {
         return;
     }
-    let mut text = crate::platform::focused_selection();
-    if text.is_none() && crate::platform::clipboard_fallback_allowed() {
-        // AX 读不到（终端、部分 Electron、自绘 UI）时走复制键兜底：没选区时应用不会响应复制键，
-        // grab_selection 会还原剪贴板，白跑也不顶掉用户内容。Windows 老控制台 Ctrl+C 是中断，由 clipboard_fallback_allowed 拦掉
-        text = grab_selection(worker);
-    }
+    // 图标路径铁律：绝不碰剪贴板（也不注入复制按键）——UIA/AX 读不到选区（终端、
+    // 部分 Electron/自绘 UI）就不弹图标，用户要翻这些应用里的词请走热键
+    // （只有热键路径的 grab_selection 允许剪贴板兜底，且全程备份/恢复）
+    let text = crate::platform::focused_selection();
     match text {
         // 等待期间用户又按下了鼠标（新选区开始）：本次结果已过期，丢弃
         Some(text) if SELECTION_GEN.load(Ordering::Relaxed) == gen => {

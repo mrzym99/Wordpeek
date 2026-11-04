@@ -38,6 +38,9 @@ windows = { version = "0.58", features = [
     "Win32_System_LibraryLoader", "Win32_System_Com", "Win32_UI_Accessibility",
     # 启动时拆 stdout/stderr 死管道炸弹（sanitize_stdio）
     "Win32_System_Console", "Win32_Storage_FileSystem", "Win32_Security",
+    # 剪贴板序号检测与文本备份/恢复（platform/win_clipboard.rs）：
+    # DataExchange=Open/Get/SetClipboardData 等，Memory=GlobalAlloc/GlobalSize，Ole=CF_* 常量
+    "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Ole",
     "Foundation", "Foundation_Collections", "Globalization", "Graphics_Imaging", "Media_Ocr", "Storage_Streams",
 ] }
 
@@ -47,7 +50,7 @@ objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = [
     "NSGeometry", "NSArray", "NSString", "NSData", "NSDictionary",
 ] }
-objc2-app-kit = { version = "0.3", features = ["NSScreen", "NSEvent", "block2", "NSWorkspace", "NSRunningApplication"] }   # NSScreen 工作区 + NSEvent 全局鼠标监听
+objc2-app-kit = { version = "0.3", features = ["NSScreen", "NSEvent", "block2", "NSWorkspace", "NSRunningApplication", "NSPasteboard"] }   # NSScreen 工作区 + NSEvent 全局鼠标监听 + NSPasteboard changeCount（剪贴板序号）
 block2 = "0.6"           # NSEvent 监视器的 block
 core-foundation = "0.10" # AX 返回的 CFString 转 String
 objc2-vision = { version = "0.3", features = [

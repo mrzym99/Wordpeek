@@ -197,6 +197,61 @@ pub fn inject_copy(_app: &tauri::AppHandle) -> bool {
     true
 }
 
+// ---------- 剪贴板原语（热键路径 grab_selection 用；与 win_clipboard.rs 同名同签名） ----------
+
+/// 粘贴板变更序号（NSPasteboard changeCount）：任何人写入都会变，等价 Windows 的
+/// GetClipboardSequenceNumber——「复制是否生效」的信号，读取不加锁、轮询零成本
+pub fn clipboard_seq() -> u64 {
+    use objc2_app_kit::NSPasteboard;
+    unsafe { NSPasteboard::generalPasteboard().changeCount() as u64 }
+}
+
+/// 读粘贴板当前文本。
+/// `Ok(Some(t))` 有文本；`Ok(None)` **确定**没有文本格式；`Err(())` 重试后仍失败（内容未知）
+pub fn clipboard_read_text(retries: u32) -> Result<Option<String>, ()> {
+    for attempt in 0..=retries {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(15));
+        }
+        let Ok(mut cb) = arboard::Clipboard::new() else {
+            continue;
+        };
+        match cb.get_text() {
+            Ok(t) => return Ok(Some(t)),
+            // 「格式不可用」= 确定没有文本；其余错误（被占用等）按瞬时故障继续重试
+            Err(arboard::Error::ContentNotAvailable) => return Ok(None),
+            Err(_) => continue,
+        }
+    }
+    Err(())
+}
+
+/// 恢复用户原内容：Some(t) 写回文本，None 清空到无文本态
+pub fn clipboard_restore(backup: Option<String>) -> bool {
+    for attempt in 0..3u32 {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(15));
+        }
+        let Ok(mut cb) = arboard::Clipboard::new() else {
+            continue;
+        };
+        let ok = match &backup {
+            Some(t) => cb.set_text(t.as_str()).is_ok(),
+            None => cb.clear().is_ok(),
+        };
+        if ok {
+            return true;
+        }
+    }
+    false
+}
+
+/// macOS 粘贴板没有廉价的「谁写入」归属查询；watcher 靠「新文本逐字等于本次划词」
+/// 已足够保守，恒 false（Windows 侧的自查只是多一层防御）
+pub fn clipboard_owner_is_self() -> bool {
+    false
+}
+
 // ---------- 划词图标：全局鼠标监听 + 系统选区 ----------
 
 // 回调槽（MOUSE_ON_*）在 super（platform/mod.rs）共用；MOUSE_ON_MOVE 在 macOS 未用（见 super 的 MoveCallback 注释）

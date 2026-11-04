@@ -14,6 +14,8 @@ pub(crate) static MOUSE_ON_MOVE: std::sync::OnceLock<MoveCallback> = std::sync::
 
 #[cfg(windows)]
 pub mod windows;
+#[cfg(windows)]
+pub mod win_clipboard;
 #[cfg(target_os = "macos")]
 pub mod macos;
 
@@ -116,6 +118,111 @@ pub use windows::clipboard_fallback_allowed;
 #[cfg(target_os = "macos")]
 pub use macos::clipboard_fallback_allowed;
 
+// ---------- 剪贴板原语（只有热键路径 grab_selection 用；划词图标路径绝不碰） ----------
+
+/// 剪贴板变更序号：任何进程写入都会变（Windows 是 GetClipboardSequenceNumber，
+/// macOS 是 NSPasteboard changeCount）。只读查询不加锁，轮询零成本
+#[cfg(windows)]
+pub use win_clipboard::clipboard_seq;
+#[cfg(target_os = "macos")]
+pub use macos::clipboard_seq;
+
+/// 读剪贴板当前文本。Err = 重试后仍打不开（内容未知，调用方绝不能盲目恢复/清空）；
+/// Ok(None) = 确定没有文本格式（图片/文件/空）
+#[cfg(windows)]
+pub use win_clipboard::clipboard_read_text;
+#[cfg(target_os = "macos")]
+pub use macos::clipboard_read_text;
+
+/// 恢复用户原内容：Some(t) 写回文本（空串≈清空），None 清空到无文本态
+#[cfg(windows)]
+pub use win_clipboard::clipboard_restore;
+#[cfg(target_os = "macos")]
+pub use macos::clipboard_restore;
+
+/// 剪贴板是不是我们进程写的（watcher 排除自己恢复动作的回声；macOS 没有廉价归属查询，恒 false）
+#[cfg(windows)]
+pub use win_clipboard::clipboard_owner_is_self;
+#[cfg(target_os = "macos")]
+pub use macos::clipboard_owner_is_self;
+
+// ---------- 慢应用「背刺」看门狗（两个平台共用） ----------
+
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// 「二次恢复」watcher 的代次：每轮新 grab 进门递增，旧 watcher 见代次不符立刻收手，
+/// 防止两轮的备份互相打来打去
+static WATCH_GEN: AtomicU64 = AtomicU64::new(0);
+
+/// 新一轮 grab 开始，返回本轮代次（传给 spawn_second_chance）
+pub fn bump_watch_gen() -> u64 {
+    WATCH_GEN.fetch_add(1, Ordering::SeqCst) + 1
+}
+
+/// watcher 决策：恢复备份之后看到剪贴板又变了，该不该打回去
+#[derive(Debug, PartialEq, Eq)]
+pub enum WatchDecision {
+    /// 新文本 == 本次划词 → 慢应用恢复后才写完（Word/大网页可迟 ~秒级），把备份打回去
+    RestoreSnapshot,
+    /// 新文本是别的 → 用户自己复制了内容，从此收手，绝不再动
+    StandDown,
+    /// 读不到文本（瞬时锁/写的是非文本/先清后写）→ 继续看到超时
+    KeepWatching,
+}
+
+/// 纯函数决策，供单测。只有「恰好等于本次划词文本」才动手——用户窗口期内自己
+/// 复制的内容不会被顶回去（误伤面收窄到「2.5s 内手动复制了与选区逐字相同的内容」）
+pub fn watch_decision(
+    new_text: Result<Option<String>, ()>,
+    grabbed: &str,
+    owner_is_self: bool,
+) -> WatchDecision {
+    if owner_is_self {
+        return WatchDecision::StandDown;
+    }
+    match new_text {
+        Err(()) => WatchDecision::KeepWatching,
+        Ok(None) => WatchDecision::KeepWatching,
+        Ok(Some(t)) => {
+            let t = t.trim();
+            if t.is_empty() {
+                WatchDecision::KeepWatching
+            } else if t == grabbed.trim() {
+                WatchDecision::RestoreSnapshot
+            } else {
+                WatchDecision::StandDown
+            }
+        }
+    }
+}
+
+/// grab_selection 恢复备份后的一次性监视线程：~2.5s（60ms × 42 拍）盯「目标应用迟到的
+/// 写入」——轮询窗口（~900ms）结束后 Word/大网页才把选中文本写进剪贴板的场景，
+/// 由这里纠正回来。只在内容逐字匹配本次划词时动手，且只执行一次
+pub fn spawn_second_chance(backup: Option<String>, grabbed: String, base_seq: u64, gen: u64) {
+    std::thread::spawn(move || {
+        for _ in 0..42 {
+            std::thread::sleep(std::time::Duration::from_millis(60));
+            // 新一轮 grab 已开始：它的备份/恢复自己管，我们的快照已过时
+            if WATCH_GEN.load(Ordering::SeqCst) != gen {
+                return;
+            }
+            if clipboard_seq() == base_seq {
+                continue;
+            }
+            match watch_decision(clipboard_read_text(0), &grabbed, clipboard_owner_is_self()) {
+                WatchDecision::RestoreSnapshot => {
+                    println!("[grab] 慢应用事后写入，二次恢复备份");
+                    clipboard_restore(backup);
+                    return;
+                }
+                WatchDecision::StandDown => return,
+                WatchDecision::KeepWatching => {}
+            }
+        }
+    });
+}
+
 // ---------- 划词图标：「这个 app 读不到选区」的记忆（两个平台共用） ----------
 
 /// 整轮探测一个字都没拿到的 app（终端、自绘 UI）记住它，之后直接走剪贴板兜底，
@@ -157,4 +264,46 @@ pub use macos::with_release_pool;
 #[cfg(windows)]
 pub fn with_release_pool<R>(f: impl FnOnce() -> R) -> R {
     f()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn t(s: &str) -> Result<Option<String>, ()> {
+        Ok(Some(s.to_string()))
+    }
+
+    #[test]
+    fn slow_app_writeback_restores_snapshot() {
+        // 慢应用恢复后才写完：内容逐字（trim 后）等于本次划词 → 打回备份
+        assert_eq!(watch_decision(t(" hello "), "hello", false), WatchDecision::RestoreSnapshot);
+        assert_eq!(watch_decision(Ok(Some("hello".into())), " hello", false), WatchDecision::RestoreSnapshot);
+    }
+
+    #[test]
+    fn user_copied_other_text_stands_down() {
+        // 窗口期内用户自己复制了别的内容 → 绝不顶回去
+        assert_eq!(watch_decision(t("something else"), "hello", false), WatchDecision::StandDown);
+    }
+
+    #[test]
+    fn our_own_write_stands_down() {
+        assert_eq!(watch_decision(t("hello"), "hello", true), WatchDecision::StandDown);
+    }
+
+    #[test]
+    fn unreadable_or_non_text_keeps_watching() {
+        // 瞬时锁 / 写的是非文本 / 先清后写中 → 继续盯，不动剪贴板
+        assert_eq!(watch_decision(Err(()), "hello", false), WatchDecision::KeepWatching);
+        assert_eq!(watch_decision(Ok(None), "hello", false), WatchDecision::KeepWatching);
+        assert_eq!(watch_decision(t("  "), "hello", false), WatchDecision::KeepWatching);
+    }
+
+    #[test]
+    fn watch_gen_bump_is_monotonic_and_visible() {
+        let a = bump_watch_gen();
+        let b = bump_watch_gen();
+        assert!(b > a, "代次必须严格递增");
+    }
 }
