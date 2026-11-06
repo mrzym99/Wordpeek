@@ -403,6 +403,8 @@ fn secure_input_active() -> bool {
         if sym.is_null() {
             return false;
         }
+        // 参数名沿用系统头文件里的 isSecure（函数指针类型的形参名只作文档，不参与链接）
+        #[allow(non_snake_case)]
         let is_secure_input: extern "C" fn(isSecure: *mut bool) -> i32 =
             std::mem::transmute(sym);
         let mut secure = false;

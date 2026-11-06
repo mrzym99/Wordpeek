@@ -1,4 +1,9 @@
 //! Windows.Media.Ocr：PNG → 文本行（行坐标保留，本期不使用）
+//!
+//! 本文件同时承载两条平台链路：Windows 走「预处理 + 多引擎/多变体择优」，
+//! macOS 走 Vision 原图直传。Windows 专用的辅助函数在 macOS 构建里没有调用点，
+//! 用 `cfg_attr(not(windows), allow(dead_code))` 单独标注：保留给单元测试与后续复用，
+//! 同时不污染打包日志。
 
 /// OCR 识别出的一行文字；坐标为相对裁剪图像的物理像素
 #[derive(Debug, Clone)]
@@ -17,6 +22,7 @@ pub struct OcrLine {
 
 /// 从系统可用语言标签里挑识别语言："zh" 优先 zh-Hans 其次任意 zh 开头，"en" 优先
 /// en-US 其次任意 en；"auto" 返回 None（引擎按用户语言创建）
+#[cfg_attr(not(windows), allow(dead_code))]
 fn pick_language(available: &[String], lang: &str) -> Option<String> {
     match lang {
         "zh" => available
@@ -331,6 +337,7 @@ mod tests {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) enum PrepMode {
     /// 分位拉伸：保留灰度层次，适合浅底深字、背景明暗不均
     Stretch,
@@ -339,6 +346,7 @@ pub(crate) enum PrepMode {
 }
 
 impl PrepMode {
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub(crate) fn name(self) -> &'static str {
         match self {
             PrepMode::Stretch => "stretch",
@@ -348,6 +356,7 @@ impl PrepMode {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) struct Prep {
     pub mode: PrepMode,
     pub png: Vec<u8>,
@@ -355,6 +364,7 @@ pub(crate) struct Prep {
 
 /// 预处理结果：底图 + 按需生成的变体缓存 + 相对原裁剪图的放大倍数（用于把 OCR 坐标还原回去）。
 /// 变体懒生成：Stretch 首试通常达标即退，Binarize 的模糊+积分图+编码在常规路径全部免掉（峰值省几十 MB）。
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) struct Prepped {
     base: Option<image::GrayImage>, // 处理完的底图（放大/反色后）；None = RAW 模式
     variants: std::cell::RefCell<Vec<Prep>>,
@@ -363,6 +373,7 @@ pub(crate) struct Prepped {
 
 impl Prepped {
     /// 取某变体的 PNG，首次用时生成并缓存；RAW 模式下只有缓存的原图变体，其余返回 None
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub(crate) fn png_for(&self, mode: PrepMode) -> Result<Option<Vec<u8>>, String> {
         if let Some(p) = self.variants.borrow().iter().find(|v| v.mode == mode) {
             return Ok(Some(p.png.clone()));
@@ -384,6 +395,7 @@ impl Prepped {
 }
 
 /// 短边放大到至少 300px（Windows OCR 对小字号识别极差），倍数 1~4，放大后最长边不超过 4000px
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn upscale_factor(w: u32, h: u32) -> u32 {
     if w == 0 || h == 0 {
         return 1;
@@ -394,6 +406,7 @@ pub(crate) fn upscale_factor(w: u32, h: u32) -> u32 {
 }
 
 /// 灰度均值（反色判断用）
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn pixel_mean(img: &image::GrayImage) -> f32 {
     let raw = img.as_raw();
     if raw.is_empty() {
@@ -403,11 +416,13 @@ pub(crate) fn pixel_mean(img: &image::GrayImage) -> f32 {
 }
 
 /// 深色背景才反色：引擎更擅长「浅底深字」
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn should_invert(mean: f32) -> bool {
     mean < 110.0
 }
 
 /// 灰度直方图的 low%/high% 分位点：抗离群点，比 min/max 稳
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn percentile_bounds(hist: &[u32; 256], low_pct: f32, high_pct: f32) -> (u8, u8) {
     let total: u64 = hist.iter().map(|c| *c as u64).sum();
     if total == 0 {
@@ -439,6 +454,7 @@ pub(crate) fn percentile_bounds(hist: &[u32; 256], low_pct: f32, high_pct: f32) 
 }
 
 /// 按 2%/98% 分位把灰度拉满到 0~255
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn stretch_contrast(img: &image::GrayImage) -> image::GrayImage {
     let raw = img.as_raw();
     let mut hist = [0u32; 256];
@@ -457,6 +473,7 @@ pub(crate) fn stretch_contrast(img: &image::GrayImage) -> image::GrayImage {
 
 /// 局部自适应二值化：阈值取窗口均值减去偏置 c（积分图 O(1) 取窗口和），对背景明暗
 /// 渐变、纸张纹理、照片底色都稳。输出纯黑白：文字 0 / 背景 255。
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn adaptive_binarize(img: &image::GrayImage, c: i32) -> image::GrayImage {
     let (w, h) = (img.width() as usize, img.height() as usize);
     let src = img.as_raw();
@@ -492,6 +509,7 @@ pub(crate) fn adaptive_binarize(img: &image::GrayImage, c: i32) -> image::GrayIm
 
 /// 文本质量打分（越高越像正常文本）：字母/数字 +1、其它非空白字符 −2，按字符数归一。
 /// Windows OCR 不给置信度，用「像不像正常文本」当代理指标挑选引擎与预处理组合。
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn score_text(s: &str) -> f64 {
     let mut good = 0i32;
     let mut bad = 0i32;
@@ -514,6 +532,7 @@ pub(crate) fn score_text(s: &str) -> f64 {
 }
 
 /// OCR 坐标从放大图还原回原裁剪图
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn scale_lines(lines: &mut [OcrLine], f: u32) {
     if f <= 1 {
         return;
@@ -528,6 +547,7 @@ pub(crate) fn scale_lines(lines: &mut [OcrLine], f: u32) {
 }
 
 /// 灰度图编码成 PNG（写回给 Windows 解码器）；收所有权：借用版要 clone 整张图才能包成 DynamicImage
+#[cfg_attr(not(windows), allow(dead_code))]
 fn encode_gray(img: image::GrayImage) -> Result<Vec<u8>, String> {
     let mut out = Vec::new();
     image::DynamicImage::ImageLuma8(img)
@@ -538,6 +558,7 @@ fn encode_gray(img: image::GrayImage) -> Result<Vec<u8>, String> {
 
 /// 生成 OCR 用的图像变体：小图放大（小字号是最大失分点）、深底浅字反色、
 /// 分位拉伸与自适应二值化。`WORDPEEK_OCR_RAW=1` 跳过全部预处理（人工 A/B 对照用）。
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn preprocess(png: &[u8]) -> Result<Prepped, String> {
     if std::env::var_os("WORDPEEK_OCR_RAW").is_some() {
         return Ok(Prepped {
@@ -579,6 +600,7 @@ pub(crate) fn preprocess(png: &[u8]) -> Result<Prepped, String> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) enum EngineSpec {
     /// 跟随用户语言（ocr_lang = "auto"）
     UserProfile,
@@ -587,6 +609,7 @@ pub(crate) enum EngineSpec {
 }
 
 impl EngineSpec {
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub(crate) fn name(&self) -> String {
         match self {
             EngineSpec::UserProfile => "跟随系统".to_string(),
@@ -597,6 +620,7 @@ impl EngineSpec {
 
 /// 候选引擎：显式 zh/en 该语言在前、另一种兜底；auto 时跟随系统在前，其后是
 /// 可用的中英文备用引擎（中英混排、异体字场景用得上）。
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn candidate_engines(
     lang: &str,
     available: &[String],
@@ -622,12 +646,15 @@ pub(crate) fn candidate_engines(
 }
 
 /// 打分达到该值就不再继续尝试其它组合
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) const GOOD_SCORE: f64 = 0.8;
 /// 单次截图的识别次数上限（每次约 100~400ms）
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) const MAX_ATTEMPTS: usize = 4;
 
 /// 识别尝试序列（引擎下标, 预处理方式）：主引擎先试两种预处理，
 /// 仍不理想才换备用引擎（只试拉伸变体），总次数不超过 MAX_ATTEMPTS
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn attempt_plan(engines: &[EngineSpec]) -> Vec<(usize, PrepMode)> {
     let mut plan = vec![(0usize, PrepMode::Stretch), (0, PrepMode::Binarize)];
     for i in 1..engines.len() {

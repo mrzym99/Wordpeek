@@ -10,6 +10,7 @@ pub(crate) type MouseCallback = Box<dyn Fn() + Send + Sync>;
 pub(crate) type MoveCallback = Box<dyn Fn(i32, i32) + Send + Sync>;
 pub(crate) static MOUSE_ON_DOWN: std::sync::OnceLock<MouseCallback> = std::sync::OnceLock::new();
 pub(crate) static MOUSE_ON_UP: std::sync::OnceLock<MouseCallback> = std::sync::OnceLock::new();
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) static MOUSE_ON_MOVE: std::sync::OnceLock<MoveCallback> = std::sync::OnceLock::new();
 
 #[cfg(windows)]
