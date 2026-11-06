@@ -1,0 +1,77 @@
+# 测试流水线：push main / PR 时跑 Rust 与前端测试 + 版本一致性校验。
+# 构建签名发版走 release.yml（tag 触发），本文件不构建产物。
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # 三处版本必须一致（tauri.conf.json 为唯一事实源）
+      - name: Verify version consistency
+        shell: bash
+        run: |
+          CONF=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          PKG=$(node -p "require('./package.json').version")
+          CARGO=$(grep -oP '^version = "\K[^"]+' src-tauri/Cargo.toml)
+          if [ "$CONF" != "$PKG" ] || [ "$CONF" != "$CARGO" ]; then
+            echo "版本失同步: tauri.conf.json=$CONF package.json=$PKG Cargo.toml=$CARGO"
+            exit 1
+          fi
+          echo "版本一致: $CONF"
+
+      # 现有 49 个 Rust 测试全部平台无关纯函数，无需真窗口
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: TypeScript typecheck
+        run: npx tsc --noEmit
+
+      - name: Frontend tests
+        run: npm test
+
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # cfg(windows) 代码不参与编译自动跳过；同时兜底编译检查 macos.rs（本地无 mac 工具链）
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Frontend tests
+        run: npm test

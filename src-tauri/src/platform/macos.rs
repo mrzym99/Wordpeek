@@ -8,6 +8,8 @@ use objc2::rc::Retained;
 
 use crate::capture::{bgra_to_rgba, CapturedScreen};
 
+use super::SelectionRead;
+
 // ---------- 系统权限 ----------
 
 #[link(name = "ApplicationServices", kind = "framework")]
@@ -203,11 +205,13 @@ pub fn inject_copy(_app: &tauri::AppHandle) -> bool {
 /// GetClipboardSequenceNumber——「复制是否生效」的信号，读取不加锁、轮询零成本
 pub fn clipboard_seq() -> u64 {
     use objc2_app_kit::NSPasteboard;
-    unsafe { NSPasteboard::generalPasteboard().changeCount() as u64 }
+    NSPasteboard::generalPasteboard().changeCount() as u64
 }
 
 /// 读粘贴板当前文本。
-/// `Ok(Some(t))` 有文本；`Ok(None)` **确定**没有文本格式；`Err(())` 重试后仍失败（内容未知）
+/// `Ok(Some(t))` 有文本；`Ok(None)` **确定是空粘贴板**（types() 为空）；
+/// `Err(())` 重试后仍失败（内容未知），或确定有非文本内容（图片/文件——无法备份，
+/// 照常恢复到空态会毁掉用户内容，只能放弃）
 pub fn clipboard_read_text(retries: u32) -> Result<Option<String>, ()> {
     for attempt in 0..=retries {
         if attempt > 0 {
@@ -218,9 +222,28 @@ pub fn clipboard_read_text(retries: u32) -> Result<Option<String>, ()> {
         };
         match cb.get_text() {
             Ok(t) => return Ok(Some(t)),
-            // 「格式不可用」= 确定没有文本；其余错误（被占用等）按瞬时故障继续重试
-            Err(arboard::Error::ContentNotAvailable) => return Ok(None),
-            Err(_) => continue,
+            // 「格式不可用」要再分：空粘贴板（types() 为空/None）可放心按「原本为空」
+            // 备份/恢复；有非文本内容（图片/文件）则无法备份，只能放弃本轮。
+            // arboard 的 ContentNotAvailable 分不清这两种，用 NSPasteboard types() 补判
+            Err(arboard::Error::ContentNotAvailable) => {
+                use objc2_app_kit::NSPasteboard;
+                let count = NSPasteboard::generalPasteboard()
+                    .types()
+                    .map(|t| t.len())
+                    .unwrap_or(0);
+                if count == 0 {
+                    return Ok(None);
+                }
+                println!("[clip] 粘贴板有非文本内容（图片/文件），无法备份，放弃本轮");
+                return Err(());
+            }
+            Err(_) => {
+                // 其余错误（被占用等）按瞬时故障继续重试；末次打点，避免静默 Err 无从排查
+                if attempt == retries {
+                    println!("[clip] 粘贴板读不出内容（arboard 错误，重试耗尽）");
+                }
+                continue;
+            }
         }
     }
     Err(())
@@ -353,44 +376,108 @@ pub fn foreground_pid() -> Option<i32> {
     Some(NSWorkspace::sharedWorkspace().frontmostApplication()?.processIdentifier())
 }
 
-/// macOS 的 Cmd+C 在任何 app 里都是「复制」（不像 Windows 控制台的 Ctrl+C 是中断），兜底一律允许
-pub fn clipboard_fallback_allowed() -> bool {
-    true
+// macOS 的 Cmd+C 在任何 app 里都是「复制」（不像 Windows 控制台的 Ctrl+C 是中断），兜底一律允许
+// ——该判断已并入 foreground_context，这里不再单独导出
+
+// 系统安全输入是否开启中（登录窗/密码框/带安全横幅的输入）：AX 读取被系统拦，
+// 模拟 Cmd+C 会被吞掉且可能触发安全告警。
+// 注意：SecIsSecureInputProcess 在 arm64 的 ApplicationServices 里**没有导出符号**
+// （只有 x86_64 有），链接期引用直接 undefined symbol，只能运行时 dlsym 解析；
+// 查不到按「未开启」降级——这只是安全闸加固项，不能反过来拦下正常翻译
+fn secure_input_active() -> bool {
+    // dlopen/dlsym 在 libSystem 里，macOS 恒链接，无需 #[link]
+    extern "C" {
+        fn dlopen(filename: *const std::ffi::c_char, flag: i32) -> *mut std::ffi::c_void;
+        fn dlsym(handle: *mut std::ffi::c_void, symbol: *const std::ffi::c_char)
+            -> *mut std::ffi::c_void;
+    }
+
+    unsafe {
+        let path =
+            b"/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices\0";
+        let handle = dlopen(path.as_ptr() as *const std::ffi::c_char, 1); // 1 = RTLD_LAZY
+        if handle.is_null() {
+            return false;
+        }
+        let sym = dlsym(handle, b"SecIsSecureInputProcess\0".as_ptr() as *const std::ffi::c_char);
+        if sym.is_null() {
+            return false;
+        }
+        let is_secure_input: extern "C" fn(isSecure: *mut bool) -> i32 =
+            std::mem::transmute(sym);
+        let mut secure = false;
+        is_secure_input(&mut secure) == 0 && secure
+    }
 }
 
-/// 读焦点控件里被选中的文本（辅助功能 API，不碰剪贴板也不注入按键）。
-/// 三步越往后越慢，前面的不中才走后面：1. 前台 app 的 AXFocusedUIElement 直接读
-/// AXSelectedText；2. 先唤醒无障碍树（Chromium / Electron 靠这个才建树）再重试；
-/// 3. 按窗口往下翻找带选区的元素（有的焦点元素是空壳容器）。
+/// 前台应用上下文一次性查询（热键兜底注入前的安全闸）。macOS 无老控制台/管理员
+/// 完整性问题（恒允许/恒否），密码框由 Secure Input 覆盖
+pub fn foreground_context() -> super::ForegroundContext {
+    use objc2_app_kit::NSWorkspace;
+
+    let app = NSWorkspace::sharedWorkspace().frontmostApplication();
+    // as_ref 借用：下面 process_name 还要用一次 app（Option<Retained> 不可 Copy）
+    let pid = app.as_ref().map(|a| a.processIdentifier());
+    let process_name = app
+        .and_then(|a| a.localizedName().map(|n| n.to_string()))
+        .unwrap_or_default();
+    super::ForegroundContext {
+        pid,
+        process_name,
+        fallback_allowed: true,
+        elevated: false,
+        password_focus: false,
+        secure_input: secure_input_active(),
+    }
+}
+
+/// 读焦点控件里被选中的文本（辅助功能 API，不碰剪贴板也不注入按键），返回门面统一四态
+/// （hopeless 拉黑记账由门面统一做）。三步越往后越慢，前面的不中才走后面：1. 前台 app 的
+/// AXFocusedUIElement 直接读 AXSelectedText；2. 先唤醒无障碍树（Chromium / Electron 靠
+/// 这个才建树）再重试；3. 按窗口往下翻找带选区的元素（有的焦点元素是空壳容器）。
 /// 系统级元素（AXUIElementCreateSystemWide）在非 GUI 进程稳定返回 -25204
-/// CannotComplete，一律按前台 pid 建元素。终端这类没有选区概念的三步都读不到，
-/// 返回 None——那时不弹图标，用户照常用划词快捷键。
-pub fn focused_selection() -> Option<String> {
+/// CannotComplete，一律按前台 pid 建元素。
+pub fn read_focused_selection() -> super::SelectionRead {
     if !accessibility_allowed() {
-        return None;
+        return super::SelectionRead::Error;
     }
-    let pid = foreground_pid()?;
-    // 整轮读完（含唤醒等待、扫窗口）一个字都没拿到的 app（终端、自绘 UI）不再试：重试光唤醒轮询就要 640ms
-    if super::selection_hopeless(pid) {
-        return None;
-    }
+    let Some(pid) = foreground_pid() else {
+        return super::SelectionRead::Error;
+    };
     unsafe {
         let app = AXUIElementCreateApplication(pid);
         if app.is_null() {
-            return None;
+            return super::SelectionRead::Error;
         }
         // 默认 6 秒：目标 app 卡住时能把探测线程钉死，图标就得等 6 秒才弹
         AXUIElementSetMessagingTimeout(app, 0.1);
-        let mut text = read_focused(app);
-        if text.is_none() && should_wake(pid) {
+        let mut text: Option<String> = None;
+        // 焦点元素自己回答过「我就是没有选区」：树必然已建好，唤醒纯属白等，跳过
+        let mut answered_empty = false;
+        // 焦点元素连选区属性都没有（非文本控件/树没建）——三步全落空时据此拉黑
+        let mut unsupported_focus = false;
+        match read_focused(app) {
+            SelectionRead::Text(t) => text = Some(t),
+            SelectionRead::NoSelection => answered_empty = true,
+            SelectionRead::NoTextPattern => unsupported_focus = true,
+            SelectionRead::Error => {}
+        }
+        if text.is_none() && !answered_empty && should_wake(pid) {
             wake_accessibility(app);
             // Chromium 建树是异步的（实测 100ms 常常不够）：每 80ms 试一次、最多 ~640ms。
             // 成功就不 restore，让树保持醒着，否则下次又得从零唤醒
             for _ in 0..8 {
                 std::thread::sleep(std::time::Duration::from_millis(80));
-                if let Some(t) = read_focused(app) {
-                    text = Some(t);
-                    break;
+                match read_focused(app) {
+                    SelectionRead::Text(t) => {
+                        text = Some(t);
+                        break;
+                    }
+                    SelectionRead::NoSelection => {
+                        answered_empty = true;
+                        break;
+                    }
+                    _ => {}
                 }
             }
             if text.is_some() {
@@ -403,27 +490,90 @@ pub fn focused_selection() -> Option<String> {
             text = scan_window(app, 4, 48);
         }
         CFRelease(app);
-        match text.is_some() {
-            true => super::clear_selection_hopeless(pid),
-            false => super::mark_selection_hopeless(pid),
+        // 四态收敛：Text 优先；「焦点元素回答过没有选区」= 支持、只是没选中；
+        // 「连选区属性都没有」且哪儿都翻不到 = 不支持（门面据此拉黑）；其余算瞬时错误
+        match text {
+            Some(t) => super::SelectionRead::Text(t),
+            None if answered_empty => super::SelectionRead::NoSelection,
+            None if unsupported_focus => super::SelectionRead::NoTextPattern,
+            None => super::SelectionRead::Error,
         }
-        text
     }
 }
 
-unsafe fn read_focused(app: *const std::ffi::c_void) -> Option<String> {
-    let focused = ax_attr(app, "AXFocusedUIElement")?;
-    let text = selection_in(focused);
+unsafe fn read_focused(app: *const std::ffi::c_void) -> super::SelectionRead {
+    let focused = match ax_attr(app, "AXFocusedUIElement") {
+        Some(f) => f,
+        None => return super::SelectionRead::NoTextPattern,
+    };
+    let read = selection_in(focused);
     CFRelease(focused);
-    text
+    read
 }
 
 /// 读一个元素自己的选区：AXSelectedText 优先，没有就用「选区范围 + AXStringForRange」。
-unsafe fn selection_in(el: *const std::ffi::c_void) -> Option<String> {
-    let text = ax_string_attr(el, "AXSelectedText")
-        .filter(|s| !s.trim().is_empty())
-        .or_else(|| ax_string_for_selection(el));
-    text.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+/// 「属性读到了但是空」= 元素支持选区、只是这次没选中，绝不能跟「属性根本没有」混为一谈
+unsafe fn selection_in(el: *const std::ffi::c_void) -> super::SelectionRead {
+    use core_foundation::base::TCFType;
+    use core_foundation::string::{CFString, CFStringRef};
+
+    match ax_string_attr(el, "AXSelectedText") {
+        Some(s) => {
+            let t = s.trim();
+            if t.is_empty() {
+                SelectionRead::NoSelection
+            } else {
+                SelectionRead::Text(t.to_string())
+            }
+        }
+        None => {
+            let range_value = match ax_attr(el, "AXSelectedTextRange") {
+                Some(v) => v,
+                None => return SelectionRead::NoTextPattern,
+            };
+            let mut range = CFRange { location: 0, length: 0 };
+            let ok = AXValueGetValue(
+                range_value,
+                AX_VALUE_CFRANGE,
+                &mut range as *mut CFRange as *mut std::ffi::c_void,
+            );
+            CFRelease(range_value);
+            if !ok {
+                return SelectionRead::Error;
+            }
+            if range.length <= 0 {
+                return SelectionRead::NoSelection;
+            }
+            let param =
+                AXValueCreate(AX_VALUE_CFRANGE, &range as *const CFRange as *const std::ffi::c_void);
+            if param.is_null() {
+                return SelectionRead::Error;
+            }
+            let attr = CFString::new("AXStringForRange");
+            let mut out: *const std::ffi::c_void = std::ptr::null();
+            let err = AXUIElementCopyParameterizedAttributeValue(
+                el,
+                attr.as_concrete_TypeRef() as CFStringRef as *const std::ffi::c_void,
+                param,
+                &mut out,
+            );
+            CFRelease(param);
+            if err != 0 || out.is_null() {
+                return SelectionRead::Error;
+            }
+            if CFGetTypeID(out) != CFStringGetTypeID() {
+                CFRelease(out);
+                return SelectionRead::Error;
+            }
+            let s = CFString::wrap_under_create_rule(out as CFStringRef).to_string();
+            let t = s.trim();
+            if t.is_empty() {
+                SelectionRead::NoSelection
+            } else {
+                SelectionRead::Text(t.to_string())
+            }
+        }
+    }
 }
 
 /// 从焦点窗口往下翻，找第一个带选区的元素；depth/budget 卡开销——每次属性读都是一趟 IPC，翻太宽得不偿失。
@@ -449,7 +599,7 @@ unsafe fn scan_children(
             break;
         }
         *left -= 1;
-        if let Some(text) = selection_in(*kid) {
+        if let SelectionRead::Text(text) = selection_in(*kid) {
             release_all(&mut kids);
             return Some(text);
         }
@@ -482,46 +632,6 @@ unsafe fn release_all(items: &mut Vec<*const std::ffi::c_void>) {
     for item in items.drain(..) {
         CFRelease(item);
     }
-}
-
-/// AXSelectedTextRange + AXStringForRange：部分 app（PDF 阅读器、老编辑器）
-/// 不实现 AXSelectedText，但实现了这套参数化属性。
-unsafe fn ax_string_for_selection(el: *const std::ffi::c_void) -> Option<String> {
-    use core_foundation::base::TCFType;
-    use core_foundation::string::{CFString, CFStringRef};
-
-    let range_value = ax_attr(el, "AXSelectedTextRange")?;
-    let mut range = CFRange { location: 0, length: 0 };
-    let ok = AXValueGetValue(
-        range_value,
-        AX_VALUE_CFRANGE,
-        &mut range as *mut CFRange as *mut std::ffi::c_void,
-    );
-    CFRelease(range_value);
-    if !ok || range.length <= 0 {
-        return None;
-    }
-    let param = AXValueCreate(AX_VALUE_CFRANGE, &range as *const CFRange as *const std::ffi::c_void);
-    if param.is_null() {
-        return None;
-    }
-    let attr = CFString::new("AXStringForRange");
-    let mut out: *const std::ffi::c_void = std::ptr::null();
-    let err = AXUIElementCopyParameterizedAttributeValue(
-        el,
-        attr.as_concrete_TypeRef() as CFStringRef as *const std::ffi::c_void,
-        param,
-        &mut out,
-    );
-    CFRelease(param);
-    if err != 0 || out.is_null() {
-        return None;
-    }
-    if CFGetTypeID(out) != CFStringGetTypeID() {
-        CFRelease(out);
-        return None;
-    }
-    Some(CFString::wrap_under_create_rule(out as CFStringRef).to_string())
 }
 
 #[repr(C)]

@@ -13,12 +13,13 @@ import ContentBox from "../ContentBox";
 import SourceBox from "../SourceBox";
 import TranslateBar from "../TranslateBar";
 import Phonetic from "../Phonetic";
-import { CheckIcon, CopyIcon } from "../icons";
 import { useAutoFitWindow } from "../../hooks/useAutoFitWindow";
+import { useCardDismiss } from "../../hooks/useCardDismiss";
 import { isSentenceText } from "../../lib/text";
 
 /** 划词/截图统一弹窗：同一张卡片，标题行 = 可编辑原文 + 「对比各源」按钮 */
 export default function Popup() {
+  const win = getCurrentWindow();
   // chrome=91（阴影边距+padding+border 59 + header 32）：内容高度上报 Rust 让窗口收缩，
   // 防透明区域吞掉下层点击；min 防查词时塌成一条，上限交给 Rust 按屏幕钳制
   const { setBody, refit } = useAutoFitWindow("main", 91, 214);
@@ -163,63 +164,11 @@ export default function Popup() {
   };
 
   useEffect(() => {
-    const win = getCurrentWindow();
     let unlistenSelection: (() => void) | undefined;
-    let unlistenBlur: (() => void) | undefined;
-    let unlistenFocus: (() => void) | undefined;
     let unlistenShot: (() => void) | undefined;
     let unlistenResized: (() => void) | undefined;
     let widthTimer: number | undefined;
     let selSeq = 0; // selection 处理器序号（见 sel 回调内注释）
-
-    // 不能在 blur 时直接 hide：拖拽/缩放窗口开始时也触发一次 blur，立即隐藏会中断操作，
-    // 故 blur 后延迟复核 isFocused；且必须持续轮询——macOS Accessory 应用失焦后
-    // 不会再有新 blur，一次性复核被 ：hover 豁免跳过后卡片会永久滞留
-    let hideCheck: number | undefined;
-    const stopHideCheck = () => {
-      if (hideCheck !== undefined) {
-        clearInterval(hideCheck);
-        hideCheck = undefined;
-      }
-    };
-    const startHideCheck = () => {
-      if (hideCheck !== undefined) return;
-      hideCheck = setInterval(maybeHide, 300);
-    };
-
-    // 鼠标在卡片里不藏（用户可能只是点了别的窗口边看边打字），离开时由 onLeave 补查
-    const maybeHide = async () => {
-      if (document.documentElement.matches(":hover")) return;
-      if (!(await win.isFocused())) hideAndReset();
-    };
-    const onLeave = () => maybeHide();
-
-    // 收起即清空：下次打开从空态开始；序号+1 丢掉在途的旧结果
-    const hideAndReset = () => {
-      stopHideCheck();
-      win.hide();
-      seqRef.current++;
-      lastLooked.current = "";
-      setWord("");
-      setInfo(null);
-      setError("");
-      setShotResult(null);
-      setDraft("");
-      setShotTo("auto");
-      setCompareOpen(false);
-      compareSeq.current++; // 对比区已随卡片重置，在途的旧对比请求作废
-      setRows(null);
-      setCompareText("");
-      setCompareLoading(false);
-      setCompareError("");
-      setCopied("");
-    };
-
-    // 点卡片外即收起（.card 的 12px 透明阴影边距也算窗口内）：这类点击不产生
-    // blur，macOS 失焦后无新 blur，卡片会滞留；dragStrip/DictPop 都在 .card 内不受影响
-    const onDocMouseDown = (e: MouseEvent) => {
-      if (!cardRef.current?.contains(e.target as Node)) hideAndReset();
-    };
 
     // 异步订阅竞态防护：StrictMode 会 挂载→清理→再挂载，listen 的 Promise
     // 若在清理后才 resolve，不判 disposed 的话监听器永远退不掉
@@ -250,6 +199,7 @@ export default function Popup() {
           }
         }
         if (stale()) return;
+        markShown(); // 记录 show 时刻 + 启动收起轮询（不依赖 blur 送达）
         await win.show();
         await win.setFocus();
         refit(); // 不依赖焦点事件：窗口重开时残留的拖拽高度立刻按内容纠正
@@ -296,26 +246,13 @@ export default function Popup() {
           // 定位失败（权限/取尺寸异常）也要把卡片弹出来，沿用上次位置
           console.error("定位截图卡片失败", err);
         }
+        markShown(); // 记录 show 时刻 + 启动收起轮询（不依赖 blur 送达）
         win.show();
         win.setFocus();
         refit();
       });
       if (disposed) shot();
       else unlistenShot = shot;
-
-      const blur = await win.listen("tauri://blur", startHideCheck);
-      if (disposed) blur();
-      else unlistenBlur = blur;
-      const focus = await win.listen("tauri://focus", stopHideCheck);
-      if (disposed) focus();
-      else unlistenFocus = focus;
-
-      // blur 时鼠标在卡片里被豁免，离开卡片后补一次失焦复查
-      document.documentElement.addEventListener("mouseleave", onLeave);
-      if (disposed) document.documentElement.removeEventListener("mouseleave", onLeave);
-
-      document.addEventListener("mousedown", onDocMouseDown, true);
-      if (disposed) document.removeEventListener("mousedown", onDocMouseDown, true);
 
       // 用户拖宽弹窗后防抖落盘；高度动画引发的等宽 resize 被「与上次已存宽度比较」过滤，不频繁写盘
       let savedWidth = 0;
@@ -337,16 +274,35 @@ export default function Popup() {
     setup();
     return () => {
       unlistenSelection?.();
-      unlistenBlur?.();
-      unlistenFocus?.();
       unlistenShot?.();
       unlistenResized?.();
       if (widthTimer !== undefined) clearTimeout(widthTimer);
-      document.documentElement.removeEventListener("mouseleave", onLeave);
-      document.removeEventListener("mousedown", onDocMouseDown, true);
-      stopHideCheck();
     };
   }, []);
+
+  // 收起动作：清空会话状态。收起「判定」已抽进 useCardDismiss（300ms 轮询谓词，
+  // 纯函数在 lib/cardDismiss.ts），这里只负责执行
+  const hideAndReset = useCallback(() => {
+    win.hide();
+    seqRef.current++;
+    lastLooked.current = "";
+    setWord("");
+    setInfo(null);
+    setError("");
+    setShotResult(null);
+    setDraft("");
+    setShotTo("auto");
+    setCompareOpen(false);
+    compareSeq.current++; // 对比区已随卡片重置，在途的旧对比请求作废
+    setRows(null);
+    setCompareText("");
+    setCompareLoading(false);
+    setCompareError("");
+    setCopied("");
+  }, []);
+
+  // 收起轮询：visible ∧ ¬cursorInCard ∧ (blur 语义 ∨ 全局点击语义)，见 §5.1
+  const { markShown } = useCardDismiss({ cardRef, onDismiss: hideAndReset });
 
   // 点击同义词/词形变化：弹窗内继续查词不重新定位；seq 计数丢弃慢的旧请求
   const lookup = async (w: string) => {

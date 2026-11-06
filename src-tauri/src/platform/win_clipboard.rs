@@ -28,23 +28,51 @@ pub fn clipboard_seq() -> u64 {
 }
 
 /// 读剪贴板当前文本。
-/// `Ok(Some(t))` 有文本；`Ok(None)` **确定**没有文本格式（剪贴板是图片/文件/空）；
-/// `Err(())` 重试 `retries` 次后仍打不开（别的进程持锁，内容未知）——调用方据此
-/// 区分「确认无文本（可以放心恢复/清空）」和「不知道里面是什么（绝不能乱动）」。
+/// `Ok(Some(t))` 有文本；`Ok(None)` **确定是空剪贴板**（任何格式都没有）；
+/// `Err(())` 打不开（别的进程持锁，内容未知）、句柄读失败、或**有非文本内容**
+/// （图片/文件——无法备份，恢复到空态会毁掉用户内容，只能放弃）——调用方据此
+/// 区分「可以放心恢复/清空」和「不知道里面是什么/还原不了（绝不能乱动）」。
 pub fn clipboard_read_text(retries: u32) -> Result<Option<String>, ()> {
+    use windows::Win32::System::DataExchange::CountClipboardFormats;
     unsafe {
         for attempt in 0..=retries {
             if attempt > 0 {
                 std::thread::sleep(std::time::Duration::from_millis(RETRY_MS));
             }
             if OpenClipboard(HWND::default()).is_err() {
+                if attempt == retries {
+                    println!("[clip] 剪贴板持续锁着（OpenClipboard 重试耗尽）");
+                }
                 continue;
             }
             let text = clipboard_text_locked();
-            let _ = CloseClipboard();
-            // 内层 Some/None 都有意义（有文本/确定没文本）；外层 None=句柄读失败，按锁竞争继续重试
-            if let Some(t) = text {
-                return Ok(t);
+            match text {
+                Some(Some(s)) => {
+                    let _ = CloseClipboard();
+                    return Ok(Some(s));
+                }
+                Some(None) => {
+                    // 确定没文本格式：再分两种——空剪贴板（一种格式都没有）可放心
+                    // 按「原本为空」备份/恢复；有非文本内容（图片/文件）无法备份，
+                    // 照常恢复会把用户内容清掉，只能整轮放弃。两者都是确定状态，
+                    // 不是锁竞争，无需重试（重试到超时只会误报「被占用」）
+                    let empty = CountClipboardFormats() == 0;
+                    let _ = CloseClipboard();
+                    if empty {
+                        return Ok(None);
+                    }
+                    println!("[clip] 剪贴板有非文本内容（图片/文件），无法备份，放弃本轮");
+                    return Err(());
+                }
+                None => {
+                    // 外层 None = 句柄读失败（GetClipboardData 报错/GlobalLock 失败），
+                    // 按锁竞争继续重试；末次打点——这是唯一静默的 Err 来源，
+                    // 「备份失败」没有 [clip] 行就查不到出处
+                    if attempt == retries {
+                        println!("[clip] 剪贴板开着但读不出内容（句柄读失败，重试耗尽）");
+                    }
+                    let _ = CloseClipboard();
+                }
             }
         }
         Err(())

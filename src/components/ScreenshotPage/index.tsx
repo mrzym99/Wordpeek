@@ -3,20 +3,23 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import s from "./index.module.css";
 
-/** 全屏遮罩框选页：遮罩窗口透明，框选直接对着实时桌面（选区外变暗）；
- *  快照由后端在触发瞬间抓取，仅供松手后裁剪，前端不显示大图 */
+/** 全屏遮罩框选页：触发瞬间把快照铺成背景，框选对着定格画面（选区外变暗）；
+ *  松手后后端按同一份快照裁剪，所见即所得 */
 export default function ScreenshotPage() {
   // 选区：起点 + 当前点（CSS 像素，窗口内坐标）
   const [sel, setSel] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  // 定格背景：触发瞬间的快照（data URL）；空 = 后端编码失败，退回透明遮罩对实时桌面
+  const [frozen, setFrozen] = useState("");
   const dragging = useRef(false);
 
-  // screenshot-start 仅作轻量信号：重置上一轮选区（遮罩内容常驻就绪，无需加载）
+  // screenshot-start：重置上一轮选区，并铺上本次快照当定格背景
   useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
-    listen("screenshot-start", () => {
+    listen("screenshot-start", (e) => {
       setSel(null);
       dragging.current = false;
+      setFrozen((e.payload as { image?: string }).image ?? "");
     }).then((fn) => {
       if (disposed) fn(); // 晚到的订阅：立刻退订，不留泄漏
       else unlisten = fn;
@@ -70,7 +73,13 @@ export default function ScreenshotPage() {
   };
 
   return (
-    <div className={s.mask} onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp}>
+    <div
+      className={s.mask}
+      style={frozen ? { backgroundImage: `url(${frozen})`, backgroundSize: "100% 100%" } : undefined}
+      onMouseDown={onMouseDown}
+      onMouseMove={onMouseMove}
+      onMouseUp={onMouseUp}
+    >
       {sel ? (
         <div
           className={s.selection}

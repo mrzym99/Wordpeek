@@ -61,36 +61,122 @@ pub fn inject_copy(_app: &tauri::AppHandle) -> bool {
     ok
 }
 
-/// 前台窗口所属进程名（诊断用，取不到返回空串）
-pub fn foreground_app() -> String {
-    unsafe {
-        use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
-        let hwnd = GetForegroundWindow();
-        if hwnd.0.is_null() {
-            return String::new();
-        }
+/// 前台应用上下文一次性查询（热键兜底注入前的安全闸）。取不到信息一律按「允许」处理，
+/// 绝不因查询失败拦下正常路径；elevated/password/secure 三项只做诊断与放行决策，不重试
+pub fn foreground_context() -> super::ForegroundContext {
+    use windows::Win32::UI::WindowsAndMessaging::{GetClassNameW, GetForegroundWindow, GetWindowThreadProcessId};
+
+    let hwnd = unsafe { GetForegroundWindow() };
+    let (pid, process_name, console_class, elevated) = unsafe {
         let mut pid: u32 = 0;
-        GetWindowThreadProcessId(hwnd, Some(&mut pid));
-        if pid == 0 {
-            return String::new();
+        if hwnd.0.is_null() {
+            (None, String::new(), false, false)
+        } else {
+            GetWindowThreadProcessId(hwnd, Some(&mut pid));
+            let pid = (pid != 0).then_some(pid as i32);
+            let name = pid
+                .and_then(|p| process_image_name(p as u32))
+                .unwrap_or_else(|| format!("pid={}", pid.unwrap_or(0)));
+            // 老式控制台（窗口类 ConsoleWindowClass）里 Ctrl+C 是「中断」不是复制，注入会打断用户命令；
+            // Windows Terminal 有选区时才是复制，只排除老控制台
+            let mut buf = [0u16; 64];
+            let class = GetClassNameW(hwnd, &mut buf);
+            let console = class > 0
+                && String::from_utf16_lossy(&buf[..class as usize]) == "ConsoleWindowClass";
+            let elev = pid.map(|p| process_elevated(p as u32)).unwrap_or(false);
+            (pid, name, console, elev)
         }
-        // 取进程名：快照法太重，用 OpenProcess+QueryFullProcessImageNameW
-        let handle = windows::Win32::System::Threading::OpenProcess(
-            windows::Win32::System::Threading::PROCESS_QUERY_LIMITED_INFORMATION,
-            false,
-            pid,
-        );
-        if let Ok(h) = handle {
-            let mut buf = [0u16; 512];
-            let mut len = buf.len() as u32;
-            let ok = windows::Win32::System::Threading::QueryFullProcessImageNameW(h, windows::Win32::System::Threading::PROCESS_NAME_WIN32, windows::core::PWSTR(buf.as_mut_ptr()), &mut len);
-            let _ = windows::Win32::Foundation::CloseHandle(h);
-            if ok.is_ok() {
-                let path = String::from_utf16_lossy(&buf[..len as usize]);
-                return path.rsplit(['/', '\\']).next().unwrap_or(&path).to_string();
+    };
+    super::ForegroundContext {
+        pid,
+        process_name,
+        fallback_allowed: !console_class,
+        elevated,
+        password_focus: password_focused(),
+        secure_input: false,
+    }
+}
+
+/// 进程映像文件名（诊断用）：OpenProcess+QueryFullProcessImageNameW，比快照法轻
+pub(crate) unsafe fn process_image_name(pid: u32) -> Option<String> {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+        PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+    let mut buf = [0u16; 512];
+    let mut len = buf.len() as u32;
+    let ok = QueryFullProcessImageNameW(
+        handle,
+        PROCESS_NAME_WIN32,
+        windows::core::PWSTR(buf.as_mut_ptr()),
+        &mut len,
+    );
+    let _ = CloseHandle(handle);
+    ok.ok()?;
+    let path = String::from_utf16_lossy(&buf[..len as usize]);
+    Some(path.rsplit(['/', '\\']).next().unwrap_or(&path).to_string())
+}
+
+/// 目标进程是否以管理员运行（UIPI 会拒我们这个普通完整性进程的模拟按键与 UIA 读）
+fn process_elevated(pid: u32) -> bool {
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::Security::{
+        GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation,
+    };
+    use windows::Win32::System::Threading::{OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION};
+
+    unsafe {
+        let Ok(handle) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
+            return false;
+        };
+        let mut token = HANDLE::default();
+        // 0.58 的 OpenProcessToken 返回 Result<()>，句柄写在 &mut token 里
+        let elevated = match OpenProcessToken(handle, TOKEN_QUERY, &mut token) {
+            Ok(()) => {
+                let mut elev = TOKEN_ELEVATION::default();
+                let mut ret_len = 0u32;
+                GetTokenInformation(
+                    token,
+                    TokenElevation,
+                    Some(&mut elev as *mut TOKEN_ELEVATION as *mut std::ffi::c_void),
+                    std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+                    &mut ret_len,
+                )
+                .map(|_| elev.TokenIsElevated != 0)
+                .unwrap_or(false)
             }
-        }
-        format!("pid={pid}")
+            Err(_) => false,
+        };
+        let _ = CloseHandle(token); // token 句柄也要关
+        let _ = CloseHandle(handle);
+        elevated
+    }
+}
+
+/// 焦点控件是不是密码框（UIA IsPassword 属性）。查不到（COM 起不来/无焦点元素）按否处理：
+/// 这只是安全闸的加固项，不能反过来因基础设施故障拦下正常翻译
+fn password_focused() -> bool {
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
+    };
+    use windows::Win32::UI::Accessibility::{CUIAutomation, IUIAutomation};
+
+    unsafe {
+        // 与 read_focused_selection 同理用 MTA（见那里的注释）；若本线程已被先到的
+        // MTA 初始化钉住，这里返回 RPC_E_CHANGED_MODE 被忽略，直接沿用 MTA 即可
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let automation: IUIAutomation =
+            match CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) {
+                Ok(a) => a,
+                Err(_) => return false,
+            };
+        automation
+            .GetFocusedElement()
+            .and_then(|el| el.CurrentIsPassword())
+            .map(|b| b.as_bool())
+            .unwrap_or(false)
     }
 }
 
@@ -232,7 +318,155 @@ pub fn virtual_screen_bounds() -> Option<(i32, i32, i32, i32)> {
 // ---------- 划词图标：全局鼠标监听 + 系统选区 ----------
 
 // 回调类型与回调槽（MOUSE_ON_*）在 super（platform/mod.rs），两个平台共用
-use super::{MOUSE_ON_DOWN, MOUSE_ON_MOVE, MOUSE_ON_UP, MouseCallback, MoveCallback};
+use super::{MOUSE_ON_DOWN, MOUSE_ON_MOVE, MOUSE_ON_UP, MouseCallback, MoveCallback, SelectionRead};
+
+// 钩子活体检测：Windows 会在睡眠唤醒/长时间挂机后静默摘掉 WH_MOUSE_LL（无任何通知），
+// 症状就是划词图标从此不弹。看门狗拿系统级 GetLastInputInfo（不经过我们的钩子）对比
+// 钩子最后收到事件的时间，确认钩子死了就重装。
+static LAST_HOOK_EVENT_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static WATCHDOG_STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// 活钩子的所有权凭证：tid 用于投递 WM_QUIT，done 通道在线程 unhook 完成后才有响应。
+/// 看门狗重装前必须先 take 旧凭证并等线程真正退出——否则旧线程与新钩子的状态互相踩踏，
+/// 会留下永远 unhook 不掉的孤儿钩子，鼠标事件要过越积越长的钩子链（全系统卡）。
+struct HookGuard {
+    tid: u32,
+    done_rx: std::sync::mpsc::Receiver<()>,
+}
+
+static LIVE_HOOK: std::sync::Mutex<Option<HookGuard>> = std::sync::Mutex::new(None);
+
+fn epoch_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn store_live_hook(guard: Option<HookGuard>) {
+    if let Ok(mut slot) = LIVE_HOOK.lock() {
+        *slot = guard;
+    }
+}
+
+/// 装低级鼠标钩子（独立线程跑消息循环）。成功返回所有权凭证，失败返回 None。
+fn install_hook() -> Option<HookGuard> {
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || unsafe {
+        use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+        use windows::Win32::System::Threading::GetCurrentThreadId;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetMessageW, SetWindowsHookExW, UnhookWindowsHookEx, MSG, WH_MOUSE_LL,
+        };
+        let tid = GetCurrentThreadId();
+        let hmod = GetModuleHandleW(None).unwrap_or_default();
+        let hook = match SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook), hmod, 0) {
+            Ok(h) => h,
+            Err(e) => {
+                eprintln!("[mouse] 装低级鼠标钩子失败: {e}");
+                let _ = ready_tx.send(None);
+                return;
+            }
+        };
+        let _ = ready_tx.send(Some(tid));
+        println!("[mouse] 低级鼠标钩子已装");
+        LAST_HOOK_EVENT_MS.store(epoch_ms(), std::sync::atomic::Ordering::Relaxed);
+        let mut msg = MSG::default();
+        while GetMessageW(&mut msg, None, 0, 0).as_bool() {}
+        let _ = UnhookWindowsHookEx(hook);
+        // done_tx 在 unhook 完成后才 drop：等 done 的一侧据此确认旧钩子已彻底卸下
+        let _ = done_tx.send(());
+    });
+    match ready_rx.recv_timeout(std::time::Duration::from_secs(2)) {
+        Ok(Some(tid)) => Some(HookGuard { tid, done_rx }),
+        _ => None,
+    }
+}
+
+/// 重装钩子：先让旧线程真正退出（unhook 完成）再装新的，绝不新旧并存。
+fn replace_hook() -> bool {
+    let old = LIVE_HOOK.lock().ok().and_then(|mut slot| slot.take());
+    if let Some(g) = old {
+        unsafe {
+            use windows::Win32::Foundation::{LPARAM, WPARAM};
+            use windows::Win32::UI::WindowsAndMessaging::{PostThreadMessageW, WM_QUIT};
+            let _ = PostThreadMessageW(
+                g.tid,
+                WM_QUIT,
+                WPARAM(0),
+                LPARAM(0),
+            );
+        }
+        // 超时不硬上：宁可这轮没有钩子（下个周期再来），也不留一个没人管得住的孤儿钩子
+        match g
+            .done_rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+        {
+            Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                eprintln!("[mouse] 旧钩子线程迟迟不退，暂缓重装");
+                store_live_hook(Some(g));
+                return false;
+            }
+        }
+    }
+    match install_hook() {
+        Some(g) => {
+            store_live_hook(Some(g));
+            true
+        }
+        None => false,
+    }
+}
+
+/// 钩子看门狗：用户最近 10s 内有过任何系统输入、但钩子连续两轮（≥10s）一个鼠标事件都没
+/// 送来 = 钩子已被 Windows 静默摘除，重装。纯键盘时段会误判，但重装经过 done 通道确认、
+/// 不再产生孤儿钩子，开销几毫秒、用户无感。
+fn start_hook_watchdog() {
+    std::thread::spawn(move || {
+        let mut dead_streak = 0u32;
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            // 钩子压根不在（上次重装失败）：直接补装，不必等用户有输入
+            let hook_missing = LIVE_HOOK
+                .lock()
+                .map(|slot| slot.is_none())
+                .unwrap_or(false);
+            if hook_missing {
+                dead_streak = 0;
+                replace_hook();
+                continue;
+            }
+            unsafe {
+                use windows::Win32::System::SystemInformation::GetTickCount;
+                use windows::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
+                let mut li = LASTINPUTINFO { cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32, dwTime: 0 };
+                if !GetLastInputInfo(&mut li).as_bool() {
+                    continue;
+                }
+                // dwTime 是 GetTickCount 时基（ms since boot，32 位会回绕），只做小差值比较
+                let active_ms = GetTickCount().wrapping_sub(li.dwTime);
+                if active_ms > 10_000 {
+                    dead_streak = 0; // 用户本就没在动，钩子没事件是正常的
+                    continue;
+                }
+                let stale_ms = epoch_ms().saturating_sub(LAST_HOOK_EVENT_MS.load(std::sync::atomic::Ordering::Relaxed));
+                if stale_ms <= 30_000 {
+                    dead_streak = 0; // 钩子还活着
+                    continue;
+                }
+                dead_streak += 1;
+                if dead_streak < 2 {
+                    continue; // 连续两轮都失活才动手，防单次误判
+                }
+                dead_streak = 0;
+                println!("[mouse] 检测到低级鼠标钩子失效（静默摘除），重装");
+                replace_hook();
+            }
+        }
+    });
+}
 
 /// 低级鼠标钩子：回调必须立刻返回（它在系统的输入线程上跑，慢了整个系统的鼠标都卡）
 unsafe extern "system" fn mouse_hook(
@@ -245,17 +479,18 @@ unsafe extern "system" fn mouse_hook(
     };
     if code >= 0 {
         match wparam.0 as u32 {
-            WM_LBUTTONDOWN => {
-                if let Some(cb) = MOUSE_ON_DOWN.get() {
-                    cb()
-                }
-            }
-            WM_LBUTTONUP => {
-                if let Some(cb) = MOUSE_ON_UP.get() {
+            WM_LBUTTONDOWN | WM_LBUTTONUP => {
+                LAST_HOOK_EVENT_MS.store(epoch_ms(), std::sync::atomic::Ordering::Relaxed);
+                if wparam.0 as u32 == WM_LBUTTONDOWN {
+                    if let Some(cb) = MOUSE_ON_DOWN.get() {
+                        cb()
+                    }
+                } else if let Some(cb) = MOUSE_ON_UP.get() {
                     cb()
                 }
             }
             WM_MOUSEMOVE => {
+                LAST_HOOK_EVENT_MS.store(epoch_ms(), std::sync::atomic::Ordering::Relaxed);
                 if let Some(cb) = MOUSE_ON_MOVE.get() {
                     let pt = (*(lparam.0 as *const MSLLHOOKSTRUCT)).pt;
                     cb(pt.x as i32, pt.y as i32);
@@ -268,79 +503,82 @@ unsafe extern "system" fn mouse_hook(
 }
 
 /// 装全局鼠标监听：左键按下/松开各回调一次。低级钩子必须装在自带消息循环的线程上，起常驻线程跑它。
+/// 另起看门狗线程：Windows 会在睡眠唤醒后静默摘掉 WH_MOUSE_LL，死了就自动重装（重装经
+/// HookGuard 所有权交接，回调槽是 OnceLock，复用同一批闭包和同一个信号通道，worker 无感知）。
 pub fn start_mouse_watch(
     on_down: MouseCallback,
     on_up: MouseCallback,
     on_move: MoveCallback,
 ) -> bool {
-    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-    use windows::Win32::UI::WindowsAndMessaging::{
-        GetMessageW, SetWindowsHookExW, MSG, WH_MOUSE_LL,
-    };
-
     let _ = MOUSE_ON_DOWN.set(on_down);
     let _ = MOUSE_ON_UP.set(on_up);
     let _ = MOUSE_ON_MOVE.set(on_move);
-    // 钩子安装结果同步传回：装不上时调用方要明确知道（划词图标不可用），不能静默失败
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || unsafe {
-        let hmod = GetModuleHandleW(None).unwrap_or_default();
-        let hook = match SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook), hmod, 0) {
-            Ok(h) => h,
-            Err(e) => {
-                eprintln!("[mouse] 装低级鼠标钩子失败: {e}");
-                let _ = tx.send(false);
-                return;
-            }
-        };
-        let _ = tx.send(true);
-        println!("[mouse] 低级鼠标钩子已装");
-        let mut msg = MSG::default();
-        while GetMessageW(&mut msg, None, 0, 0).as_bool() {}
-        let _ = windows::Win32::UI::WindowsAndMessaging::UnhookWindowsHookEx(hook);
-    });
-    rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap_or(false)
+    // 钩子安装结果同步传回：装不上时调用方要明确知道（划词图标不可用），不能静默失败。
+    // 首装偶尔被拖慢（杀软扫新 exe、系统繁忙）超过 2s 应答超时，重试两次再定生死，
+    // 不能一次 recv 超时就把划词图标判死刑
+    let mut watch = false;
+    for _ in 0..3 {
+        if let Some(g) = install_hook() {
+            store_live_hook(Some(g));
+            watch = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
+    if !watch {
+        return false;
+    }
+    if !WATCHDOG_STARTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        start_hook_watchdog();
+    }
+    true
 }
 
 /// 读焦点控件里被选中的文本（UI Automation 文本模式，不碰剪贴板也不注入按键）。
-/// 终端、部分 Electron 应用不实现文本模式，返回 None——那时不弹图标，用户照旧用热键。
-pub fn focused_selection() -> Option<String> {
+/// 返回门面统一四态（hopeless 拉黑记忆由门面统一记账）；终端、部分 Electron 应用
+/// 不实现文本模式返回 NoTextPattern——那时不弹图标，用户照旧用热键
+pub fn read_focused_selection() -> super::SelectionRead {
     use windows::Win32::System::Com::{
-        CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
+        CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
     };
     use windows::Win32::UI::Accessibility::CUIAutomation;
 
-    let pid = foreground_pid();
-    // 整轮读完一个字都没拿到的 app（终端、自绘 UI）不再试：UIA 重试要白等 360ms
-    if pid.is_some_and(super::selection_hopeless) {
-        return None;
-    }
-    let text = unsafe {
-        // UIA 客户端用 STA；反复初始化只是加引用计数，无需配对 Uninitialize（线程随进程退出）
-        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-        let automation: IUIAutomation =
-            CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
-        // Chromium / Electron 的 UIA 树是懒建的，第一次常拿到空节点；负载高时
-        // 120ms 也不够，逐次加长重试到 360ms（图标本就不弹在按下瞬间，慢几十毫秒无感）
-        let mut text = None;
-        for attempt in 0..3 {
-            if attempt > 0 {
-                std::thread::sleep(std::time::Duration::from_millis(120 * attempt as u64));
-            }
-            if let Some(t) = selection_of(&automation) {
-                text = Some(t);
-                break;
+    let mut text = None;
+    // 本轮拿到的最后一个非 Text 状态；COM 起不来时保持 Error（绝不据此拉黑前台应用）
+    let mut overall = super::SelectionRead::Error;
+    unsafe {
+        // UIA 客户端必须走 MTA：探测线程没有消息泵，STA 下跨进程取属性遇到需要
+        // 重入的 provider 回调（Chromium 取属性时会回调客户端）会直接失败——
+        // 表现就是永远拿不到 TextPattern，Chromium 的树永远敲不醒（ hopeless 黑名单
+        // 死循环）。微软官方要求无消息循环的 UIA 客户端用 MTA。
+        // 反复初始化只是加引用计数，无需配对 Uninitialize（线程随进程退出）
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        if let Ok(automation) = CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) {
+            // Chromium / Electron 的 UIA 树是懒建的，第一次常拿到空节点；负载高时
+            // 120ms 也不够，逐次加长重试到 360ms（图标本就不弹在按下瞬间，慢几十毫秒无感）
+            for attempt in 0..3 {
+                if attempt > 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(120 * attempt as u64));
+                }
+                match selection_of(&automation) {
+                    SelectionRead::Text(t) => {
+                        text = Some(t);
+                        break;
+                    }
+                    SelectionRead::NoTextPattern => overall = SelectionRead::NoTextPattern,
+                    // 后面的尝试哪怕只是空选区，也说明应用其实支持（不算「不支持」）；
+                    // 空选区与瞬时错误在门面都不拉黑，这里合并为 NoSelection 即可
+                    SelectionRead::NoSelection | SelectionRead::Error => {
+                        overall = SelectionRead::NoSelection;
+                    }
+                }
             }
         }
-        text
-    };
-    if let Some(pid) = pid {
-        match text.is_some() {
-            true => super::clear_selection_hopeless(pid),
-            false => super::mark_selection_hopeless(pid),
-        }
     }
-    text
+    match text {
+        Some(t) => super::SelectionRead::Text(t),
+        None => overall,
+    }
 }
 
 pub fn foreground_pid() -> Option<i32> {
@@ -357,32 +595,27 @@ pub fn foreground_pid() -> Option<i32> {
     }
 }
 
-/// 能不能用 Ctrl+C 读剪贴板做兜底：传统控制台（窗口类 ConsoleWindowClass）里 Ctrl+C 是
-/// 「中断」不是复制，注入会打断用户命令；Windows Terminal 有选区时才是复制，只排除老控制台。
-pub fn clipboard_fallback_allowed() -> bool {
-    use windows::Win32::UI::WindowsAndMessaging::{GetClassNameW, GetForegroundWindow};
-
-    unsafe {
-        let hwnd = GetForegroundWindow();
-        if hwnd.0.is_null() {
-            return true;
-        }
-        let mut buf = [0u16; 64];
-        let len = GetClassNameW(hwnd, &mut buf);
-        if len <= 0 {
-            return true;
-        }
-        String::from_utf16_lossy(&buf[..len as usize]) != "ConsoleWindowClass"
-    }
-}
-
-unsafe fn selection_of(automation: &IUIAutomation) -> Option<String> {
+/// 单次 UIA 选区读取，用门面的统一四态（语义与拉黑规则见 platform::SelectionRead）
+unsafe fn selection_of(automation: &IUIAutomation) -> super::SelectionRead {
     use windows::Win32::UI::Accessibility::{IUIAutomationTextPattern, UIA_TextPatternId};
 
-    let element = automation.GetFocusedElement().ok()?;
-    let pattern: IUIAutomationTextPattern = element.GetCurrentPatternAs(UIA_TextPatternId).ok()?;
-    let ranges = pattern.GetSelection().ok()?;
-    let count = ranges.Length().ok()?;
+    let element = match automation.GetFocusedElement() {
+        Ok(e) => e,
+        Err(_) => return SelectionRead::Error,
+    };
+    // 取不到 TextPattern = 应用不支持（不是「没选中」）
+    let pattern: IUIAutomationTextPattern = match element.GetCurrentPatternAs(UIA_TextPatternId) {
+        Ok(p) => p,
+        Err(_) => return SelectionRead::NoTextPattern,
+    };
+    let ranges = match pattern.GetSelection() {
+        Ok(r) => r,
+        Err(_) => return SelectionRead::Error,
+    };
+    let count = match ranges.Length() {
+        Ok(c) => c,
+        Err(_) => return SelectionRead::Error,
+    };
     let mut text = String::new();
     for i in 0..count {
         let Ok(range) = ranges.GetElement(i) else {
@@ -395,8 +628,8 @@ unsafe fn selection_of(automation: &IUIAutomation) -> Option<String> {
     }
     let trimmed = text.trim();
     if trimmed.is_empty() {
-        None
+        SelectionRead::NoSelection
     } else {
-        Some(trimmed.to_string())
+        SelectionRead::Text(trimmed.to_string())
     }
 }

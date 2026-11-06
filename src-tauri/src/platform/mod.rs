@@ -28,12 +28,10 @@ pub use macos::inject_copy;
 #[cfg(windows)]
 pub use windows::cursor_pos;
 #[cfg(windows)]
-pub use windows::foreground_app;
 #[cfg(windows)]
 pub use windows::sanitize_stdio;
 #[cfg(target_os = "macos")]
 pub use macos::cursor_pos;
-
 /// 光标所在显示器的工作区（物理像素；拿不到时 (0,0,0,0)）
 #[cfg(windows)]
 pub use windows::work_area_at;
@@ -106,17 +104,86 @@ pub use windows::start_mouse_watch;
 #[cfg(target_os = "macos")]
 pub use macos::start_mouse_watch;
 
-/// 焦点控件里被选中的文本（系统 AX/UIA 接口，不碰剪贴板；不支持的应用返回 None）
 #[cfg(windows)]
 pub use windows::disable_rounding;
+
+/// 焦点控件里被选中区域的单次读取结果（两平台统一语义，是探测节点的前提）。
+/// 必须区分「这次没选中」和「应用不支持」：后者才值得拉黑 hopeless 记忆，
+/// 前者是日常操作（拖滚动条、空白处拖动），据它拉黑会错杀整个应用
+#[derive(Debug)]
+pub enum SelectionRead {
+    /// 读到了选中文本（已 trim）
+    Text(String),
+    /// 焦点控件不提供文本/选区接口（终端、自绘 UI、无障碍树未建）
+    NoTextPattern,
+    /// 支持但当前没有选中内容（空选区）
+    NoSelection,
+    /// COM/IPC 瞬时错误，下次再试
+    Error,
+}
+
 #[cfg(windows)]
-pub use windows::focused_selection;
+pub use windows::{foreground_pid, read_focused_selection};
 #[cfg(target_os = "macos")]
-pub use macos::focused_selection;
+pub use macos::{foreground_pid, read_focused_selection};
+
+/// 读焦点控件里被选中的文本（系统 AX/UIA 接口，不碰剪贴板也不注入按键）。
+/// hopeless 记忆（按 pid 拉黑 + TTL）在门面统一做：两平台的拉黑条件同为「本轮
+/// 恰好是 NoTextPattern」——空选区和瞬时错误都绝不进记忆
+pub fn focused_selection() -> SelectionRead {
+    let Some(pid) = foreground_pid() else {
+        return SelectionRead::Error;
+    };
+    // 已确认「压根不提供文本/选区」的 app（终端、自绘 UI）不再试：
+    // Windows UIA 重试要白等 360ms，macOS 光唤醒轮询就要 640ms
+    if selection_hopeless(pid) {
+        println!("[probe] pid={pid} 处于 hopeless 拉黑中，跳过 UIA 直读");
+        return SelectionRead::NoTextPattern;
+    }
+    let read = read_focused_selection();
+    println!("[probe] pid={pid} UIA 直读结果：{read:?}");
+    match &read {
+        SelectionRead::Text(_) => clear_selection_hopeless(pid),
+        SelectionRead::NoTextPattern => mark_selection_hopeless(pid),
+        _ => {}
+    }
+    read
+}
+
+/// 热键路径专用读法：不查拉黑表、也不记账。黑名单是图标路径的延迟优化，热键自己
+/// 有剪贴板兜底——焦点恰好落在 Chrome 工具栏/地址栏这类非文本控件时 UIA 返回
+/// NoTextPattern，热键照记三振会把图标路径拖下水（Chrome 被误拉黑 10 分钟，划词
+/// 图标死循环）。代价：真不支持的 app（终端）热键多白等一次 UIA，几百毫秒无感。
+/// 读到 Text 顺手清掉误拉黑：热键是用户手动触发的高置信信号，一次成功即可自愈
+pub fn focused_selection_untracked() -> SelectionRead {
+    let read = read_focused_selection();
+    if let (SelectionRead::Text(_), Some(pid)) = (&read, foreground_pid()) {
+        clear_selection_hopeless(pid);
+    }
+    read
+}
+
+/// 前台应用上下文：热键兜底注入前的安全闸。一次查询拿全，替代 grab 路径
+/// 各自零散的前台查询（进程名/窗口类/权限）；图标路径只消费 secure_input
+#[derive(Debug)]
+pub struct ForegroundContext {
+    pub pid: Option<i32>,
+    /// 前台进程名（诊断日志用，取不到为空串）
+    pub process_name: String,
+    /// 剪贴板兜底注入是否允许（Win 排除老控制台：Ctrl+C 是「中断」不是复制；mac 恒允许）
+    pub fallback_allowed: bool,
+    /// 目标进程以管理员运行（Win UIPI 会拒模拟按键和 UIA 读；仅诊断，不自动弹 UAC）
+    pub elevated: bool,
+    /// 焦点控件是密码框——宁可不翻译，绝不在密码场景注入
+    pub password_focus: bool,
+    /// 系统安全输入开启中（mac 登录窗/密码框；注入会被系统吞且可能触发安全告警）
+    pub secure_input: bool,
+}
+
 #[cfg(windows)]
-pub use windows::clipboard_fallback_allowed;
+pub use windows::foreground_context;
 #[cfg(target_os = "macos")]
-pub use macos::clipboard_fallback_allowed;
+pub use macos::foreground_context;
 
 // ---------- 剪贴板原语（只有热键路径 grab_selection 用；划词图标路径绝不碰） ----------
 
@@ -225,23 +292,62 @@ pub fn spawn_second_chance(backup: Option<String>, grabbed: String, base_seq: u6
 
 // ---------- 划词图标：「这个 app 读不到选区」的记忆（两个平台共用） ----------
 
-/// 整轮探测一个字都没拿到的 app（终端、自绘 UI）记住它，之后直接走剪贴板兜底，
-/// 不再每次白等（macOS 唤醒轮询 ~640ms / Windows UIA 重试 ~360ms）；
-/// 读到过一次就清掉——pid 会被系统复用
+/// 「这个 app 读不到选区」的记忆（两个平台共用）：**连续** N 轮探测都确认「焦点控件
+/// 压根不提供文本模式」才拉黑，之后跳过 UIA 直读不再白等（macOS 唤醒轮询 ~640ms /
+/// Windows UIA 重试 ~360ms）；读到过一次就清掉。
+///
+/// 为什么不能一次失败就拉黑：Chromium 系（Chrome/Edge/Electron）的 UIA 无障碍树是
+/// 懒建的——客户端查询（WM_GETOBJECT）本身就是「敲门」，敲一两下树才建起来。一次
+/// 失败就拉黑 = 停止敲门 = 树永远建不起来 = 图标在这个浏览器里永远不弹（死循环）。
+/// 三振给足了唤醒窗口；真正的「不支持」应用（终端/自绘 UI）连输三局也就白等三次，
+/// 各几百毫秒且都在探测线程，无感。
+/// TTL 仍在：pid 会被系统复用，过期自动失效。
 static SELECTION_HOPELESS: std::sync::OnceLock<
-    parking_lot::Mutex<std::collections::HashSet<i32>>,
+    parking_lot::Mutex<std::collections::HashMap<i32, (u64, u32)>>,
 > = std::sync::OnceLock::new();
 
-fn hopeless_set() -> &'static parking_lot::Mutex<std::collections::HashSet<i32>> {
-    SELECTION_HOPELESS.get_or_init(|| parking_lot::Mutex::new(std::collections::HashSet::new()))
+/// 连续这么多次 NoTextPattern 才拉黑
+const HOPELESS_STRIKES: u32 = 3;
+/// 三振的计数窗口：距上次失败超过这么久视为「不连续」，重新计数（用户隔天再划一次
+/// 不该背着上次的失败记录）
+const HOPELESS_STRIKE_WINDOW_MS: u64 = 60 * 1000;
+/// 拉黑记忆的保质期：到期自动失效，就算 pid 复用撞车也最多错 10 分钟
+const HOPELESS_TTL_MS: u64 = 10 * 60 * 1000;
+
+fn hopeless_set() -> &'static parking_lot::Mutex<std::collections::HashMap<i32, (u64, u32)>> {
+    SELECTION_HOPELESS.get_or_init(|| parking_lot::Mutex::new(std::collections::HashMap::new()))
+}
+
+fn hopeless_now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 pub(crate) fn selection_hopeless(pid: i32) -> bool {
-    hopeless_set().lock().contains(&pid)
+    let mut set = hopeless_set().lock();
+    match set.get(&pid) {
+        Some(&(at, strikes)) if strikes >= HOPELESS_STRIKES => {
+            if hopeless_now_ms().saturating_sub(at) < HOPELESS_TTL_MS {
+                true
+            } else {
+                set.remove(&pid); // 过期：顺手清掉
+                false
+            }
+        }
+        _ => false,
+    }
 }
 
 pub(crate) fn mark_selection_hopeless(pid: i32) {
-    hopeless_set().lock().insert(pid);
+    let now = hopeless_now_ms();
+    let mut set = hopeless_set().lock();
+    let strikes = match set.get(&pid) {
+        Some(&(last, n)) if now.saturating_sub(last) < HOPELESS_STRIKE_WINDOW_MS => n + 1,
+        _ => 1,
+    };
+    set.insert(pid, (now, strikes));
 }
 
 pub(crate) fn clear_selection_hopeless(pid: i32) {
