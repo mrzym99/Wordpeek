@@ -123,7 +123,7 @@ pub enum SelectionRead {
 }
 
 #[cfg(windows)]
-pub use windows::{foreground_pid, read_focused_selection};
+pub use windows::{foreground_pid, read_focused_selection, warm_uia};
 #[cfg(target_os = "macos")]
 pub use macos::{foreground_pid, read_focused_selection};
 

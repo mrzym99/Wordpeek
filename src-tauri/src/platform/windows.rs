@@ -581,6 +581,25 @@ pub fn read_focused_selection() -> super::SelectionRead {
     }
 }
 
+/// 预热 UIA 客户端：进程内首次 COM/UIA 初始化慢（CoInitializeEx(MTA) 启动 + 加载
+/// UIAutomationCore），不预热的话第一次划词探测被拖慢到秒级，结果因代次过期被丢弃，
+/// 图标不弹。启动时后台线程做一次，之后各探测线程加入已有 MTA 即可（加引用计数，
+/// 无需配对 Uninitialize）。只裸初始化，不调用 selection_of——不向焦点应用发查询，
+/// 也不碰 hopeless 记账
+pub fn warm_uia() {
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
+    };
+    use windows::Win32::UI::Accessibility::{CUIAutomation, IUIAutomation};
+
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        // 拿到即预热完成：UIA 核心已加载进进程，实例本身随作用域释放
+        let _: Option<IUIAutomation> =
+            CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok();
+    }
+}
+
 pub fn foreground_pid() -> Option<i32> {
     use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
 

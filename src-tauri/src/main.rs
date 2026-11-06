@@ -80,6 +80,7 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             // 平台初始化（macOS：Dock 策略 + 主线程缓存屏幕信息）
             #[cfg(any(windows, target_os = "macos"))]
@@ -145,6 +146,15 @@ fn main() {
                 crate::ocr::warmup();
             });
 
+            // 预热 UIA（仅 Windows）：进程首次 COM/UIA 初始化要加载 UIA 核心，耗时可达秒级，
+            // 不预热的话第一次划词探测被拖慢，结果因代次过期被丢弃，图标就不弹
+            // （热键路径会顺带预热，但用户不该先按一次热键才正常）
+            #[cfg(windows)]
+            std::thread::spawn(|| {
+                std::thread::sleep(std::time::Duration::from_secs(1));   // 错开启动高峰
+                crate::platform::warm_uia();
+            });
+
             // 启动后延迟几秒静默检查一次更新，结果缓存供设置页查询（macOS 拿不到更新产物，启动时不检查）
             if !cfg!(target_os = "macos") {
                 let updater_handle = handle.clone();
@@ -159,6 +169,24 @@ fn main() {
             // 设置窗口按需创建（open_settings），点 ✕ 即销毁，无需关闭时隐藏的守卫
 
             tray::setup_tray(app)?;
+
+            // Windows 启动提示：托盘图标在右下角不显眼，发一条系统通知告知已在后台运行（macOS 菜单栏有图标，无需提示）
+            #[cfg(windows)]
+            {
+                let notify_handle = handle.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(800));
+                    use tauri_plugin_notification::NotificationExt;
+                    if let Err(e) = notify_handle
+                        .notification()
+                        .builder()
+                        .title("Wordpeek 已启动，划词翻译正在后台运行")
+                        .show()
+                    {
+                        eprintln!("[notify] startup toast failed: {e}");
+                    }
+                });
+            }
 
             let cfg = app
                 .state::<parking_lot::Mutex<translate::AppConfig>>()
