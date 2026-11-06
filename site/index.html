@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Wordpeek — 划词即译，随处可查</title>
+    <meta
+      name="description"
+      content="Wordpeek 是一款轻量的桌面划词翻译工具：选中单词、按下快捷键，翻译卡片就贴在鼠标旁。支持截图 OCR、输入翻译与多源对比，开源免费。"
+    />
+    <meta property="og:title" content="Wordpeek — 划词即译，随处可查" />
+    <meta
+      property="og:description"
+      content="选中即译的桌面划词翻译工具。轻量、开源、免 Key 开箱即用。"
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="assets/logo.png" />
+    <link rel="icon" type="image/png" href="assets/logo.png" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#demo">跳到划词演示</a>
+
+    <header class="site-header">
+      <div class="shell header-inner">
+        <a class="brand" href="#top" aria-label="Wordpeek 首页">
+          <img src="assets/logo.png" alt="" width="26" height="26" />
+          <span>Wordpeek</span>
+          <span class="beta">beta</span>
+        </a>
+        <nav class="nav" aria-label="主导航">
+          <a href="#demo">划词演示</a>
+          <a href="#features">功能</a>
+          <a href="#download">下载</a>
+        </nav>
+        <a
+          class="star-btn"
+          href="https://github.com/mrzym99/Wordpeek"
+          target="_blank"
+          rel="noreferrer"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="m12 3.2 2.7 5.5 6.1.9-4.4 4.3 1 6-5.4-2.9-5.4 2.9 1-6-4.4-4.3 6.1-.9L12 3.2Z"
+            />
+          </svg>
+          Star
+        </a>
+      </div>
+    </header>
+
+    <main id="top">
+      <!-- ===== Hero ===== -->
+      <section class="hero shell">
+        <div class="hero-copy">
+          <p class="eyebrow"><span class="dot"></span> 开源 · 轻量 · 常驻菜单栏</p>
+          <h1>选中即译，<br /><span class="accent">不打断思路。</span></h1>
+          <p class="lead">
+            在任意应用里选中单词，按一下快捷键——翻译卡片就落在鼠标旁。
+            不用切换标签页，不用复制粘贴，读完这一句，你已经知道它的意思。
+          </p>
+          <div class="cta-row">
+            <a class="btn btn-primary" href="#download">
+              下载 Wordpeek
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 4v11m0 0 4.5-4.5M12 15l-4.5-4.5M5 19h14" />
+              </svg>
+            </a>
+            <a
+              class="btn btn-ghost"
+              href="https://github.com/mrzym99/Wordpeek"
+              target="_blank"
+              rel="noreferrer"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M12 21c-4.4 0-8-3.7-8-8.2 0-3.6 2.3-6.7 5.4-7.8.4-.1.5.2.5.4v1.5c-2.2.5-2.7 1.1-2.7 1.1-.4.9-1 1.1-1 1.1-.8.6.1.6.1.6.9.1 1.4-.9 1.4-.9.8-1.4 2-1 2.5-.8.1.6.3 1 .6 1.2-2 .2-4.1 1-4.1 4.5 0 1 .3 1.8.9 2.5-.1.2-.4 1.2.1 2.5 0 0 .7.2 2.4-.9.7.2 1.4.3 2.1.3s1.5-.1 2.1-.3c1.7 1.1 2.4.9 2.4.9.5-1.3.2-2.3.1-2.5.6-.7.9-1.5.9-2.5 0-3.5-2.1-4.3-4.1-4.5.3-.3.6-.9.6-1.9v-2.8c0-.2.1-.5.5-.4 3.1 1.2 5.4 4.3 5.4 7.8 0 4.5-3.6 8.2-8 8.2Z"
+                  fill="currentColor"
+                  stroke="none"
+                />
+              </svg>
+              GitHub
+            </a>
+          </div>
+          <p class="meta">macOS 11+ / Windows 10+ · 内置有道、必应，无需 API Key</p>
+        </div>
+
+        <div class="hero-stage" aria-hidden="true">
+          <div class="doc-mock">
+            <div class="doc-top">
+              <span></span><span></span><span></span>
+            </div>
+            <p class="doc-kicker">DESIGN NOTES</p>
+            <p class="doc-line">Good tools disappear while you use them.</p>
+            <p class="doc-line">The most <mark>ubiquitous</mark> ideas are often</p>
+            <p class="doc-line">hiding in plain sight.</p>
+            <p class="doc-line dim">Read on, and keep your train of thought.</p>
+          </div>
+
+          <span class="float-icon">
+            <img src="assets/logo.png" alt="" width="28" height="28" />
+          </span>
+
+          <div class="dict-card hero-card">
+            <div class="dict-brand">Wordpeek<span class="beta">beta</span></div>
+            <div class="dict-word">
+              ubiquitous
+              <span class="dict-phon">/juːˈbɪkwɪtəs/</span>
+            </div>
+            <ol class="dict-senses">
+              <li><i>adj.</i> 无所不在的；普遍存在的</li>
+              <li><i>adj.</i> 随处可见的，到处都有的</li>
+            </ol>
+            <div class="dict-foot">词形变化：<span>ubiquitousness</span></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== Live demo ===== -->
+      <section id="demo" class="section shell">
+        <div class="section-head">
+          <p class="eyebrow"><span class="dot"></span> Live demo</p>
+          <h2>亲手试一次</h2>
+          <p>
+            拖选或双击下面段落里的任意英文单词，再点浮出的小图标；选中后按
+            <kbd>Alt</kbd> / <kbd>⌥</kbd> + <kbd>Z</kbd> 也能直接展开。
+            这里跑的是纯前端演示，词典内置在页面里。
+          </p>
+        </div>
+
+        <div class="demo-panel" id="demoPanel">
+          <p class="demo-text" id="demoText">
+            Some words carry a nuance that a dictionary alone cannot teach. Meet
+            ubiquitous in a sentence, notice how ephemeral feels in context, and
+            let tranquil settle into memory. Learning English becomes serendipity
+            rather than a chore; with practice, anyone can speak in an eloquent
+            way.
+          </p>
+          <div class="demo-hint">
+            <span>想快速看看？</span>
+            <button class="demo-chip" type="button" data-word="nuance">nuance</button>
+            <button class="demo-chip" type="button" data-word="ubiquitous">ubiquitous</button>
+            <button class="demo-chip" type="button" data-word="serendipity">serendipity</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== Features ===== -->
+      <section id="features" class="section shell">
+        <div class="section-head">
+          <p class="eyebrow"><span class="dot"></span> Features</p>
+          <h2>为「读下去」而设计</h2>
+          <p>每一个功能，都只为少一次打断：选中、按下、看完，继续读。</p>
+        </div>
+
+        <div class="feature-grid">
+          <article class="feature">
+            <span class="feature-icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 5h16M4 12h9M4 19h6" />
+                <path d="m15.5 16.5 2.5 2.5 4-4" />
+              </svg>
+            </span>
+            <h3>划词即译</h3>
+            <p>选中单词，按 Alt/⌥ + Z 或点击光标旁的小图标，卡片贴边弹出，翻译完自动收起。</p>
+          </article>
+
+          <article class="feature">
+            <span class="feature-icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="3" y="5" width="18" height="14" rx="2" />
+                <path d="m7 15 3-3 2.5 2.5L16 10l1 1" />
+              </svg>
+            </span>
+            <h3>截图翻译</h3>
+            <p>框选屏幕任意区域，本地 OCR 先识别文字再翻译。图片、PDF、视频字幕都能读。</p>
+          </article>
+
+          <article class="feature">
+            <span class="feature-icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="3" y="4" width="18" height="16" rx="2" />
+                <path d="M7 9h10M7 13h6M7 17h4" />
+              </svg>
+            </span>
+            <h3>输入翻译</h3>
+            <p>独立输入窗，Enter 即译，Shift + Enter 换行。中点一下就能切换中英方向。</p>
+          </article>
+
+          <article class="feature">
+            <span class="feature-icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 7h11M4 12h7M4 17h5" />
+                <path d="M17 11v6m3-3h-6" />
+              </svg>
+            </span>
+            <h3>多源对比</h3>
+            <p>有道、必应、百度、腾讯云可选。一键展开各源译文，哪个更准确一眼就知道。</p>
+          </article>
+
+          <article class="feature">
+            <span class="feature-icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M20 13.5A8 8 0 0 1 10.5 4 8 8 0 1 0 20 13.5Z" />
+              </svg>
+            </span>
+            <h3>深色 / 浅色</h3>
+            <p>跟随系统主题自动切换，深色编辑器旁也不刺眼。所有文字都按对比度标准配色。</p>
+          </article>
+
+          <article class="feature">
+            <span class="feature-icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 3 4.5 6v6c0 4.2 3 7.6 7.5 9 4.5-1.4 7.5-4.8 7.5-9V6L12 3Z" />
+                <path d="m9 12 2 2 4-4" />
+              </svg>
+            </span>
+            <h3>开源、本地优先</h3>
+            <p>MIT 协议，代码全部公开。只有翻译文本会发给你选择的翻译源，密钥只存本机配置。</p>
+          </article>
+        </div>
+      </section>
+
+      <!-- ===== Steps ===== -->
+      <section class="section shell">
+        <div class="section-head">
+          <p class="eyebrow"><span class="dot"></span> How it works</p>
+          <h2>三步，不离开当前窗口</h2>
+        </div>
+        <ol class="steps">
+          <li>
+            <span class="step-num">01</span>
+            <h3>选中</h3>
+            <p>在浏览器、编辑器、PDF 阅读器里拖选或双击一个英文单词。</p>
+          </li>
+          <li>
+            <span class="step-num">02</span>
+            <h3>按下</h3>
+            <p>按 Alt/⌥ + Z，或直接点击光标旁浮出的小图标。</p>
+          </li>
+          <li>
+            <span class="step-num">03</span>
+            <h3>读完继续</h3>
+            <p>音标、释义、词形、同义词都在一张卡片里。点外面就收起，思路不断。</p>
+          </li>
+        </ol>
+      </section>
+
+      <!-- ===== Download ===== -->
+      <section id="download" class="section shell">
+        <div class="download-panel">
+          <div class="download-copy">
+            <p class="eyebrow">
+              <span class="dot"></span> Download<span class="dl-ver" id="dlVersion" hidden></span>
+            </p>
+            <h2>把 Wordpeek 放进菜单栏</h2>
+            <p>
+              免费、开源，无需注册。点击按钮直接下载 GitHub 上的最新安装包；
+              更新日志与历史版本在 Releases 页面。
+            </p>
+            <div class="download-actions">
+              <a
+                class="btn btn-primary"
+                data-download="mac"
+                href="https://github.com/mrzym99/Wordpeek/releases/latest"
+                target="_blank"
+                rel="noreferrer"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M16.4 12.7c0-2.1 1.7-3.1 1.8-3.2-1-1.4-2.5-1.6-3-1.6-1.3-.1-2.5.8-3.1.8-.6 0-1.6-.8-2.7-.8-1.4 0-2.6.8-3.3 2-1.4 2.4-.4 6 1 8 .7 1 1.5 2 2.5 2 1 0 1.4-.6 2.6-.6s1.5.6 2.6.6c1.1 0 1.8-1 2.4-2 .8-1.1 1.1-2.2 1.1-2.3 0 0-2.2-.8-2.2-3.1ZM14.3 6.4c.6-.7 1-1.6.9-2.6-.9 0-1.9.6-2.5 1.3-.5.6-1 1.6-.9 2.5 1 .1 2-.5 2.5-1.2Z"
+                    fill="currentColor"
+                    stroke="none"
+                  />
+                </svg>
+                macOS（Apple Silicon）
+              </a>
+              <a
+                class="btn btn-ghost"
+                data-download="win"
+                href="https://github.com/mrzym99/Wordpeek/releases/latest"
+                target="_blank"
+                rel="noreferrer"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M4 5h7v6H4zM13 5h7v6h-7zM4 13h7v6H4zM13 13h7v6h-7z" fill="currentColor" stroke="none" />
+                </svg>
+                Windows 安装包
+              </a>
+            </div>
+            <p class="download-note">
+              Intel Mac 目前需要从源码构建 · Windows 10 需 WebView2（Win11 已内置）·
+              <a
+                href="https://github.com/mrzym99/Wordpeek/releases"
+                target="_blank"
+                rel="noreferrer"
+                >所有版本</a
+              >
+            </p>
+          </div>
+          <div class="download-visual" aria-hidden="true">
+            <div class="mini-card">
+              <div class="mini-title">Wordpeek</div>
+              <div class="mini-sub">常驻菜单栏 · 用完即走</div>
+              <div class="mini-rows">
+                <span></span><span></span><span></span>
+              </div>
+            </div>
+            <div class="mini-tray">
+              <img src="assets/logo.png" alt="" width="22" height="22" />
+              <span class="mini-tray-label">划词翻译</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== Star ===== -->
+      <section class="section shell">
+        <div class="star-panel">
+          <div>
+            <h2>如果它帮你少查了几次词典，<br />就给它点一颗 Star 吧。</h2>
+            <p>一颗 Star 能让更多正在找工具的人看到它，也是这个项目继续更新的动力。</p>
+          </div>
+          <a
+            class="btn btn-primary btn-star"
+            href="https://github.com/mrzym99/Wordpeek/stargazers"
+            target="_blank"
+            rel="noreferrer"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="m12 3.2 2.7 5.5 6.1.9-4.4 4.3 1 6-5.4-2.9-5.4 2.9 1-6-4.4-4.3 6.1-.9L12 3.2Z"
+                fill="currentColor"
+              />
+            </svg>
+            去 GitHub 点 Star
+          </a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="shell footer-inner">
+        <div class="footer-brand">
+          <img src="assets/logo.png" alt="" width="20" height="20" />
+          <span>Wordpeek</span>
+        </div>
+        <p>© 2026 Wordpeek · MIT License · 开源地址 <a href="https://github.com/mrzym99/Wordpeek" target="_blank" rel="noreferrer">github.com/mrzym99/Wordpeek</a></p>
+      </div>
+    </footer>
+
+    <!-- 划词演示的浮层：图标 + 词典卡，由 demo.js 定位与填充 -->
+    <button class="demo-float" id="demoFloat" type="button" hidden aria-label="翻译选中的单词">
+      <img src="assets/logo.png" alt="" width="28" height="28" />
+    </button>
+    <div class="dict-card demo-card" id="demoCard" hidden aria-live="polite"></div>
+
+    <script src="download.js"></script>
+    <script src="demo.js"></script>
+  </body>
+</html>
