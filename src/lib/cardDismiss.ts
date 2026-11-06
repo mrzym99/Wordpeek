@@ -40,7 +40,7 @@ export function pointInRect(
 /**
  * 模式二的「show 之后点过卡片外」：
  * - 入场豁免：只认 show 之后的全局按下，选词手势/图标点击那一下不算
- * - 点在自己窗口矩形内不算外部（透明阴影边距的收起交给 DOM onDocMouseDown 判）
+ * - 点在自己窗口矩形内不算外部（卡片外的收起交给 DOM onDocMouseDown 判）
  */
 export function externalClickAfterShow(
   md: [number, number, number] | null,

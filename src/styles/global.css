@@ -12,8 +12,7 @@ body,
   user-select: none;
 }
 
-/* #root 自成 BFC：拦住 .card 上下 12px 阴影边距的 margin 塌缩——塌缩穿透到文档层会把
-   html 撑得比视口高 24px，弹窗右缘长出一条几乎全高的原生粗滚动条 */
+/* #root 自成 BFC：拦住子元素 margin 塌缩穿透到文档层 */
 #root {
   display: flow-root;
 }
@@ -53,9 +52,7 @@ body,
   --r-lg: 18px;
   --r-pill: 999px;
 
-  /* 阴影分三层才有「浮起来」的质感，单层大 blur 只会显脏；.card 预留 12px 透明边距专供阴影渲染 */
-  --shadow-card: 0 1px 2px rgba(38, 36, 70, 0.06), 0 2px 6px rgba(38, 36, 70, 0.06),
-    0 6px 16px rgba(38, 36, 70, 0.08);
+  /* 弹层阴影：三层才有「浮起来」的质感，单层大 blur 只会显脏 */
   --shadow-pop: 0 0 0 1px rgba(38, 36, 70, 0.06), 0 2px 6px rgba(38, 36, 70, 0.06), 0 10px 28px rgba(38, 36, 70, 0.1);
 
   --ease: cubic-bezier(0.2, 0.7, 0.3, 1);
@@ -81,20 +78,18 @@ body,
   --accent-wash: #142b42;
   --danger: #f48771; /* 6.7:1 */
 
-  /* 同上：阴影同样分层，深色下加浓才有层次 */
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4), 0 2px 6px rgba(0, 0, 0, 0.35),
-    0 6px 16px rgba(0, 0, 0, 0.5);
+  /* 同上：弹层阴影同样分层，深色下加浓才有层次 */
   --shadow-pop: 0 0 0 1px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.4), 0 10px 28px rgba(0, 0, 0, 0.5);
 }
 
 /* ===== 卡片外壳与内容区（划词卡专用；输入窗用 InputPage 自己的 .layout） ===== */
 .card {
   position: relative;
-  /* 12px 透明边距：阴影画布，也让 1px 边框远离窗口边缘（DPI 取整会裁掉最后一行物理像素，
-     贴边的下边框「有时看不见」就是它）。margin 决定 autofit 的 CARD_CHROME=59 与
-     Popup 的 chrome=91，改这里要同步改两处 */
-  margin: 12px;
-  height: calc(100% - 24px);
+  /* 卡片贴窗口边缘：系统原生缩放的缩放光标正好落在卡片边框上。
+     阴影已去掉，不再需要透明阴影画布；窗口边缘 = 卡片边框。
+     margin 决定 autofit 的 CARD_CHROME=35 与 Popup 的 chrome=67，改这里要同步改两处 */
+  margin: 0;
+  height: 100%;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
@@ -105,7 +100,6 @@ body,
   color: var(--ink);
   font: var(--t-body) / 1.6 var(--font-ui);
   border: 1px solid var(--line);
-  box-shadow: var(--shadow-card);
   overflow-y: auto;
   user-select: text;
 }
@@ -115,7 +109,7 @@ body,
   position: relative; /* 划词小卡的包含块 */
   flex: 0 1 auto;
   min-height: 0;
-  max-height: calc(100vh - 91px);
+  max-height: calc(100vh - 67px);
   overflow-y: auto;
 }
 

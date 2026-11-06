@@ -20,9 +20,9 @@ import { isSentenceText } from "../../lib/text";
 /** 划词/截图统一弹窗：同一张卡片，标题行 = 可编辑原文 + 「对比各源」按钮 */
 export default function Popup() {
   const win = getCurrentWindow();
-  // chrome=91（阴影边距+padding+border 59 + header 32）：内容高度上报 Rust 让窗口收缩，
+  // chrome=67（padding+border 35 + header 32）：内容高度上报 Rust 让窗口收缩，
   // 防透明区域吞掉下层点击；min 防查词时塌成一条，上限交给 Rust 按屏幕钳制
-  const { setBody, refit } = useAutoFitWindow("main", 91, 214);
+  const { setBody, refit } = useAutoFitWindow("main", 67, 214);
   const [word, setWord] = useState("");
   // 最近一次实际查词的词：改词框只在真正变化后才重查，避免回车+失焦查两次
   const lastLooked = useRef("");

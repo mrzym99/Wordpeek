@@ -11,7 +11,7 @@ import { externalClickAfterShow, pointInRect, shouldDismiss } from "../lib/cardD
  * 每次求值幂等（isFocused/last_mouse_down 均无副作用查询），丢了下一轮补上。
  */
 export function useCardDismiss(opts: {
-  /** 卡片根节点：透明阴影边距内的点击由 DOM onDocMouseDown 判定 */
+  /** 卡片根节点：卡片外的点击由 DOM onDocMouseDown 判定 */
   cardRef: React.RefObject<HTMLDivElement | null>;
   /** 收起动作：组件负责清空会话状态（hideAndReset） */
   onDismiss: () => void;
@@ -35,7 +35,8 @@ export function useCardDismiss(opts: {
     };
     const startHideCheck = () => {
       if (hideCheck !== undefined) return;
-      hideCheck = setInterval(maybeHide, 300);
+      // 显式走 window.setInterval：DOM 重载返回 number，避免 Node 的 Timeout 类型混入
+      hideCheck = window.setInterval(maybeHide, 300);
     };
     startRef.current = startHideCheck;
 
@@ -98,7 +99,7 @@ export function useCardDismiss(opts: {
     // blur 后鼠标在卡片里被豁免，离开卡片后补一次失焦复查
     const onLeave = () => maybeHide();
 
-    // 点卡片外即收起（.card 的 12px 透明阴影边距也算窗口内）：这类点击不产生
+    // 点卡片外即收起（卡片已贴窗口边缘，窗口内即卡片）：这类点击不产生
     // blur，macOS 失焦后无新 blur，卡片会滞留；dragStrip/DictPop 都在 .card 内不受影响
     const onDocMouseDown = (e: MouseEvent) => {
       if (!opts.cardRef.current?.contains(e.target as Node)) dismiss();
