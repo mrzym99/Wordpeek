@@ -103,6 +103,8 @@ fn main() {
             }
 
             app.manage(updater::UpdateState::default());
+            // macOS 手动更新：缓存最近一次查到的远端版本号，供设置页打开时秒回
+            app.manage(updater::LatestVersionState::default());
             app.manage(screenshot::ScreenshotState::default());
             app.manage(selection::SessionManager::default());
             
@@ -155,8 +157,9 @@ fn main() {
                 crate::platform::warm_uia();
             });
 
-            // 启动后延迟几秒静默检查一次更新，结果缓存供设置页查询（macOS 拿不到更新产物，启动时不检查）
-            if !cfg!(target_os = "macos") {
+            // 启动后延迟几秒静默检查一次更新，结果缓存供设置页查询。
+            // macOS 也查：只读 latest.json 的版本号（没有可安装的更新包，查到新版本时前端给下载按钮）
+            {
                 let updater_handle = handle.clone();
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_secs(6));

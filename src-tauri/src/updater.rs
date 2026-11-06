@@ -1,10 +1,22 @@
 //! 更新器：检查/下载/静默安装 + 应用重启。从 main.rs 整体迁出（纯移动不改逻辑）。
+//!
+//! Windows 走 Tauri updater（下载 + 静默安装）；macOS 没有签名/公证的更新包，
+//! latest.json 里也没有 darwin 平台，所以只做「查版本号」，安装交给用户在
+//! GitHub Releases 手动下载（设置 → 关于里的「前往下载」按钮）。
 
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
+/// 更新清单（与 tauri.conf.json 里 updater.endpoints 同一个地址）。
+/// 顶层 `version` 字段跟平台无关，macOS 只读它来比较版本号。
+const LATEST_JSON_URL: &str =
+    "https://github.com/mrzym99/Wordpeek/releases/latest/download/latest.json";
+
 /// 已缓存的可用更新（启动 / 手动检查后写入）
 pub(crate) type UpdateState = parking_lot::Mutex<Option<Update>>;
+
+/// macOS 手动更新：最近一次检查到的远端最新版本号（启动 / 手动检查后写入）
+pub(crate) type LatestVersionState = parking_lot::Mutex<Option<String>>;
 
 #[derive(serde::Serialize, Debug)]
 pub(crate) struct UpdateStatus {
@@ -21,11 +33,74 @@ fn status_of(app: &AppHandle, update: Option<&Update>) -> UpdateStatus {
     }
 }
 
+/// macOS 版的状态：只比较版本号，不缓存 Update（拿不到可安装的更新包）
+fn manual_status_of(app: &AppHandle, latest: Option<&str>) -> UpdateStatus {
+    let current_version = app.package_info().version.to_string();
+    let newer = latest.filter(|v| is_newer(v, &current_version));
+    UpdateStatus {
+        available: newer.is_some(),
+        current_version,
+        new_version: newer.map(str::to_string),
+    }
+}
+
+/// 解析 "2.2.0" / "v2.2.0" / "2.2.0-beta.1" → [2, 2, 0]。
+/// 只比较数字段（预发布后缀不参与），解析失败返回 None
+fn parse_version(v: &str) -> Option<Vec<u64>> {
+    let core = v.trim().trim_start_matches('v');
+    let core = core.split(['-', '+']).next()?;
+    core.split('.').map(|p| p.parse::<u64>().ok()).collect()
+}
+
+/// remote 是否比 current 新（逐段比较，缺省段按 0 处理）
+fn is_newer(remote: &str, current: &str) -> bool {
+    let (Some(r), Some(c)) = (parse_version(remote), parse_version(current)) else {
+        return false;
+    };
+    for i in 0..r.len().max(c.len()) {
+        let rv = r.get(i).copied().unwrap_or(0);
+        let cv = c.get(i).copied().unwrap_or(0);
+        if rv != cv {
+            return rv > cv;
+        }
+    }
+    false
+}
+
+/// macOS：读 GitHub Release 清单里的版本号，只判断是否可更新
+async fn check_update_manual(app: &AppHandle) -> Result<UpdateStatus, String> {
+    let resp = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(12))
+        .build()
+        .map_err(|e| e.to_string())?
+        .get(LATEST_JSON_URL)
+        .header("User-Agent", "Wordpeek-Updater")
+        .send()
+        .await
+        .map_err(|e| format!("检查更新失败：{e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("检查更新失败：HTTP {}", resp.status()));
+    }
+    let manifest: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("解析版本信息失败：{e}"))?;
+    let latest = manifest
+        .get("version")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "版本信息缺少 version 字段".to_string())?
+        .to_string();
+    let status = manual_status_of(app, Some(&latest));
+    println!("[updater] manual check: {status:?}");
+    *app.state::<LatestVersionState>().lock() = Some(latest);
+    Ok(status)
+}
+
 /// 检查更新并把结果缓存到应用状态（async：同步命令在主线程跑，block_on 会冻结整个 UI）
 pub(crate) async fn check_update(app: &AppHandle) -> Result<UpdateStatus, String> {
-    // macOS 还没有签名/公证的产物，latest.json 里也没有 darwin 平台，检查只会报错
+    // macOS 没有可安装的更新包，只查版本号（设置页改提供跳转 Releases 的下载按钮）
     if cfg!(target_os = "macos") {
-        return Err("macOS 版暂不提供自动更新，请到 GitHub Releases 手动下载".into());
+        return check_update_manual(app).await;
     }
     let update = app
         .updater()
@@ -42,6 +117,10 @@ pub(crate) async fn check_update(app: &AppHandle) -> Result<UpdateStatus, String
 /// 设置页打开时查询缓存的检查结果（不发网络请求）
 #[tauri::command]
 pub(crate) fn get_update_status(app: AppHandle) -> UpdateStatus {
+    if cfg!(target_os = "macos") {
+        let latest = app.state::<LatestVersionState>().lock().clone();
+        return manual_status_of(&app, latest.as_deref());
+    }
     let cached = app.state::<UpdateState>().lock().as_ref().cloned();
     status_of(&app, cached.as_ref())
 }

@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import type { UpdateProgress, UpdateStatus } from "../../../../types";
-import { IS_MAC } from "../../../../hooks/useConfigForm";
+import { IS_MAC, REPO_URL } from "../../../../hooks/useConfigForm";
 import s from "../../index.module.css";
 
 /** 字节数 → 一位数 MB 文本 */
@@ -106,14 +107,26 @@ export default function AboutTab() {
         {update?.available ? (
           <>
             <span className={s.tipText}>
-              发现新版本 v{update.new_version}，下载安装完成后将自动重启
+              {IS_MAC
+                ? `发现新版本 v${update.new_version}，请前往 GitHub Releases 下载安装包`
+                : `发现新版本 v${update.new_version}，下载安装完成后将自动重启`}
             </span>
             <div className={s.tipActions}>
-              <button className={s.updateBtn} onClick={installUpdate} disabled={updating}>
-                {updating ? "下载安装中…" : "立即更新"}
-              </button>
+              {IS_MAC ? (
+                // macOS 没有签名/公证的更新包，不能静默安装：给按钮直接跳 Release 下载页
+                <button
+                  className={s.updateBtn}
+                  onClick={() => openUrl(`${REPO_URL}/releases/latest`).catch(() => {})}
+                >
+                  前往下载
+                </button>
+              ) : (
+                <button className={s.updateBtn} onClick={installUpdate} disabled={updating}>
+                  {updating ? "下载安装中…" : "立即更新"}
+                </button>
+              )}
             </div>
-            {updating && progress && (
+            {!IS_MAC && updating && progress && (
               <div
                 className={s.progressTrack}
                 role="progressbar"
@@ -129,7 +142,7 @@ export default function AboutTab() {
                 />
               </div>
             )}
-            {updating && progress && (
+            {!IS_MAC && updating && progress && (
               <div className={s.progressText}>
                 {mb(progress.downloaded)}
                 {progress.total ? ` / ${mb(progress.total)}（${pct}%）` : ""}
