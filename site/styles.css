@@ -390,17 +390,14 @@ h1 .accent {
   height: 36px;
   display: grid;
   place-items: center;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 11px;
-  box-shadow: var(--shadow-float);
   z-index: 3;
   animation: icon-in 0.45s var(--ease) both 0.35s;
 }
 .float-icon img {
-  width: 26px;
-  height: 26px;
-  border-radius: 7px;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35), 0 6px 16px rgba(0, 0, 0, 0.18);
 }
 @keyframes icon-in {
   from {
@@ -680,23 +677,26 @@ h1 .accent {
   width: 38px;
   height: 38px;
   padding: 0;
-  border: 1px solid var(--line);
-  border-radius: 11px;
-  background: var(--surface);
-  box-shadow: var(--shadow-float);
+  border: none;
+  border-radius: 8px;
+  background: none;
   cursor: pointer;
   animation: icon-in 0.16s var(--ease);
-  transition: transform 0.12s var(--ease), box-shadow 0.12s var(--ease);
+  transition: transform 0.12s var(--ease), filter 0.12s var(--ease);
 }
 .demo-float img {
-  width: 28px;
-  height: 28px;
-  border-radius: 7px;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35), 0 6px 16px rgba(0, 0, 0, 0.18);
   pointer-events: none;
+  transition: box-shadow 0.12s var(--ease);
 }
 .demo-float:hover {
   transform: translateY(-1px);
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.18), 0 10px 26px rgba(0, 0, 0, 0.16);
+}
+.demo-float:hover img {
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.4), 0 10px 24px rgba(0, 0, 0, 0.22);
 }
 .demo-float:active {
   transform: translateY(0);
