@@ -33,6 +33,16 @@ fn last_mouse_down() -> Option<(i32, i32, u64)> {
     selection::gesture::last_mouse_down()
 }
 
+/// 全局当前光标位置（物理像素）。卡片收起判定要看「鼠标是否真的在卡片上」，
+/// 不能用 DOM 的 :hover —— 窗口拿不到鼠标事件时 WebKit 会让它永久停在 true
+#[tauri::command]
+fn cursor_pos() -> (i32, i32) {
+    #[cfg(any(windows, target_os = "macos"))]
+    return platform::cursor_pos();
+    #[cfg(not(any(windows, target_os = "macos")))]
+    (0, 0)
+}
+
 /// 复制文本到剪贴板（结果卡片复制按钮）
 #[tauri::command]
 fn copy_text(text: String) -> Result<(), String> {
@@ -68,8 +78,13 @@ fn open_permission_settings(app: tauri::AppHandle, kind: String) -> Result<(), S
     let kind = platform::PermissionKind::parse(&kind).ok_or("未知权限类型")?;
     // 屏幕录制面板只列出「申请过权限」的 App：没申请过时先触发一次系统授权框完成登记。
     // 放后台线程，避免系统模态框卡住命令线程；首次点击后系统一般不会再重复弹。
+    // 已弹过系统框就跳过，否则用户点应用卡片里的「打开系统设置」会又撞见系统框
     #[cfg(target_os = "macos")]
-    if kind == platform::PermissionKind::ScreenCapture && !platform::screen_capture_allowed() {
+    if kind == platform::PermissionKind::ScreenCapture
+        && !platform::screen_capture_allowed()
+        && !platform::screen_capture_prompted(&app)
+    {
+        platform::mark_screen_capture_prompted(&app);
         std::thread::spawn(|| {
             let _ = platform::request_screen_capture();
         });
@@ -228,6 +243,7 @@ fn main() {
             windows::fit_window,
             copy_text,
             last_mouse_down,
+            cursor_pos,
             selection::icon::translate_selection_icon,
             translate::translate,
             translate::translate_all,

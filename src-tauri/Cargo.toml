@@ -63,3 +63,18 @@ objc2-vision = { version = "0.3", features = [
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros", "time"] }
+
+# dev 构建也给图像编解码热点开优化：默认 debug 下整屏 PNG 编码慢 20 倍以上，截图遮罩会明显卡顿。
+# 只影响这些第三方 crate（release 本来就是 opt-level 3，不受影响），编译增量很小
+[profile.dev.package.image]
+opt-level = 3
+[profile.dev.package.png]
+opt-level = 3
+[profile.dev.package.zune-jpeg]
+opt-level = 3
+[profile.dev.package.miniz_oxide]
+opt-level = 3
+[profile.dev.package.fdeflate]
+opt-level = 3
+[profile.dev.package.base64]
+opt-level = 3

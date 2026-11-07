@@ -4,6 +4,8 @@
   inset: 0;
   cursor: crosshair;
   overflow: hidden;
+  /* 不设底色：遮罩先于定格图显示，底色交给 .idle/选区阴影统一压暗，
+     这样「实时桌面」和「定格图」在同一亮度下衔接，替换时不会亮一下 */
 }
 .selection {
   position: absolute;

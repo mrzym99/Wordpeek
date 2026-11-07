@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import s from "./index.module.css";
@@ -12,14 +13,22 @@ export default function ScreenshotPage() {
   const [frozen, setFrozen] = useState("");
   const dragging = useRef(false);
 
-  // screenshot-start：重置上一轮选区，并铺上本次快照当定格背景
+  // screenshot-start：后端抓完屏就把遮罩显示了（暗底 + 十字），这里只负责把定格画面换上。
+  // 不碰 sel/dragging：用户可能已经开始拖框了，重置会把选区打断
   useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
-    listen("screenshot-start", (e) => {
-      setSel(null);
-      dragging.current = false;
-      setFrozen((e.payload as { image?: string }).image ?? "");
+    listen("screenshot-start", async (e) => {
+      const image = (e.payload as { image?: string }).image ?? "";
+      if (!image) return;
+      try {
+        const img = new Image();
+        img.src = image;
+        await img.decode(); // 先解码再换上，替换时不会闪出一帧空白
+      } catch {
+        // 解码失败就直接换：背景铺不上也只是保持暗罩，不会亮闪
+      }
+      flushSync(() => setFrozen(image));
     }).then((fn) => {
       if (disposed) fn(); // 晚到的订阅：立刻退订，不留泄漏
       else unlisten = fn;
@@ -32,10 +41,22 @@ export default function ScreenshotPage() {
 
   // ESC / 窗口失焦 → 取消本次截图会话（窗口隐藏后事件不会再触发）
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") invoke("screenshot_cancel");
+    // 会话结束即清掉上一轮画面：遮罩下次是「先显示、后补图」，留着旧图会先闪一帧上一轮的内容
+    const reset = () => {
+      dragging.current = false;
+      setSel(null);
+      setFrozen("");
     };
-    const onBlur = () => invoke("screenshot_cancel");
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        reset();
+        invoke("screenshot_cancel");
+      }
+    };
+    const onBlur = () => {
+      reset();
+      invoke("screenshot_cancel");
+    };
     document.addEventListener("keydown", onKey, true);
     window.addEventListener("blur", onBlur);
     return () => {
@@ -59,6 +80,7 @@ export default function ScreenshotPage() {
     dragging.current = false;
     const s = sel;
     setSel(null);
+    setFrozen(""); // 会话结束，别把这一帧留到下一轮
     // 物理像素 = CSS 像素 × devicePixelRatio，并归一化到左上原点
     const x = Math.round(Math.min(s.x0, s.x1) * dpr);
     const y = Math.round(Math.min(s.y0, s.y1) * dpr);

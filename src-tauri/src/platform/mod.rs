@@ -80,6 +80,42 @@ pub fn request_screen_capture() -> bool {
     macos::request_screen_capture()
 }
 
+/// 屏幕录制系统授权框本机是否已弹过（Windows 无此概念，恒 true）
+#[cfg(windows)]
+pub fn screen_capture_prompted(_app: &tauri::AppHandle) -> bool {
+    true
+}
+#[cfg(target_os = "macos")]
+pub fn screen_capture_prompted(app: &tauri::AppHandle) -> bool {
+    prompt_marker(app).is_some_and(|p| p.exists())
+}
+
+/// 记下「系统授权框已弹过」。标记必须跨进程：TCC 拒绝后系统不会再弹框，
+/// 只靠进程内标志的话重启后又会被当成首次，两个提示仍会撞在一起
+#[cfg(windows)]
+pub fn mark_screen_capture_prompted(_app: &tauri::AppHandle) {}
+#[cfg(target_os = "macos")]
+pub fn mark_screen_capture_prompted(app: &tauri::AppHandle) {
+    if let Some(path) = prompt_marker(app) {
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        // 写失败只打日志：最坏结果是下次再多弹一次系统框，不影响功能
+        if let Err(e) = std::fs::write(&path, b"1") {
+            eprintln!("[perm] 写入系统授权框标记失败: {e}");
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn prompt_marker(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    use tauri::Manager;
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|d| d.join(".screen-capture-prompted"))
+}
+
 /// 需要跳系统设置授权的权限项
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PermissionKind {

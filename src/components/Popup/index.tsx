@@ -14,7 +14,7 @@ import SourceBox from "../SourceBox";
 import TranslateBar from "../TranslateBar";
 import Phonetic from "../Phonetic";
 import { useAutoFitWindow } from "../../hooks/useAutoFitWindow";
-import { useCardDismiss } from "../../hooks/useCardDismiss";
+import { focusCard, useCardDismiss } from "../../hooks/useCardDismiss";
 import { isSentenceText } from "../../lib/text";
 
 /** 划词/截图统一弹窗：同一张卡片，标题行 = 可编辑原文 + 「对比各源」按钮 */
@@ -205,11 +205,8 @@ export default function Popup() {
         refit(); // 不依赖焦点事件：窗口重开时残留的拖拽高度立刻按内容纠正
         lookup(text.trim());
         // macOS Accessory 应用 makeKey 偶发不生效：焦点没立起来 blur 通道就整个
-        // 失灵，卡片失去「点外面收起」的触发器，稍候补一次
-        if (!(await win.isFocused())) {
-          await new Promise((r) => setTimeout(r, 150));
-          if (!stale()) await win.setFocus();
-        }
+        // 失灵，卡片失去「点外面收起」的触发器，多试几次把焦点立起来
+        if (!stale()) focusCard();
       });
       if (disposed) sel();
       else unlistenSelection = sel;
@@ -247,9 +244,11 @@ export default function Popup() {
           console.error("定位截图卡片失败", err);
         }
         markShown(); // 记录 show 时刻 + 启动收起轮询（不依赖 blur 送达）
-        win.show();
-        win.setFocus();
+        await win.show();
         refit();
+        // 和选词路径同样的问题：没 await show 就 setFocus，焦点常立不起来，
+        // 只能退化成「先点内部再点外部」才收得掉
+        await focusCard();
       });
       if (disposed) shot();
       else unlistenShot = shot;

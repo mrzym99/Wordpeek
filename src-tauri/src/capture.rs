@@ -61,12 +61,13 @@ pub fn encode_png(rgba: &[u8], width: i32, height: i32) -> Result<Vec<u8>, Strin
     }
     let mut out = Vec::new();
     use image::ImageEncoder;
-    // Fast + NoFilter：截图场景优先编码速度而非压缩率，本地 IPC 传输体积影响可忽略
+    // Fast + Paeth：NoFilter 会让整屏 PNG 膨胀到 20MB 以上（base64 传给前端要几十毫秒起步），
+    // Paeth 过滤后行间冗余被吃掉，体积小一个数量级、编码反而更快
     use image::codecs::png::{CompressionType, FilterType};
     image::codecs::png::PngEncoder::new_with_quality(
         std::io::Cursor::new(&mut out),
         CompressionType::Fast,
-        FilterType::NoFilter,
+        FilterType::Paeth,
     )
         .write_image(rgba, width as u32, height as u32, image::ExtendedColorType::Rgba8)
         .map_err(|e| format!("PNG 编码失败: {e}"))?;
