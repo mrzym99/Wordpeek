@@ -34,12 +34,15 @@ macOS 首次使用需在「系统设置 → 隐私与安全性」授权两项：
 
 **授权后必须重启应用才生效**
 
-不想手动设置权限，通过终端打开设置最方便：
+不想手动找入口，可以在终端里：
 ```sh
-# 去隔离（跳过 Gatekeeper）+ 启动 + 直接跳到权限面板（先辅助功能、后屏幕录制）
-xattr -dr com.apple.quarantine /Applications/Wordpeek.app && open -a Wordpeek \
-  && open "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility" \
-  && open "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+# 去隔离（跳过 Gatekeeper）并启动；之后在 应用内「设置 → 系统权限」按提示逐项授权
+xattr -dr com.apple.quarantine /Applications/Wordpeek.app && open -a Wordpeek
+
+# 也可以直接跳面板（macOS 13+ 的新扩展 ID；系统设置一次只能显示一个面板，分行执行）
+open "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility"
+open "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ScreenCapture"
+# macOS 11/12 把上面两行的 com.apple.settings.PrivacySecurity.extension 换成 com.apple.preference.security
 
 # 授权状态卡住时重置记录再重新勾（勾选本身必须手动，命令行改不了 TCC）
 tccutil reset Accessibility com.wordpeek.desktop

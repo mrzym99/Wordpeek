@@ -62,6 +62,21 @@ fn check_permissions() -> PermissionStatus {
     }
 }
 
+/// 打开某项权限的系统设置面板（仅 macOS 有权限页；Windows 返回错误）
+#[tauri::command]
+fn open_permission_settings(app: tauri::AppHandle, kind: String) -> Result<(), String> {
+    let kind = platform::PermissionKind::parse(&kind).ok_or("未知权限类型")?;
+    // 屏幕录制面板只列出「申请过权限」的 App：没申请过时先触发一次系统授权框完成登记。
+    // 放后台线程，避免系统模态框卡住命令线程；首次点击后系统一般不会再重复弹。
+    #[cfg(target_os = "macos")]
+    if kind == platform::PermissionKind::ScreenCapture && !platform::screen_capture_allowed() {
+        std::thread::spawn(|| {
+            let _ = platform::request_screen_capture();
+        });
+    }
+    platform::open_permission_settings(&app, kind)
+}
+
 fn main() {
     // 第一件事：拆 stdout/stderr 死管道炸弹（必须在任何 println! 之前）。
     // dev 构建不拆：cargo tauri dev 的控制台日志全靠 npm 那根管道
@@ -202,6 +217,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             check_permissions,
+            open_permission_settings,
             updater::restart_app,
             windows::open_settings,
             updater::get_update_status,

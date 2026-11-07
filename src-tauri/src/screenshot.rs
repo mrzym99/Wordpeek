@@ -9,7 +9,7 @@ use crate::{translate, FlagGuard};
 static SCREENSHOT_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
 /// 权限缺失时弹原生对话框，一键跳到对应系统设置面板；只能在后台线程调用（blocking_show 会阻塞当前线程）
-fn alert_permission(app: &AppHandle, message: &str, settings_url: &str) {
+fn alert_permission(app: &AppHandle, message: &str, kind: crate::platform::PermissionKind) {
     use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
     let jump = app
@@ -23,8 +23,7 @@ fn alert_permission(app: &AppHandle, message: &str, settings_url: &str) {
         ))
         .blocking_show();
     if jump {
-        use tauri_plugin_opener::OpenerExt;
-        let _ = app.opener().open_url(settings_url, None::<&str>);
+        let _ = crate::platform::open_permission_settings(app, kind);
     }
 }
 
@@ -81,7 +80,7 @@ pub(crate) fn handle_screenshot_trigger(app: &AppHandle) {
                 alert_permission(
                     &app,
                     "截图翻译需要「屏幕录制」权限。\n\n系统设置 → 隐私与安全性 → 屏幕录制，勾选 Wordpeek 后重启应用。",
-                    "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+                    crate::platform::PermissionKind::ScreenCapture,
                 );
                 return;
             }

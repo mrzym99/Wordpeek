@@ -8,7 +8,7 @@ use objc2::rc::Retained;
 
 use crate::capture::{bgra_to_rgba, CapturedScreen};
 
-use super::SelectionRead;
+use super::{PermissionKind, SelectionRead};
 
 // ---------- 系统权限 ----------
 
@@ -52,6 +52,43 @@ pub fn screen_capture_allowed() -> bool {
 /// 只 preflight 不 request 的话，列表里根本没有 Wordpeek 这一项，用户无从勾选。
 pub fn request_screen_capture() -> bool {
     unsafe { CGRequestScreenCaptureAccess() }
+}
+
+// ---------- 跳系统设置面板 ----------
+
+/// macOS 13 Ventura 起隐私设置换成了新扩展；旧 scheme 的 ?Privacy_* 锚点在新系统上
+/// 会被丢弃（两个权限都落到第一个面板），所以 13+ 必须用扩展 ID。
+const PRIVACY_EXT: &str = "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension";
+/// macOS 11/12 只有旧版安全面板
+const LEGACY_SECURITY: &str = "x-apple.systempreferences:com.apple.preference.security";
+
+/// 系统主版本号（27.0.1 → 27）
+fn macos_major_version() -> isize {
+    use objc2_foundation::NSProcessInfo;
+
+    NSProcessInfo::processInfo().operatingSystemVersion().majorVersion
+}
+
+/// 权限面板深链（纯函数，版本作参数便于单测）
+pub(crate) fn settings_url(kind: PermissionKind, macos_major: isize) -> String {
+    let prefix = if macos_major >= 13 {
+        PRIVACY_EXT
+    } else {
+        LEGACY_SECURITY
+    };
+    format!("{prefix}?{}", kind.anchor())
+}
+
+/// 打开对应权限的系统设置面板
+pub fn open_permission_settings(
+    app: &tauri::AppHandle,
+    kind: PermissionKind,
+) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+
+    app.opener()
+        .open_url(settings_url(kind, macos_major_version()), None::<&str>)
+        .map_err(|e| format!("打开系统设置失败：{e}"))
 }
 
 // ---------- 启动初始化 ----------
@@ -897,4 +934,40 @@ fn scale_rgba(src: &[u8], sw: i32, sh: i32, dw: i32, dh: i32) -> Vec<u8> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn settings_url_uses_privacy_extension_on_ventura_and_later() {
+        assert_eq!(
+            settings_url(PermissionKind::Accessibility, 27),
+            "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility"
+        );
+        assert_eq!(
+            settings_url(PermissionKind::ScreenCapture, 27),
+            "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ScreenCapture"
+        );
+    }
+
+    #[test]
+    fn settings_url_keeps_legacy_scheme_before_ventura() {
+        assert_eq!(
+            settings_url(PermissionKind::Accessibility, 12),
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+        );
+        assert_eq!(
+            settings_url(PermissionKind::ScreenCapture, 12),
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        );
+    }
+
+    #[test]
+    fn permission_kind_parses_frontend_names() {
+        assert_eq!(PermissionKind::parse("accessibility"), Some(PermissionKind::Accessibility));
+        assert_eq!(PermissionKind::parse("screen_capture"), Some(PermissionKind::ScreenCapture));
+        assert_eq!(PermissionKind::parse("microphone"), None);
+    }
 }

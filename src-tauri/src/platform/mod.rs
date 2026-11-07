@@ -80,6 +80,42 @@ pub fn request_screen_capture() -> bool {
     macos::request_screen_capture()
 }
 
+/// 需要跳系统设置授权的权限项
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PermissionKind {
+    Accessibility,
+    ScreenCapture,
+}
+
+impl PermissionKind {
+    /// 前端传参名 → 权限项（未知返回 None）
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "accessibility" => Some(Self::Accessibility),
+            "screen_capture" => Some(Self::ScreenCapture),
+            _ => None,
+        }
+    }
+
+    /// 系统设置隐私扩展里的锚点名（Privacy_*）
+    pub(crate) fn anchor(self) -> &'static str {
+        match self {
+            Self::Accessibility => "Privacy_Accessibility",
+            Self::ScreenCapture => "Privacy_ScreenCapture",
+        }
+    }
+}
+
+/// 打开对应权限的系统设置面板（Windows 无此概念，返回错误）
+#[cfg(windows)]
+pub fn open_permission_settings(_app: &tauri::AppHandle, _kind: PermissionKind) -> Result<(), String> {
+    Err("仅 macOS 支持".into())
+}
+#[cfg(target_os = "macos")]
+pub fn open_permission_settings(app: &tauri::AppHandle, kind: PermissionKind) -> Result<(), String> {
+    macos::open_permission_settings(app, kind)
+}
+
 /// 应用启动时初始化平台状态（macOS：Dock 策略 + 主线程缓存屏幕信息）
 #[cfg(windows)]
 pub fn init(_app: &tauri::AppHandle) {}
