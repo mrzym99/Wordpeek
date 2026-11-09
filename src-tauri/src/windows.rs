@@ -4,6 +4,23 @@ use tauri::{AppHandle, Manager};
 
 use crate::geometry;
 
+/// set_size 后回读确认：tao 收到 WM_DPICHANGED 会往事件循环异步排「保持逻辑尺寸」重设任务，
+/// 可能覆盖刚 set 的值；被改就重设，尺寸落地（±1px）或重试耗尽才返回。
+/// 与前端 selection 处理器的「outerSize 连续两次稳定」轮询是同一套对付 churn 的思路
+pub(crate) fn settle_size(win: &tauri::WebviewWindow, want_w: f64, want_h: f64) {
+    for _ in 0..3 {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let (Ok(cur), Ok(scale)) = (win.inner_size(), win.scale_factor()) else {
+            return;
+        };
+        let cur = (cur.width as f64 / scale, cur.height as f64 / scale);
+        if (cur.0 - want_w).abs() < 1.0 && (cur.1 - want_h).abs() < 1.0 {
+            return;
+        }
+        let _ = win.set_size(tauri::LogicalSize::new(want_w, want_h));
+    }
+}
+
 /// 前端量好内容高度后调用：只调高不调宽，按算出的新外框重新钳位（不依赖 set_size 后回读，那是异步消息）；
 /// 返回实际生效高度（可能被钳小），前端据此判断 is-capped，未顶上限不出滚动条，避免高度动画中闪条
 #[tauri::command]
@@ -31,6 +48,7 @@ pub(crate) fn fit_window(app: AppHandle, label: String, height: f64, viewport: O
     );
     win.set_size(tauri::LogicalSize::new(inner_w, inner_h))
         .map_err(|e| e.to_string())?;
+    settle_size(&win, inner_w, inner_h);
 
     // 新外框尺寸 = 客户区 + 边框/标题栏，换算成物理像素再钳位；否则 150% 缩放下卡片伸出屏幕底且无滚动条（issue #8）
     let new_w = geometry::to_physical(inner_w + chrome_w, scale);
