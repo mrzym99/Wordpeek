@@ -8,7 +8,7 @@ use objc2::rc::Retained;
 
 use crate::capture::{bgra_to_rgba, CapturedScreen};
 
-use super::{PermissionKind, SelectionRead};
+use super::{ClipboardBackup, PermissionKind, SelectionRead};
 
 // ---------- 系统权限 ----------
 
