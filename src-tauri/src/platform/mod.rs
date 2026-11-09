@@ -20,6 +20,51 @@ pub mod win_clipboard;
 #[cfg(target_os = "macos")]
 pub mod macos;
 
+// ---------- 诊断日志：GUI 进程里 println 看不见时的唯一出口 ----------
+
+/// 日志文件路径（macOS 由 `init` 设到 app 数据目录）
+#[cfg(target_os = "macos")]
+static DEBUG_LOG_PATH: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+/// 设日志路径（只认第一次；macOS 的 `init` 调用）
+#[cfg(target_os = "macos")]
+pub fn set_debug_log_path(path: std::path::PathBuf) {
+    let _ = DEBUG_LOG_PATH.set(path);
+}
+
+/// 划词链路诊断日志。Windows 的 GUI 子系统与从 Finder 启动的 .app 都没有 stdout
+/// （unified log 里也查不到），出问题时用户和开发者都无从判断卡在哪道门——所以关键
+/// 节点的失败原因另写一份文件。超 1MB 直接清空重来：它只服务「最近一次出问题」
+/// shortcut: Windows 侧 windows.rs 里还有一份旧的同名实现（本修复不动 Windows 代码），
+/// 两边都写 %TEMP%\wp-sel.log，行为一致；将来要合并再统一
+pub fn debug_log(line: &str) {
+    use std::io::Write;
+    #[cfg(windows)]
+    let path = std::env::temp_dir().join("wp-sel.log");
+    #[cfg(target_os = "macos")]
+    let Some(path) = DEBUG_LOG_PATH.get().cloned() else {
+        return;
+    };
+    if std::fs::metadata(&path).is_ok_and(|m| m.len() > 1 << 20) {
+        let _ = std::fs::remove_file(&path);
+    }
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    else {
+        return;
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let _ = writeln!(f, "{now} {line}");
+}
+
 /// 复制注入（Windows: Ctrl+C；macOS: Cmd+C，需辅助功能权限）
 #[cfg(windows)]
 pub use windows::inject_copy;
@@ -202,10 +247,40 @@ pub use windows::{foreground_pid, read_focused_selection, warm_uia};
 pub(crate) use windows::is_chromium_browser;
 #[cfg(target_os = "macos")]
 pub use macos::{foreground_pid, read_focused_selection};
-// macOS 侧暂不豁免（本修复只针对 Windows Chrome 拆树问题），返回 false 保持原行为
+/// macOS 上的 Chromium 系判定：Chrome/Edge/Electron 的 AX 树空闲后会被拆，
+/// 前几轮探测必然 NoTextPattern，照常三振会误拉黑 10 分钟（Windows 侧早有这条豁免，
+/// mac 漏了——这是「连拖几下以后再也不出图标」的直接原因）
 #[cfg(target_os = "macos")]
-pub(crate) fn is_chromium_browser(_pid: i32) -> bool {
-    false
+pub(crate) fn is_chromium_browser(pid: i32) -> bool {
+    use objc2_app_kit::NSRunningApplication;
+
+    NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
+        .and_then(|app| app.bundleIdentifier())
+        .map(|id| chromium_bundle_id(&id.to_string()))
+        .unwrap_or(false)
+}
+
+/// Chromium 系（Chrome/Edge/Brave/VSCode/Slack…）的 bundle id 名单。清单匹配抽成
+/// 纯函数只为了能写单测
+/// shortcut: 白名单只覆盖已知 Electron/Chromium 应用，新遇到漏网的就往 IDS 里加
+#[cfg(target_os = "macos")]
+fn chromium_bundle_id(id: &str) -> bool {
+    const IDS: [&str; 13] = [
+        "com.google.Chrome",
+        "com.google.Chrome.beta",
+        "com.google.Chrome.canary",
+        "org.chromium.Chromium",
+        "com.microsoft.edgemac",
+        "com.microsoft.edgemac.Beta",
+        "com.brave.Browser",
+        "com.microsoft.VSCode",
+        "com.microsoft.VSCodeInsiders",
+        "com.tinyspeck.slackmacgap",
+        "md.obsidian",
+        "com.hnc.Discord",
+        "com.electron.app",
+    ];
+    IDS.contains(&id)
 }
 
 /// 读焦点控件里被选中的文本（系统 AX/UIA 接口，不碰剪贴板也不注入按键）。
@@ -232,6 +307,8 @@ pub fn focused_selection() -> SelectionRead {
             // 每轮探测多白等 ~360ms（见 read_focused_selection 注释），无感
             if !is_chromium_browser(pid) {
                 mark_selection_hopeless(pid);
+            } else {
+                debug_log(&format!("[probe] pid={pid} 是 Chromium 系，NoTextPattern 不记账"));
             }
         }
         _ => {}
@@ -542,5 +619,17 @@ mod tests {
         let a = bump_watch_gen();
         let b = bump_watch_gen();
         assert!(b > a, "代次必须严格递增");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn chromium_bundle_ids_exempt_from_hopeless() {
+        assert!(chromium_bundle_id("com.google.Chrome"));
+        assert!(chromium_bundle_id("com.microsoft.edgemac"));
+        assert!(chromium_bundle_id("com.tinyspeck.slackmacgap"));
+        // 原生 app 照常记账：终端这类真不提供选区的不能每轮白等 640ms
+        assert!(!chromium_bundle_id("com.apple.TextEdit"));
+        assert!(!chromium_bundle_id("com.apple.Terminal"));
+        assert!(!chromium_bundle_id(""));
     }
 }

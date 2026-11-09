@@ -26,14 +26,20 @@ pub(crate) fn show_selection_icon(app: &AppHandle, text: String, ax: i32, ay: i3
     app.state::<SessionManager>().set_icon_text(Some(text));
     let inner = app.clone();
     let _ = app.run_on_main_thread(move || {
-        if let Some(win) = inner.get_webview_window("icon") {
-            let (x, y) = crate::geometry::clamp_to_screen(&inner, "icon", ax + 8, ay + 12);
-            let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
-            if let Ok(size) = win.outer_size() {
-                *ICON_RECT.lock() = Some((x, y, size.width, size.height));
-            }
-            let _ = win.show();
+        let Some(win) = inner.get_webview_window("icon") else {
+            crate::platform::debug_log("[icon] 找不到预建的 icon 窗口");
+            return;
+        };
+        let (x, y) = crate::geometry::clamp_to_screen(&inner, "icon", ax + 8, ay + 12);
+        let moved = win.set_position(tauri::PhysicalPosition::new(x, y));
+        let size = win.outer_size();
+        if let Ok(size) = &size {
+            *ICON_RECT.lock() = Some((x, y, size.width, size.height));
         }
+        let shown = win.show();
+        crate::platform::debug_log(&format!(
+            "[icon] show ({x},{y}) size={size:?} set_position={moved:?} show={shown:?}"
+        ));
     });
 }
 

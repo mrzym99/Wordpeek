@@ -96,12 +96,19 @@ pub fn open_permission_settings(
 /// macOS 托盘常驻：不在 Dock 显示图标；主线程缓存屏幕信息
 /// （NSScreen 只能主线程访问，之后各线程只读缓存）
 pub fn init(app: &tauri::AppHandle) {
+    use tauri::Manager;
     let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
     init_mac_screens();
+    // 诊断日志落到 app 数据目录（~/Library/Application Support/com.wordpeek.desktop）：
+    // 用户要能把日志发回来，临时目录会被清理
+    if let Ok(dir) = app.path().app_config_dir() {
+        super::set_debug_log_path(dir.join("selection.log"));
+    }
     // 首次启动直接把系统授权对话框弹出来，别让用户去猜要给谁勾权限
     if !accessibility_allowed() {
         let trusted = request_accessibility();
-        println!("[perm] 辅助功能未授权（trusted={trusted}）：请在系统设置 → 隐私与安全性 → 辅助功能中授权") ;
+        println!("[perm] 辅助功能未授权（trusted={trusted}）：请在系统设置 → 隐私与安全性 → 辅助功能中授权");
+        super::debug_log(&format!("[perm] 辅助功能未授权 trusted={trusted}"));
     }
 }
 
@@ -384,6 +391,8 @@ extern "C" {
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
     fn AXUIElementCreateApplication(pid: i32) -> *const std::ffi::c_void;
+    fn AXUIElementCreateSystemWide() -> *const std::ffi::c_void;
+    fn AXUIElementGetPid(element: *const std::ffi::c_void, pid: *mut i32) -> i32;
     fn AXUIElementSetMessagingTimeout(element: *const std::ffi::c_void, timeout: f32) -> i32;
     fn AXUIElementCopyAttributeValue(
         element: *const std::ffi::c_void,
@@ -419,10 +428,55 @@ pub fn double_click_interval_ms() -> u64 {
     (NSEvent::doubleClickInterval() * 1000.0).round().max(0.0) as u64
 }
 
-/// 前台 app 的 pid（系统级 AX 元素不可用，一律按它建元素）
+/// 前台 app 的 pid（系统级 AX 元素只做底下兜底）。
+/// `NSRunningApplication.processIdentifier` 对个别 app 会返回 **-1**——实测 TextEdit
+/// （真 pid 93418、窗口交互正常）经 frontmostApplication 与 runningApplications 都是 -1，
+/// 那是 LaunchServices 里的僵尸登记。拿 -1 去建 AX 元素等于整条链路全灭（而且这个 -1
+/// 还会被当成 pid 记拉黑次数），所以逐级兜底并要求 pid > 0：
+/// 1. NSWorkspace.frontmostApplication
+/// 2. 系统级 AX 的 AXFocusedApplication（前台登记坏了时唯一还能问出 pid 的路子）
+/// 3. runningApplications 里 isActive 且 pid > 0 的那个
+/// 全落空返回 None（门面按瞬时错误处理，不记账）
 pub fn foreground_pid() -> Option<i32> {
     use objc2_app_kit::NSWorkspace;
-    Some(NSWorkspace::sharedWorkspace().frontmostApplication()?.processIdentifier())
+
+    let ws = NSWorkspace::sharedWorkspace();
+    let frontmost = ws.frontmostApplication().map(|a| a.processIdentifier());
+    if let Some(pid) = frontmost.filter(|p| *p > 0) {
+        return Some(pid);
+    }
+    let from_ax = unsafe { system_wide_focused_pid() };
+    let from_active = ws.runningApplications().iter().find_map(|a| {
+        a.isActive()
+            .then(|| a.processIdentifier())
+            .filter(|p| *p > 0)
+    });
+    super::debug_log(&format!(
+        "[probe] 前台 pid 兜底：frontmost={frontmost:?} ax={from_ax:?} active={from_active:?}"
+    ));
+    from_ax.or(from_active)
+}
+
+/// 系统级 AX 焦点 app 的 pid。非 GUI 进程调它稳定返回 -25204（CannotComplete），
+/// 所以只当兜底用
+unsafe fn system_wide_focused_pid() -> Option<i32> {
+    let system = AXUIElementCreateSystemWide();
+    if system.is_null() {
+        return None;
+    }
+    let focused = match ax_attr(system, "AXFocusedApplication") {
+        Some(f) => f,
+        None => {
+            CFRelease(system);
+            return None;
+        }
+    };
+    let mut pid: i32 = 0;
+    let err = AXUIElementGetPid(focused, &mut pid);
+    CFRelease(focused);
+    CFRelease(system);
+    super::debug_log(&format!("[probe] 系统级 AX 焦点 pid：err={err} pid={pid}"));
+    (err == 0 && pid > 0).then_some(pid)
 }
 
 // macOS 的 Cmd+C 在任何 app 里都是「复制」（不像 Windows 控制台的 Ctrl+C 是中断），兜底一律允许
@@ -448,14 +502,16 @@ fn secure_input_active() -> bool {
         if handle.is_null() {
             return false;
         }
-        let sym = dlsym(handle, b"SecIsSecureInputProcess\0".as_ptr() as *const std::ffi::c_char);
+        let sym = dlsym(
+            handle,
+            b"SecIsSecureInputProcess\0".as_ptr() as *const std::ffi::c_char,
+        );
         if sym.is_null() {
             return false;
         }
         // 参数名沿用系统头文件里的 isSecure（函数指针类型的形参名只作文档，不参与链接）
         #[allow(non_snake_case)]
-        let is_secure_input: extern "C" fn(isSecure: *mut bool) -> i32 =
-            std::mem::transmute(sym);
+        let is_secure_input: extern "C" fn(isSecure: *mut bool) -> i32 = std::mem::transmute(sym);
         let mut secure = false;
         is_secure_input(&mut secure) == 0 && secure
     }
@@ -490,14 +546,17 @@ pub fn foreground_context() -> super::ForegroundContext {
 /// CannotComplete，一律按前台 pid 建元素。
 pub fn read_focused_selection() -> super::SelectionRead {
     if !accessibility_allowed() {
+        super::debug_log("[probe] mac AX 未授权（AXIsProcessTrusted=false）");
         return super::SelectionRead::Error;
     }
     let Some(pid) = foreground_pid() else {
+        super::debug_log("[probe] 拿不到前台 pid（frontmost/AX/active 三路全落空）");
         return super::SelectionRead::Error;
     };
     unsafe {
         let app = AXUIElementCreateApplication(pid);
         if app.is_null() {
+            super::debug_log(&format!("[probe] pid={pid} 建 AX 元素失败"));
             return super::SelectionRead::Error;
         }
         // 默认 6 秒：目标 app 卡住时能把探测线程钉死，图标就得等 6 秒才弹
@@ -513,8 +572,19 @@ pub fn read_focused_selection() -> super::SelectionRead {
             SelectionRead::NoTextPattern => unsupported_focus = true,
             SelectionRead::Error => {}
         }
-        if text.is_none() && !answered_empty && should_wake(pid) {
-            wake_accessibility(app);
+        super::debug_log(&format!(
+            "[probe] pid={pid} 首读 text={} empty={answered_empty} unsupported={unsupported_focus}",
+            text.is_some()
+        ));
+        let need_wake = text.is_none() && !answered_empty;
+        let wake_allowed = need_wake && should_wake(pid);
+        if need_wake && !wake_allowed {
+            super::debug_log(&format!(
+                "[probe] pid={pid} 唤醒配额用完（该 app 已试过 3 次）"
+            ));
+        }
+        if wake_allowed {
+            wake_accessibility(app, pid);
             // Chromium 建树是异步的（实测 100ms 常常不够）：每 80ms 试一次、最多 ~640ms。
             // 成功就不 restore，让树保持醒着，否则下次又得从零唤醒
             for _ in 0..8 {
@@ -536,9 +606,17 @@ pub fn read_focused_selection() -> super::SelectionRead {
             } else {
                 restore_accessibility(app);
             }
+            super::debug_log(&format!(
+                "[probe] pid={pid} 唤醒轮询结束 text={}",
+                text.is_some()
+            ));
         }
         if text.is_none() {
             text = scan_window(app, 4, 48);
+            super::debug_log(&format!(
+                "[probe] pid={pid} 扫窗口结果 text={}",
+                text.is_some()
+            ));
         }
         CFRelease(app);
         // 四态收敛：Text 优先；「焦点元素回答过没有选区」= 支持、只是没选中；
@@ -553,12 +631,16 @@ pub fn read_focused_selection() -> super::SelectionRead {
 }
 
 unsafe fn read_focused(app: *const std::ffi::c_void) -> super::SelectionRead {
-    let focused = match ax_attr(app, "AXFocusedUIElement") {
-        Some(f) => f,
-        None => return super::SelectionRead::NoTextPattern,
+    let (focused, err) = ax_attr_code(app, "AXFocusedUIElement");
+    let Some(focused) = focused else {
+        // -25212 NoValue = 树还没建好（Chromium 空闲时常这样）；-25204 CannotComplete
+        // = 目标 app 卡住；两者都表现成「读不到」，所以一定要记错误码
+        super::debug_log(&format!("[probe] AXFocusedUIElement 读不到 err={err}"));
+        return super::SelectionRead::NoTextPattern;
     };
     let read = selection_in(focused);
     CFRelease(focused);
+    super::debug_log(&format!("[probe] 焦点元素选区：{read:?}"));
     read
 }
 
@@ -717,31 +799,51 @@ fn wake_tries() -> &'static parking_lot::Mutex<std::collections::HashMap<i32, u8
 
 /// 叫醒目标 app 的无障碍树。Chromium / Electron 平时不建树，看到
 /// AXEnhancedUserInterface（Chromium 认的还有 AXManualAccessibility）才开工。
-unsafe fn wake_accessibility(app: *const std::ffi::c_void) {
-    set_ax_bool(app, "AXEnhancedUserInterface", true);
-    set_ax_bool(app, "AXManualAccessibility", true);
+/// 返回值必须记：实测 Chrome 上 AXManualAccessibility = -25205（AttributeUnsupported），
+/// 也就是那次唤醒实际无效，只能靠后续轮询
+unsafe fn wake_accessibility(app: *const std::ffi::c_void, pid: i32) {
+    let enhanced = set_ax_bool(app, "AXEnhancedUserInterface", true);
+    let manual = set_ax_bool(app, "AXManualAccessibility", true);
+    super::debug_log(&format!(
+        "[probe] pid={pid} 唤醒 AXEnhancedUI={enhanced} AXManualAccessibility={manual}"
+    ));
 }
 
 /// 读完把增强界面关回去，别把别的 app 长期留在无障碍模式里（AXManualAccessibility 没有「关」，留着不碍事）。
 unsafe fn restore_accessibility(app: *const std::ffi::c_void) {
-    set_ax_bool(app, "AXEnhancedUserInterface", false);
+    let err = set_ax_bool(app, "AXEnhancedUserInterface", false);
+    super::debug_log(&format!("[probe] 恢复 AXEnhancedUI err={err}"));
 }
 
-unsafe fn set_ax_bool(el: *const std::ffi::c_void, name: &str, value: bool) {
+unsafe fn set_ax_bool(el: *const std::ffi::c_void, name: &str, value: bool) -> i32 {
     use core_foundation::base::TCFType;
     use core_foundation::string::{CFString, CFStringRef};
 
     let attr = CFString::new(name);
-    let flag = if value { kCFBooleanTrue } else { kCFBooleanFalse };
-    AXUIElementSetAttributeValue(
+    let flag = if value {
+        kCFBooleanTrue
+    } else {
+        kCFBooleanFalse
+    };
+    let err = AXUIElementSetAttributeValue(
         el,
         attr.as_concrete_TypeRef() as CFStringRef as *const std::ffi::c_void,
         flag,
     );
+    err
 }
 
 /// 读一个 AX 属性，返回 create rule 的 CF 引用（调用方负责 CFRelease）
 unsafe fn ax_attr(el: *const std::ffi::c_void, name: &str) -> Option<*const std::ffi::c_void> {
+    ax_attr_code(el, name).0
+}
+
+/// 同 `ax_attr`，但把 AX 错误码也带回来（诊断日志要能分开 -25212 NoValue 与 -25204
+/// CannotComplete，这两者的处置完全不同）。返回的指针按 create rule 需要 CFRelease
+unsafe fn ax_attr_code(
+    el: *const std::ffi::c_void,
+    name: &str,
+) -> (Option<*const std::ffi::c_void>, i32) {
     use core_foundation::base::TCFType;
     use core_foundation::string::{CFString, CFStringRef};
 
@@ -753,9 +855,9 @@ unsafe fn ax_attr(el: *const std::ffi::c_void, name: &str) -> Option<*const std:
         &mut value,
     );
     if err != 0 || value.is_null() {
-        None
+        (None, err)
     } else {
-        Some(value)
+        (Some(value), err)
     }
 }
 
@@ -790,8 +892,8 @@ pub fn capture_virtual_screen() -> Result<CapturedScreen, String> {
     }
 
     // 虚拟屏边界与缩放（点，左上原点）；与 virtual_screen_bounds 共用一套计算
-    let (min_x, min_y, max_x, max_y, scale) = virtual_screen_extents(&displays)
-        .ok_or_else(|| "获取虚拟屏幕尺寸失败".to_string())?;
+    let (min_x, min_y, max_x, max_y, scale) =
+        virtual_screen_extents(&displays).ok_or_else(|| "获取虚拟屏幕尺寸失败".to_string())?;
     let vw = max_x - min_x;
     let vh = max_y - min_y;
 
@@ -978,8 +1080,14 @@ mod tests {
 
     #[test]
     fn permission_kind_parses_frontend_names() {
-        assert_eq!(PermissionKind::parse("accessibility"), Some(PermissionKind::Accessibility));
-        assert_eq!(PermissionKind::parse("screen_capture"), Some(PermissionKind::ScreenCapture));
+        assert_eq!(
+            PermissionKind::parse("accessibility"),
+            Some(PermissionKind::Accessibility)
+        );
+        assert_eq!(
+            PermissionKind::parse("screen_capture"),
+            Some(PermissionKind::ScreenCapture)
+        );
         assert_eq!(PermissionKind::parse("microphone"), None);
     }
 }

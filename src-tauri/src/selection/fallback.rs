@@ -139,8 +139,7 @@ fn open_settings_if_permission_missing(app: &AppHandle) {
 /// 这是唯一允许碰剪贴板的路径；划词图标路径绝不走这里
 pub(crate) fn handle_hotkey_trigger(app: &AppHandle) {
     println!("[shortcut] triggered");
-    #[cfg(windows)]
-    crate::platform::windows::debug_log("hotkey triggered"); // [DEBUG-m0u5]
+    crate::platform::debug_log("hotkey triggered"); // [DEBUG-m0u5]
     // 直读/模拟按键都可能耗上百毫秒，放独立线程避免阻塞主线程
     let app = app.clone();
     std::thread::spawn(move || {
@@ -158,15 +157,13 @@ pub(crate) fn handle_hotkey_trigger(app: &AppHandle) {
             Some(text) => {
                 let (cx, cy) = platform::cursor_pos();
                 println!("[grab] got text: {:?} at ({}, {})", text, cx, cy);
-                #[cfg(windows)]
-                crate::platform::windows::debug_log(&format!("grab got {:.20}", text)); // [DEBUG-m0u5]
+                crate::platform::debug_log(&format!("grab got {:.20}", text)); // [DEBUG-m0u5]
                 hide_selection_icon(&app);
                 SessionManager::show_card(&app, &text, cx + 12, cy + 16, SOURCE_HOTKEY_FALLBACK);
             }
             None => {
                 println!("[grab] no text captured");
-                #[cfg(windows)]
-                crate::platform::windows::debug_log("grab no text"); // [DEBUG-m0u5]
+                crate::platform::debug_log("grab no text"); // [DEBUG-m0u5]
                 open_settings_if_permission_missing(&app);
             }
         }

@@ -65,6 +65,10 @@ pub(crate) fn start_selection_icon(app: &AppHandle) {
         "[icon] 鼠标监听已装，辅助功能={}",
         platform::accessibility_allowed()
     );
+    crate::platform::debug_log(&format!(
+        "[icon] 鼠标监听已装 watch={watch} 辅助功能={}",
+        platform::accessibility_allowed()
+    ));
     if !watch {
         eprintln!("[icon] 鼠标监听装不上，划词图标不可用");
         return;
@@ -84,8 +88,7 @@ pub(crate) fn start_selection_icon(app: &AppHandle) {
                 }
                 Signal::Up { x, y } => {
                     LAST_WORKER_UP_MS.store(super::now_ms(), Ordering::Relaxed); // [DEBUG-m0u5]
-                    #[cfg(windows)]
-                    crate::platform::windows::debug_log(&format!("worker Up x={x} y={y}"));
+                    crate::platform::debug_log(&format!("worker Up x={x} y={y}"));
                     probe_selection(&worker, x, y, ICON_NEAR_PX);
                 }
             }
@@ -95,6 +98,13 @@ pub(crate) fn start_selection_icon(app: &AppHandle) {
 
 /// 松开且是选词手势：探测选区，成功且用户还没走远就在松手位置弹图标
 fn probe_selection(worker: &AppHandle, ux: i32, uy: i32, near_px: i32) {
+    // 未授权时什么选区都读不到（macOS 上重建 adhoc 包后最常见），连探测线程都不起。
+    // 授权引导在启动时已经弹过（platform::init），这里只留一条日志说明卡在哪
+    if !platform::accessibility_allowed() {
+        crate::platform::debug_log("[probe] 辅助功能未授权，跳过探测");
+        hide_selection_icon(worker);
+        return;
+    }
     // 开关每次现读配置：设置里一关就立即生效，不用重装监听
     let enabled = worker
         .state::<parking_lot::Mutex<crate::translate::AppConfig>>()
@@ -103,19 +113,15 @@ fn probe_selection(worker: &AppHandle, ux: i32, uy: i32, near_px: i32) {
     let clicked_recently = worker
         .state::<SessionManager>()
         .icon_clicked_recently(now_ms());
-    if !enabled
-        || !PROBE_INTENT.load(Ordering::Relaxed)
-        || clicked_recently
-    {
+    if !enabled || !PROBE_INTENT.load(Ordering::Relaxed) || clicked_recently {
         println!(
             "[probe] 放弃：enabled={enabled} intent={} clicked_recently={clicked_recently}",
             PROBE_INTENT.load(Ordering::Relaxed)
         );
-        #[cfg(windows)]
-        crate::platform::windows::debug_log(&format!( // [DEBUG-m0u5]
+        crate::platform::debug_log(&format!(
             "probe 放弃 enabled={enabled} intent={} clicked_recently={clicked_recently}",
             PROBE_INTENT.load(Ordering::Relaxed)
-        ));
+        )); // [DEBUG-m0u5]
         hide_selection_icon(worker);
         return;
     }
@@ -125,8 +131,7 @@ fn probe_selection(worker: &AppHandle, ux: i32, uy: i32, near_px: i32) {
         .any(|&l| cursor_on_window(worker, l))
     {
         println!("[probe] 光标在自家窗口内，不弹图标");
-        #[cfg(windows)]
-        crate::platform::windows::debug_log("probe 自家窗口内"); // [DEBUG-m0u5]
+        crate::platform::debug_log("probe 自家窗口内"); // [DEBUG-m0u5]
         hide_selection_icon(worker);
         return;
     }
@@ -145,19 +150,20 @@ fn probe_and_show(worker: &AppHandle, ux: i32, uy: i32, near_px: i32, gen: u64) 
     // 刚把图标弹出来，hide 会让它闪一下就消失；只读标志不上锁，真撞同一毫秒少弹一次，不值
     if grab_in_progress() {
         println!("[probe] 上一轮剪贴板兜底仍在收尾，跳过本次探测");
-        #[cfg(windows)]
-        crate::platform::windows::debug_log("probe grab_in_progress"); // [DEBUG-m0u5]
+        crate::platform::debug_log("probe grab_in_progress"); // [DEBUG-m0u5]
         return;
     }
     // 图标路径铁律：绝不碰剪贴板（也不注入复制按键）——UIA/AX 读不到选区（终端、
     // 部分 Electron/自绘 UI）就不弹图标，用户要翻这些应用里的词请走热键
     // （只有热键路径的 grab_selection 允许剪贴板兜底，且全程备份/恢复）
     let text = match platform::focused_selection() {
-        platform::SelectionRead::Text(t) => Some(t),
+        platform::SelectionRead::Text(t) => {
+            crate::platform::debug_log(&format!("probe 读到选区 {:.20}", t));
+            Some(t)
+        }
         other => {
             println!("[probe] UIA/AX 未读到选区：{other:?}");
-            #[cfg(windows)]
-            crate::platform::windows::debug_log(&format!("probe UIA 未读到：{other:?}")); // [DEBUG-m0u5]
+            crate::platform::debug_log(&format!("probe UIA 未读到：{other:?}")); // [DEBUG-m0u5]
             None
         }
     };
@@ -169,16 +175,15 @@ fn probe_and_show(worker: &AppHandle, ux: i32, uy: i32, near_px: i32, gen: u64) 
             let (cx, cy) = platform::cursor_pos();
             let far = (cx - ux).abs() + (cy - uy).abs() > near_px;
             if far {
-                #[cfg(windows)]
-                crate::platform::windows::debug_log("probe 光标已远离"); // [DEBUG-m0u5]
+                crate::platform::debug_log("probe 光标已远离"); // [DEBUG-m0u5]
                 hide_selection_icon(worker);
             } else {
-                #[cfg(windows)]
-                crate::platform::windows::debug_log(&format!("probe 弹图标 text={text:.20}")); // [DEBUG-m0u5]
+                crate::platform::debug_log(&format!("probe 弹图标 text={text:.20}")); // [DEBUG-m0u5]
                 show_selection_icon(worker, text, ux, uy);
             }
         }
         _ if live => hide_selection_icon(worker),
-        _ => {} // 过期结果，什么都不做
+        // 过期结果，什么都不做
+        _ => crate::platform::debug_log("probe 结果已过期，丢弃"),
     }
 }
