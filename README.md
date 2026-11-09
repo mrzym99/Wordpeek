@@ -76,6 +76,7 @@ npm run tauri build
 
 ## 交流
 有什么bug、建议或想法，欢迎在 [Issues](../../issues) 里提交，也可以加入交流群讨论。
+
 qq群：[Wordpeek交流群](https://qm.qq.com/q/ysfZ1h0KfQ)
 
 ## 许可证
