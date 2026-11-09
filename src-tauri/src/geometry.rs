@@ -18,6 +18,18 @@ pub(crate) fn to_physical(logical: f64, scale: f64) -> i32 {
     (logical * scale).round().max(1.0) as i32
 }
 
+/// 向上取到「乘 scale 后得整数物理像素」的最小逻辑粒度的倍数。
+/// WebView2 在分数缩放（如 125%=5/4）下会把视口向上取整，渲染表面可比窗口多 1 物理像素，
+/// 贴底的卡片底边框被裁（issue「底边框偶发消失」）。逻辑尺寸取分母倍数后视口无分数，两边对齐。
+pub(crate) fn snap_to_scale(logical: f64, scale: f64) -> f64 {
+    // 最小 n 使 n×scale 为整数（1.25→4，1.5→2，1/2→1）；上限兙死避免病态 scale 空转
+    let mut n = 1u32;
+    while n < 100 && ((n as f64 * scale) - (n as f64 * scale).round()).abs() > 1e-6 {
+        n += 1;
+    }
+    (logical / n as f64).ceil() * n as f64
+}
+
 /// 把左上角在 (x, y)、尺寸 win_w×win_h 的窗口钳进显示器矩形；窗口比屏大时贴左上角
 pub(crate) fn clamp_rect_to_monitor(
     monitor: (i32, i32, i32, i32),
@@ -160,6 +172,20 @@ mod tests {
         // 修复后：整卡收进屏内，底边贴屏底
         assert_eq!(y, 1080 - 900, "卡片底边应贴屏幕下沿而不是伸出屏幕");
         assert_eq!(x, 100);
+    }
+
+    #[test]
+    fn snap_to_scale_yields_integral_physical() {
+        // 125%：逻辑 214×1.25=267.5 会引发 WebView2 视口取整比表面多 1px，须向上取到 216（→270 物理）
+        assert_eq!(snap_to_scale(214.0, 1.25), 216.0);
+        assert_eq!(snap_to_scale(216.0, 1.25), 216.0);
+        assert_eq!(snap_to_scale(213.6, 1.25), 216.0);
+        // 150%：粒度 2
+        assert_eq!(snap_to_scale(215.0, 1.5), 216.0);
+        // 100%/200%：任何整数都不产生分数物理
+        assert_eq!(snap_to_scale(214.0, 1.0), 214.0);
+        assert_eq!(snap_to_scale(214.5, 2.0), 215.0);
+        assert_eq!(snap_to_scale(400.0, 1.25), 400.0);
     }
 
     #[test]

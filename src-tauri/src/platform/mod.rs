@@ -133,7 +133,8 @@ impl PermissionKind {
         }
     }
 
-    /// 系统设置隐私扩展里的锚点名（Privacy_*）
+    /// 系统设置隐私扩展里的锚点名（Privacy_*）；仅 macOS 调用
+    #[cfg(target_os = "macos")]
     pub(crate) fn anchor(self) -> &'static str {
         match self {
             Self::Accessibility => "Privacy_Accessibility",

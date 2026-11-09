@@ -37,14 +37,17 @@ pub(crate) fn fit_window(app: AppHandle, label: String, height: f64, viewport: O
     let chrome_h = outer.height.saturating_sub(inner.height) as f64 / scale;
     // 高度上限用窗口所在屏的工作区；work_area_at 给物理像素，内容高度是逻辑像素，先除以 scale 再钳制
     let (_, _, _, work_h) = crate::platform::work_area_at(pos.x + 8, pos.y + 8);
-    let inner_w = inner.width as f64 / scale;
     // 带标题栏的窗口里窗口高 ≠ webview 视口高（前端拿到的 100vh 少一条标题栏）需补差值，无边框弹窗为 0；
     // 差值只测一次并缓存：前端上报的视口高可能落后于刚 set_size 的窗口，现算会把差值越滚越大
     let chrome_extra = viewport.map(|vh| geometry::viewport_inset(&label, inner.height as f64 / scale, vh)).unwrap_or(0.0);
-    let inner_h = geometry::fit_height(
-        height + chrome_extra,
-        if work_h > 0 { work_h as f64 / scale } else { 0.0 },
-        chrome_h,
+    let inner_w = geometry::snap_to_scale(inner.width as f64 / scale, scale);
+    let inner_h = geometry::snap_to_scale(
+        geometry::fit_height(
+            height + chrome_extra,
+            if work_h > 0 { work_h as f64 / scale } else { 0.0 },
+            chrome_h,
+        ),
+        scale,
     );
     win.set_size(tauri::LogicalSize::new(inner_w, inner_h))
         .map_err(|e| e.to_string())?;
