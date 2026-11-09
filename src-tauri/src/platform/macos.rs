@@ -286,8 +286,17 @@ pub fn clipboard_read_text(retries: u32) -> Result<Option<String>, ()> {
     Err(())
 }
 
-/// 恢复用户原内容：Some(t) 写回文本，None 清空到无文本态
-pub fn clipboard_restore(backup: Option<String>) -> bool {
+/// 备份剪贴板当前内容（grab 用；Err = 内容未知或还原不了，绝不能动它）；macOS 只区分文本/空
+pub fn clipboard_backup(retries: u32) -> Result<ClipboardBackup, ()> {
+    match clipboard_read_text(retries) {
+        Ok(Some(t)) => Ok(ClipboardBackup::Text(t)),
+        Ok(None) => Ok(ClipboardBackup::Empty),
+        Err(()) => Err(()),
+    }
+}
+
+/// 恢复用户原内容：Empty 清空，Text 写回文本（空串≈清空）；Raw 只在 Windows 产生
+pub fn clipboard_restore(backup: &ClipboardBackup) -> bool {
     for attempt in 0..3u32 {
         if attempt > 0 {
             std::thread::sleep(std::time::Duration::from_millis(15));
@@ -295,9 +304,12 @@ pub fn clipboard_restore(backup: Option<String>) -> bool {
         let Ok(mut cb) = arboard::Clipboard::new() else {
             continue;
         };
-        let ok = match &backup {
-            Some(t) => cb.set_text(t.as_str()).is_ok(),
-            None => cb.clear().is_ok(),
+        let ok = match backup {
+            ClipboardBackup::Text(t) => cb.set_text(t.as_str()).is_ok(),
+            // Raw 仅 Windows 侧产生，macOS 不可达；真收到则退化为清空
+            #[cfg(windows)]
+            ClipboardBackup::Raw(_) => cb.clear().is_ok(),
+            ClipboardBackup::Empty => cb.clear().is_ok(),
         };
         if ok {
             return true;

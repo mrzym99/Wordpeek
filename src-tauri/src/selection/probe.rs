@@ -2,7 +2,7 @@
 //! 探测全在独立线程（UIA 对 Chromium 应用要重试等 120ms+，堵住会撑爆信号通道丢鼠标事件），
 //! 代次防过期：期间用户开始新选区就丢弃结果。
 
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use tauri::{AppHandle, Manager};
 
@@ -25,6 +25,9 @@ const ICON_LEAVE_PX: i32 = 48;
 const ICON_NEAR_PX: i32 = 400;
 /// 刚点过图标后的探测静默窗口（毫秒）：点击后的松开事件仍会触发探测且源应用选区还在，图标会立刻弹回
 pub(crate) const ICON_REPROBE_QUIET_MS: u64 = 400;
+
+/// [DEBUG-m0u5] 临时插桩：worker 最近一次处理 Up 信号的 epoch ms（看门狗日志对比用）。诊断完删除
+pub(crate) static LAST_WORKER_UP_MS: AtomicU64 = AtomicU64::new(0);
 
 /// 划词图标：鼠标松开后读一次系统选区（不碰剪贴板、不注入按键），有选中文字就在光标旁弹按钮，
 /// 点一下走热键同一套翻译链路；读不到选区（终端、Electron 等不实现 AX/UIA 文本接口）就什么都不做
@@ -79,7 +82,12 @@ pub(crate) fn start_selection_icon(app: &AppHandle) {
                         hide_selection_icon(&worker);
                     }
                 }
-                Signal::Up { x, y } => probe_selection(&worker, x, y, ICON_NEAR_PX),
+                Signal::Up { x, y } => {
+                    LAST_WORKER_UP_MS.store(super::now_ms(), Ordering::Relaxed); // [DEBUG-m0u5]
+                    #[cfg(windows)]
+                    crate::platform::windows::debug_log(&format!("worker Up x={x} y={y}"));
+                    probe_selection(&worker, x, y, ICON_NEAR_PX);
+                }
             }
         }
     });
@@ -103,6 +111,11 @@ fn probe_selection(worker: &AppHandle, ux: i32, uy: i32, near_px: i32) {
             "[probe] 放弃：enabled={enabled} intent={} clicked_recently={clicked_recently}",
             PROBE_INTENT.load(Ordering::Relaxed)
         );
+        #[cfg(windows)]
+        crate::platform::windows::debug_log(&format!( // [DEBUG-m0u5]
+            "probe 放弃 enabled={enabled} intent={} clicked_recently={clicked_recently}",
+            PROBE_INTENT.load(Ordering::Relaxed)
+        ));
         hide_selection_icon(worker);
         return;
     }
@@ -112,6 +125,8 @@ fn probe_selection(worker: &AppHandle, ux: i32, uy: i32, near_px: i32) {
         .any(|&l| cursor_on_window(worker, l))
     {
         println!("[probe] 光标在自家窗口内，不弹图标");
+        #[cfg(windows)]
+        crate::platform::windows::debug_log("probe 自家窗口内"); // [DEBUG-m0u5]
         hide_selection_icon(worker);
         return;
     }
@@ -130,6 +145,8 @@ fn probe_and_show(worker: &AppHandle, ux: i32, uy: i32, near_px: i32, gen: u64) 
     // 刚把图标弹出来，hide 会让它闪一下就消失；只读标志不上锁，真撞同一毫秒少弹一次，不值
     if grab_in_progress() {
         println!("[probe] 上一轮剪贴板兜底仍在收尾，跳过本次探测");
+        #[cfg(windows)]
+        crate::platform::windows::debug_log("probe grab_in_progress"); // [DEBUG-m0u5]
         return;
     }
     // 图标路径铁律：绝不碰剪贴板（也不注入复制按键）——UIA/AX 读不到选区（终端、
@@ -139,6 +156,8 @@ fn probe_and_show(worker: &AppHandle, ux: i32, uy: i32, near_px: i32, gen: u64) 
         platform::SelectionRead::Text(t) => Some(t),
         other => {
             println!("[probe] UIA/AX 未读到选区：{other:?}");
+            #[cfg(windows)]
+            crate::platform::windows::debug_log(&format!("probe UIA 未读到：{other:?}")); // [DEBUG-m0u5]
             None
         }
     };
@@ -150,8 +169,12 @@ fn probe_and_show(worker: &AppHandle, ux: i32, uy: i32, near_px: i32, gen: u64) 
             let (cx, cy) = platform::cursor_pos();
             let far = (cx - ux).abs() + (cy - uy).abs() > near_px;
             if far {
+                #[cfg(windows)]
+                crate::platform::windows::debug_log("probe 光标已远离"); // [DEBUG-m0u5]
                 hide_selection_icon(worker);
             } else {
+                #[cfg(windows)]
+                crate::platform::windows::debug_log(&format!("probe 弹图标 text={text:.20}")); // [DEBUG-m0u5]
                 show_selection_icon(worker, text, ux, uy);
             }
         }

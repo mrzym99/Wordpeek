@@ -44,6 +44,8 @@ windows = { version = "0.58", features = [
     "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Ole",
     # 钩子看门狗：GetLastInputInfo 检测钩子被静默摘除 + GetTickCount 时基
     "Win32_UI_Input_KeyboardAndMouse", "Win32_System_SystemInformation",
+    # 启动 toast：注册 AUMID（NSIS 快捷键不带 AUMID，WinRT 通知找不到身份就静默失败）
+    "Win32_System_Registry",
     "Foundation", "Foundation_Collections", "Globalization", "Graphics_Imaging", "Media_Ocr", "Storage_Streams",
 ] }
 

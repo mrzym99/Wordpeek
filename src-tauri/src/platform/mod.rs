@@ -198,8 +198,15 @@ pub enum SelectionRead {
 
 #[cfg(windows)]
 pub use windows::{foreground_pid, read_focused_selection, warm_uia};
+#[cfg(windows)]
+pub(crate) use windows::is_chromium_browser;
 #[cfg(target_os = "macos")]
 pub use macos::{foreground_pid, read_focused_selection};
+// macOS 侧暂不豁免（本修复只针对 Windows Chrome 拆树问题），返回 false 保持原行为
+#[cfg(target_os = "macos")]
+pub(crate) fn is_chromium_browser(_pid: i32) -> bool {
+    false
+}
 
 /// 读焦点控件里被选中的文本（系统 AX/UIA 接口，不碰剪贴板也不注入按键）。
 /// hopeless 记忆（按 pid 拉黑 + TTL）在门面统一做：两平台的拉黑条件同为「本轮
@@ -218,7 +225,15 @@ pub fn focused_selection() -> SelectionRead {
     println!("[probe] pid={pid} UIA 直读结果：{read:?}");
     match &read {
         SelectionRead::Text(_) => clear_selection_hopeless(pid),
-        SelectionRead::NoTextPattern => mark_selection_hopeless(pid),
+        SelectionRead::NoTextPattern => {
+            // Chromium 系（Chrome/Edge）的无障碍树空闲后会被浏览器拆掉，恢复使用时
+            // 前几轮探测必然 NoTextPattern，照常三振会误拉黑并停止敲门，树永远重建
+            // 不起来（划词图标死循环，TTL 10 分钟一次）。这类进程不记账：代价只是
+            // 每轮探测多白等 ~360ms（见 read_focused_selection 注释），无感
+            if !is_chromium_browser(pid) {
+                mark_selection_hopeless(pid);
+            }
+        }
         _ => {}
     }
     read
@@ -268,14 +283,20 @@ pub use win_clipboard::clipboard_seq;
 #[cfg(target_os = "macos")]
 pub use macos::clipboard_seq;
 
-/// 读剪贴板当前文本。Err = 重试后仍打不开（内容未知，调用方绝不能盲目恢复/清空）；
-/// Ok(None) = 确定没有文本格式（图片/文件/空）
+/// 备份剪贴板当前内容（grab 用；Err = 内容未知或还原不了，绝不能动它）
+#[cfg(windows)]
+pub use win_clipboard::clipboard_backup;
+#[cfg(target_os = "macos")]
+pub use macos::clipboard_backup;
+
+/// 读剪贴板当前文本。Err = 重试后仍打不开，或剪贴板全是非文本内容（图片/文件，
+/// 内容未知，调用方绝不能盲目恢复/清空）；Ok(None) = 确定的空剪贴板
 #[cfg(windows)]
 pub use win_clipboard::clipboard_read_text;
 #[cfg(target_os = "macos")]
 pub use macos::clipboard_read_text;
 
-/// 恢复用户原内容：Some(t) 写回文本（空串≈清空），None 清空到无文本态
+/// 恢复用户原内容：Empty 清空；Text 写回文本（空串≈清空）；Raw 逐格式写回字节
 #[cfg(windows)]
 pub use win_clipboard::clipboard_restore;
 #[cfg(target_os = "macos")]
@@ -286,6 +307,42 @@ pub use macos::clipboard_restore;
 pub use win_clipboard::clipboard_owner_is_self;
 #[cfg(target_os = "macos")]
 pub use macos::clipboard_owner_is_self;
+
+// ---------- 剪贴板快照（grab 备份/恢复的通用形态，两个平台共用） ----------
+
+/// grab 期间的剪贴板快照。Empty=确认空剪贴板；Text=纯文本；Raw=多格式原始字节
+/// （Windows：文本外的图片 DIB/PNG、文件 HDROP、自定义注册格式等，见 win_clipboard.rs）
+pub enum ClipboardBackup {
+    Empty,
+    /// macOS 侧专用（Windows 侧快照一律 Raw；text() 兼容读）
+    #[cfg_attr(windows, allow(dead_code))]
+    Text(String),
+    #[cfg(windows)]
+    Raw(Vec<RawClipFormat>),
+}
+
+/// Raw 快照里的一种格式：fmt=标准格式 ID（CF_*）或注册格式（>=0xC000，带 name）
+#[cfg(windows)]
+pub struct RawClipFormat {
+    pub fmt: u32,
+    pub name: Option<String>,
+    pub bytes: Vec<u8>,
+}
+
+impl ClipboardBackup {
+    /// 快照里的文本（grab 判断「划词与原内容相同」用；Raw 取 CF_UNICODETEXT）
+    pub fn text(&self) -> Option<String> {
+        match self {
+            Self::Empty => None,
+            Self::Text(t) => Some(t.clone()),
+            #[cfg(windows)]
+            Self::Raw(fmts) => fmts
+                .iter()
+                .find(|f| f.fmt == win_clipboard::CF_UNICODETEXT_ID)
+                .map(|f| win_clipboard::utf16_to_string(&f.bytes)),
+        }
+    }
+}
 
 // ---------- 慢应用「背刺」看门狗（两个平台共用） ----------
 
@@ -340,7 +397,7 @@ pub fn watch_decision(
 /// grab_selection 恢复备份后的一次性监视线程：~2.5s（60ms × 42 拍）盯「目标应用迟到的
 /// 写入」——轮询窗口（~900ms）结束后 Word/大网页才把选中文本写进剪贴板的场景，
 /// 由这里纠正回来。只在内容逐字匹配本次划词时动手，且只执行一次
-pub fn spawn_second_chance(backup: Option<String>, grabbed: String, base_seq: u64, gen: u64) {
+pub fn spawn_second_chance(backup: ClipboardBackup, grabbed: String, base_seq: u64, gen: u64) {
     std::thread::spawn(move || {
         for _ in 0..42 {
             std::thread::sleep(std::time::Duration::from_millis(60));
@@ -354,7 +411,7 @@ pub fn spawn_second_chance(backup: Option<String>, grabbed: String, base_seq: u6
             match watch_decision(clipboard_read_text(0), &grabbed, clipboard_owner_is_self()) {
                 WatchDecision::RestoreSnapshot => {
                     println!("[grab] 慢应用事后写入，二次恢复备份");
-                    clipboard_restore(backup);
+                    clipboard_restore(&backup);
                     return;
                 }
                 WatchDecision::StandDown => return,

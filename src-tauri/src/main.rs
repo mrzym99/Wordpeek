@@ -206,6 +206,8 @@ fn main() {
             // Windows 启动提示：托盘图标在右下角不显眼，发一条系统通知告知已在后台运行（macOS 菜单栏有图标，无需提示）
             #[cfg(windows)]
             {
+                // 注册 AUMID：安装版 toast 能以应用身份弹出（dev 不设 app_id，不影响）
+                platform::windows::register_aumid(&handle.config().identifier);
                 let notify_handle = handle.clone();
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_millis(800));

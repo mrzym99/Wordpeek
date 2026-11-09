@@ -10,7 +10,7 @@
 
 mod fallback;
 mod normalize;
-mod probe;
+pub(crate) mod probe; // windows.rs 看门狗读 LAST_WORKER_UP_MS（[DEBUG-m0u5] 插桩，诊断完改回 mod probe）
 // gesture / icon 的个别符号被 main.rs 命令与 invoke_handler 直接引用，公开到 crate 内
 pub(crate) mod gesture;
 pub(crate) mod icon;

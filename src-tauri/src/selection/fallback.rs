@@ -59,12 +59,12 @@ fn grab_selection(app: &AppHandle) -> Option<String> {
         println!("[grab] 系统安全输入开启中（登录/密码窗口），放弃注入");
         return None;
     }
-    // 备份原文本（带重试）。读不到内容 = 不知道剪贴板里是什么，绝不继续；
-    // Ok(None) = 确认空剪贴板，照常恢复（恢复到空态）；非文本内容（图片/文件）
-    // 在 clipboard_read_text 里就放弃（无法备份，恢复到空态会毁掉用户内容）
+    // 备份原内容（带重试，多格式原始字节：图片/文件/自定义格式都能还原）。
+    // Err = 被持续锁住或全是 GDI 句柄格式（内容未知/还原不了），绝不继续；
+    // Ok = 完整快照，之后恢复到原样
     const BACKUP_RETRIES: u32 = 8;
-    let Ok(backup) = platform::clipboard_read_text(BACKUP_RETRIES) else {
-        println!("[grab] 剪贴板备份失败（被占用或非文本内容），放弃本次");
+    let Ok(backup) = platform::clipboard_backup(BACKUP_RETRIES) else {
+        println!("[grab] 剪贴板备份失败（被占用或含无法备份的内容），放弃本次");
         return None;
     };
     let base_seq = platform::clipboard_seq();
@@ -74,7 +74,7 @@ fn grab_selection(app: &AppHandle) -> Option<String> {
     let ax = platform::accessibility_allowed();
     if !injected || !ax {
         println!("[grab] inject_copy={injected}, accessibility={ax}");
-        platform::clipboard_restore(backup);
+        platform::clipboard_restore(&backup);
         return None;
     }
 
@@ -108,8 +108,8 @@ fn grab_selection(app: &AppHandle) -> Option<String> {
         }
     }
 
-    // 把用户原内容放回去（有文本还原文本；原本无文本则清空）
-    platform::clipboard_restore(backup.clone());
+    // 把用户原内容放回去（多格式原样还原）
+    platform::clipboard_restore(&backup);
     // 以恢复完成的这一刻为基线：之后再有写入才是待纠正的「事后背刺」
     let restored_seq = platform::clipboard_seq();
 
@@ -117,7 +117,7 @@ fn grab_selection(app: &AppHandle) -> Option<String> {
         Some(text) => {
             // 选中词与旧文本逐字相同 → 恢复即原样，无需盯梢（也避免把目标应用的
             // 重复写入误判成背刺）；否则交给 watcher 纠正慢应用的事后写入
-            if backup.as_deref().map(str::trim) != Some(text.as_str()) {
+            if backup.text().as_deref().map(str::trim) != Some(text.as_str()) {
                 platform::spawn_second_chance(backup, text.clone(), restored_seq, gen);
             }
             Some(text)
@@ -139,6 +139,8 @@ fn open_settings_if_permission_missing(app: &AppHandle) {
 /// 这是唯一允许碰剪贴板的路径；划词图标路径绝不走这里
 pub(crate) fn handle_hotkey_trigger(app: &AppHandle) {
     println!("[shortcut] triggered");
+    #[cfg(windows)]
+    crate::platform::windows::debug_log("hotkey triggered"); // [DEBUG-m0u5]
     // 直读/模拟按键都可能耗上百毫秒，放独立线程避免阻塞主线程
     let app = app.clone();
     std::thread::spawn(move || {
@@ -156,11 +158,15 @@ pub(crate) fn handle_hotkey_trigger(app: &AppHandle) {
             Some(text) => {
                 let (cx, cy) = platform::cursor_pos();
                 println!("[grab] got text: {:?} at ({}, {})", text, cx, cy);
+                #[cfg(windows)]
+                crate::platform::windows::debug_log(&format!("grab got {:.20}", text)); // [DEBUG-m0u5]
                 hide_selection_icon(&app);
                 SessionManager::show_card(&app, &text, cx + 12, cy + 16, SOURCE_HOTKEY_FALLBACK);
             }
             None => {
                 println!("[grab] no text captured");
+                #[cfg(windows)]
+                crate::platform::windows::debug_log("grab no text"); // [DEBUG-m0u5]
                 open_settings_if_permission_missing(&app);
             }
         }

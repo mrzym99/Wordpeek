@@ -119,6 +119,17 @@ pub(crate) unsafe fn process_image_name(pid: u32) -> Option<String> {
     Some(path.rsplit(['/', '\\']).next().unwrap_or(&path).to_string())
 }
 
+/// Chromium 系浏览器：无障碍树懒建且会在客户端停止查询后自动拆除（Chrome 空闲
+/// 几分钟就拆树）。树冷启动后的前几轮探测全是 NoTextPattern，60 秒内三振即被
+/// hopeless 拉黑——而拉黑 = 停止敲门 = 树永远重建不起来（死循环）。这类进程不记账
+pub(crate) fn is_chromium_browser(pid: i32) -> bool {
+    const CHROMIUM_BROWSERS: [&str; 5] = ["chrome.exe", "msedge.exe", "chromium.exe", "brave.exe", "opera.exe"];
+    let Some(name) = (unsafe { process_image_name(pid as u32) }) else {
+        return false;
+    };
+    CHROMIUM_BROWSERS.iter().any(|b| name.eq_ignore_ascii_case(b))
+}
+
 /// 目标进程是否以管理员运行（UIPI 会拒我们这个普通完整性进程的模拟按键与 UIA 读）
 fn process_elevated(pid: u32) -> bool {
     use windows::Win32::Foundation::{CloseHandle, HANDLE};
@@ -343,6 +354,77 @@ fn epoch_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// [DEBUG-m0u5] 临时诊断插桩：追加写 %TEMP%\wp-sel.log（GUI 子系统 println 不可见）。诊断完删除
+pub(crate) fn debug_log(line: &str) {
+    use std::io::Write;
+    let Ok(tmp) = std::env::var("TEMP") else {
+        return;
+    };
+    let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(format!(r"{tmp}\wp-sel.log"))
+    else {
+        return;
+    };
+    let _ = writeln!(f, "{} {line}", epoch_ms());
+}
+
+/// 注册 AUMID（HKCU，无需管理员）：NSIS 装的快捷键不带 AppUserModelID，WinRT toast
+/// 按 HKCU\Software\Classes\AppUserModelId\<id> 找身份，找不到就静默失败（GUI 进程
+/// 看不到 eprintln）。写入 DisplayName/IconUri 后通知显示「Wordpeek」名字与图标
+pub fn register_aumid(app_id: &str) {
+    use windows::Win32::System::Registry::{
+        RegCloseKey, RegCreateKeyExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER, KEY_SET_VALUE,
+        REG_OPTION_NON_VOLATILE, REG_SZ,
+    };
+    use windows::core::PCWSTR;
+
+    let subkey: Vec<u16> = format!(r"Software\Classes\AppUserModelId\{app_id}")
+        .encode_utf16()
+        .chain([0])
+        .collect();
+    let set_str = |hkey: HKEY, name: &str, value: String| {
+        let name_w: Vec<u16> = name.encode_utf16().chain([0]).collect();
+        let data: Vec<u16> = value.encode_utf16().chain([0]).collect();
+        unsafe {
+            let _ = RegSetValueExW(
+                hkey,
+                PCWSTR(name_w.as_ptr()),
+                0,
+                REG_SZ,
+                Some(std::slice::from_raw_parts(
+                    data.as_ptr() as *const u8,
+                    data.len() * 2,
+                )),
+            );
+        }
+    };
+    unsafe {
+        let mut hkey = HKEY::default();
+        if RegCreateKeyExW(
+            HKEY_CURRENT_USER,
+            PCWSTR(subkey.as_ptr()),
+            0,
+            None,
+            REG_OPTION_NON_VOLATILE,
+            KEY_SET_VALUE,
+            None,
+            &mut hkey,
+            None,
+        )
+        .is_err()
+        {
+            println!("[notify] AUMID 注册失败（toast 将无法以应用身份显示）");
+            return;
+        }
+        set_str(hkey, "DisplayName", "Wordpeek".to_string());
+        if let Ok(exe) = std::env::current_exe() {
+            set_str(hkey, "IconUri", exe.to_string_lossy().into_owned());
+        }
+        let _ = RegCloseKey(hkey);
+    }
+}
 fn store_live_hook(guard: Option<HookGuard>) {
     if let Ok(mut slot) = LIVE_HOOK.lock() {
         *slot = guard;
@@ -426,14 +508,20 @@ fn replace_hook() -> bool {
 fn start_hook_watchdog() {
     std::thread::spawn(move || {
         let mut dead_streak = 0u32;
+        let mut tick = 0u32; // [DEBUG-m0u5]
         loop {
             std::thread::sleep(std::time::Duration::from_secs(5));
+            tick += 1; // [DEBUG-m0u5]
             // 钩子压根不在（上次重装失败）：直接补装，不必等用户有输入
             let hook_missing = LIVE_HOOK
                 .lock()
                 .map(|slot| slot.is_none())
                 .unwrap_or(false);
             if hook_missing {
+                if tick % 6 == 0 {
+                    // [DEBUG-m0u5]
+                    debug_log("watchdog hookMissing=true");
+                }
                 dead_streak = 0;
                 replace_hook();
                 continue;
@@ -447,6 +535,19 @@ fn start_hook_watchdog() {
                 }
                 // dwTime 是 GetTickCount 时基（ms since boot，32 位会回绕），只做小差值比较
                 let active_ms = GetTickCount().wrapping_sub(li.dwTime);
+                if tick % 6 == 0 {
+                    // [DEBUG-m0u5] 每 30s 一次：钩子年龄/输入年龄/worker 心跳年龄，拿划词失效现场
+                    let hook_age = epoch_ms().saturating_sub(
+                        LAST_HOOK_EVENT_MS.load(std::sync::atomic::Ordering::Relaxed),
+                    );
+                    let worker_age = epoch_ms().saturating_sub(
+                        crate::selection::probe::LAST_WORKER_UP_MS
+                            .load(std::sync::atomic::Ordering::Relaxed),
+                    );
+                    debug_log(&format!(
+                        "watchdog hookAge={hook_age} inputAge={active_ms} workerUpAge={worker_age}"
+                    ));
+                }
                 if active_ms > 10_000 {
                     dead_streak = 0; // 用户本就没在动，钩子没事件是正常的
                     continue;
@@ -462,6 +563,7 @@ fn start_hook_watchdog() {
                 }
                 dead_streak = 0;
                 println!("[mouse] 检测到低级鼠标钩子失效（静默摘除），重装");
+                debug_log("watchdog reinstalling hook"); // [DEBUG-m0u5]
                 replace_hook();
             }
         }
@@ -616,24 +718,42 @@ pub fn foreground_pid() -> Option<i32> {
 
 /// 单次 UIA 选区读取，用门面的统一四态（语义与拉黑规则见 platform::SelectionRead）
 unsafe fn selection_of(automation: &IUIAutomation) -> super::SelectionRead {
-    use windows::Win32::UI::Accessibility::{IUIAutomationTextPattern, UIA_TextPatternId};
-
     let element = match automation.GetFocusedElement() {
         Ok(e) => e,
         Err(_) => return SelectionRead::Error,
     };
-    // 取不到 TextPattern = 应用不支持（不是「没选中」）
-    let pattern: IUIAutomationTextPattern = match element.GetCurrentPatternAs(UIA_TextPatternId) {
-        Ok(p) => p,
-        Err(_) => return SelectionRead::NoTextPattern,
-    };
+    if let Some(r) = unsafe { selection_via_text_pattern(&element) } {
+        return r;
+    }
+    // 焦点元素没有 TextPattern：聊天/编辑类网页（DeepSeek、Slack…）键盘焦点常驻输入框，
+    // 鼠标划选不转移焦点 → Ctrl+C 也只作用于空输入框。改试光标下的元素——选区就在那，
+    // 它的 TextPattern.GetSelection 返回整个文档的选区。仍拿不到才算「不支持」
+    let mut pt = POINT { x: 0, y: 0 };
+    if GetCursorPos(&mut pt).is_ok() {
+        if let Ok(el) = automation.ElementFromPoint(pt) {
+            if let Some(r) = unsafe { selection_via_text_pattern(&el) } {
+                return r;
+            }
+        }
+    }
+    SelectionRead::NoTextPattern
+}
+
+/// 元素的 TextPattern 选区文本：拿不到 TextPattern 返 None（=此元素不支持，由调用方决定
+/// 是否换元素再试）；空选区返 NoSelection；其余读失败返 Error（不拉黑）
+unsafe fn selection_via_text_pattern(
+    element: &windows::Win32::UI::Accessibility::IUIAutomationElement,
+) -> Option<super::SelectionRead> {
+    use windows::Win32::UI::Accessibility::UIA_TextPatternId;
+    let pattern: windows::Win32::UI::Accessibility::IUIAutomationTextPattern =
+        element.GetCurrentPatternAs(UIA_TextPatternId).ok()?;
     let ranges = match pattern.GetSelection() {
         Ok(r) => r,
-        Err(_) => return SelectionRead::Error,
+        Err(_) => return Some(SelectionRead::Error),
     };
     let count = match ranges.Length() {
         Ok(c) => c,
-        Err(_) => return SelectionRead::Error,
+        Err(_) => return Some(SelectionRead::Error),
     };
     let mut text = String::new();
     for i in 0..count {
@@ -646,9 +766,9 @@ unsafe fn selection_of(automation: &IUIAutomation) -> super::SelectionRead {
         }
     }
     let trimmed = text.trim();
-    if trimmed.is_empty() {
+    Some(if trimmed.is_empty() {
         SelectionRead::NoSelection
     } else {
         SelectionRead::Text(trimmed.to_string())
-    }
+    })
 }
