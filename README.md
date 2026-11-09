@@ -1,8 +1,6 @@
 # Wordpeek — 极简划词翻译
 
-在任意窗口选中单词，弹出翻译卡片自动翻译。
-
-**极简** 开箱即用，配置极少
+**极简** 开箱即用，配置极少，在任意窗口选中单词，弹出翻译卡片自动翻译。
 
 ![](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-blue) ![](https://img.shields.io/badge/license-MIT-green) [![](https://img.shields.io/github/stars/mrzym99/Wordpeek?style=flat&label=star)](https://github.com/mrzym99/Wordpeek/stargazers)
 
@@ -75,6 +73,10 @@ tccutil reset ScreenCapture com.wordpeek.desktop
 npm install
 npm run tauri build
 ```
+
+## 交流
+有什么bug、建议或想法，欢迎在 [Issues](../../issues) 里提交，也可以加入交流群讨论。
+qq群：[Wordpeek交流群](https://qm.qq.com/q/ysfZ1h0KfQ)
 
 ## 许可证
 

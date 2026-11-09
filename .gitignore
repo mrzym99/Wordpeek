@@ -9,4 +9,6 @@ src-tauri/gen/schemas/
 # 本地配置与日志
 *.log
 .DS_Store
-Thumbs.db
+
+.pi/
+.debug/
