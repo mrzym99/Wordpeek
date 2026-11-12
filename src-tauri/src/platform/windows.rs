@@ -370,61 +370,6 @@ pub(crate) fn debug_log(line: &str) {
     let _ = writeln!(f, "{} {line}", epoch_ms());
 }
 
-/// 注册 AUMID（HKCU，无需管理员）：NSIS 装的快捷键不带 AppUserModelID，WinRT toast
-/// 按 HKCU\Software\Classes\AppUserModelId\<id> 找身份，找不到就静默失败（GUI 进程
-/// 看不到 eprintln）。写入 DisplayName/IconUri 后通知显示「Wordpeek」名字与图标
-pub fn register_aumid(app_id: &str) {
-    use windows::Win32::System::Registry::{
-        RegCloseKey, RegCreateKeyExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER, KEY_SET_VALUE,
-        REG_OPTION_NON_VOLATILE, REG_SZ,
-    };
-    use windows::core::PCWSTR;
-
-    let subkey: Vec<u16> = format!(r"Software\Classes\AppUserModelId\{app_id}")
-        .encode_utf16()
-        .chain([0])
-        .collect();
-    let set_str = |hkey: HKEY, name: &str, value: String| {
-        let name_w: Vec<u16> = name.encode_utf16().chain([0]).collect();
-        let data: Vec<u16> = value.encode_utf16().chain([0]).collect();
-        unsafe {
-            let _ = RegSetValueExW(
-                hkey,
-                PCWSTR(name_w.as_ptr()),
-                0,
-                REG_SZ,
-                Some(std::slice::from_raw_parts(
-                    data.as_ptr() as *const u8,
-                    data.len() * 2,
-                )),
-            );
-        }
-    };
-    unsafe {
-        let mut hkey = HKEY::default();
-        if RegCreateKeyExW(
-            HKEY_CURRENT_USER,
-            PCWSTR(subkey.as_ptr()),
-            0,
-            None,
-            REG_OPTION_NON_VOLATILE,
-            KEY_SET_VALUE,
-            None,
-            &mut hkey,
-            None,
-        )
-        .is_err()
-        {
-            println!("[notify] AUMID 注册失败（toast 将无法以应用身份显示）");
-            return;
-        }
-        set_str(hkey, "DisplayName", "Wordpeek".to_string());
-        if let Ok(exe) = std::env::current_exe() {
-            set_str(hkey, "IconUri", exe.to_string_lossy().into_owned());
-        }
-        let _ = RegCloseKey(hkey);
-    }
-}
 fn store_live_hook(guard: Option<HookGuard>) {
     if let Ok(mut slot) = LIVE_HOOK.lock() {
         *slot = guard;

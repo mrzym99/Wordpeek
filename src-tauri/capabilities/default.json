@@ -7,7 +7,8 @@
     "icon",
     "screenshot",
     "settings",
-    "input"
+    "input",
+    "hud"
   ],
   "permissions": [
     "core:event:default",
@@ -15,6 +16,7 @@
     "core:window:allow-start-dragging",
     "core:window:allow-show",
     "core:window:allow-hide",
+    "core:window:allow-close",
     "core:window:allow-set-position",
     "core:window:allow-set-focus",
     "core:window:allow-set-theme",

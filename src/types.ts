@@ -23,6 +23,8 @@ export interface AppConfig {
   screenshot_hotkey: string;
   ocr_lang: string;
   input_hotkey: string;
+  /** 切换划词图标的快捷键（老配置缺字段时后端 serde 补默认 Alt+W） */
+  icon_hotkey: string;
   builtin_sources: boolean;
   /** 设置窗口上次停留的一级菜单，重开时恢复 */
   settings_section?: string;

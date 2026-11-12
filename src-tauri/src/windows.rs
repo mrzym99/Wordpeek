@@ -1,6 +1,7 @@
 //! 窗口生命周期：按需创建/置前、高度自适应命令、居中。从 main.rs 整体迁出（纯移动不改逻辑）。
 
-use tauri::{AppHandle, Manager};
+use parking_lot::Mutex;
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::geometry;
 
@@ -86,7 +87,8 @@ fn center_window(win: &tauri::WebviewWindow) {
 }
 
 /// 已存在则 show+置前；没建过就在事件循环线程按需创建为隐藏态（内容就绪后前端自己 show），首次创建居中。
-/// macOS 用 Overlay 标题栏（交通灯浮在自绘头部上）；drag_drop: true 加 disable_drag_drop_handler（设置窗要拖拽排序）
+/// macOS 用 Overlay 标题栏（交通灯浮在自绘头部上）；drag_drop: true 加 disable_drag_drop_handler（设置窗要拖拽排序）；
+/// borderless: true 建为无边框透明置顶小窗（划词切换 HUD），已存在时只 show 不抢焦点
 fn spawn_or_show_window(
     app: &AppHandle,
     label: &str,
@@ -96,10 +98,13 @@ fn spawn_or_show_window(
     h: f64,
     resizable: bool,
     drag_drop: bool,
+    borderless: bool,
 ) {
     if let Some(win) = app.get_webview_window(label) {
         let _ = win.show();
-        let _ = win.set_focus();
+        if !borderless {
+            let _ = win.set_focus();
+        }
         return;
     }
     let for_builder = app.clone();
@@ -122,6 +127,14 @@ fn spawn_or_show_window(
         if drag_drop {
             builder = builder.disable_drag_drop_handler();
         }
+        if borderless {
+            builder = builder
+                .decorations(false)
+                .transparent(true)
+                .always_on_top(true)
+                .skip_taskbar(true)
+                .shadow(false);
+        }
         #[cfg(target_os = "macos")]
         {
             builder = builder
@@ -138,6 +151,28 @@ fn spawn_or_show_window(
     }
 }
 
+/// HUD 最新文案：新建窗口的首帧由页面挂载后 hud_take_text 领取（建窗 emit 早于监听注册）
+static HUD_TEXT: Mutex<Option<String>> = Mutex::new(None);
+
+/// 屏幕中央胶囊回执，1.2s 自动关。系统 toast 显示约 7s 且连按排队、macOS 样式不可控，
+/// 自绘 HUD 两端一致；复用同一窗口只盖文案重计时，最后一条必是最新事件；close 销毁自回收 renderer
+pub(crate) fn show_hud(app: &AppHandle, text: &str) {
+    *HUD_TEXT.lock() = Some(text.to_string());
+    if let Some(win) = app.get_webview_window("hud") {
+        let _ = win.show();
+        let _ = app.emit("hud_text", text);
+        return;
+    }
+    // shortcut: close 在途的同帧再按可能走新建分支丢一次 emit，但新窗挂载领到的仍是最新文案
+    spawn_or_show_window(app, "hud", "Wordpeek", "/?page=hud", 360.0, 72.0, false, false, true);
+}
+
+/// HUD 页面挂载后领首帧文案（取走即清空，避免下次重建重复显示旧提示）
+#[tauri::command]
+pub(crate) fn hud_take_text() -> Option<String> {
+    HUD_TEXT.lock().take()
+}
+
 /// 显示设置窗口（齿轮按钮/托盘菜单共用）。点 ✕ 即销毁回收常驻 renderer；一级菜单选择已存配置，重开自动回到上次停留的菜单
 #[tauri::command]
 pub(crate) fn open_settings(app: AppHandle) {
@@ -150,6 +185,7 @@ pub(crate) fn open_settings(app: AppHandle) {
         440.0,
         false,
         true,
+        false,
     );
 }
 
@@ -163,6 +199,7 @@ pub(crate) fn open_input_window(app: &AppHandle) {
         460.0,
         240.0,
         true,
+        false,
         false,
     );
 }

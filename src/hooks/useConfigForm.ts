@@ -6,7 +6,6 @@ import {
   saveTencent,
   saveSources,
   saveSettings,
-  saveSelectionIcon,
 } from "../lib/config";
 import type { Theme } from "../lib/theme";
 
@@ -43,10 +42,10 @@ export function useConfigForm() {
   const [hotkey, setHotkey] = useState("Alt+Z");
   const [screenshotHotkey, setScreenshotHotkey] = useState("Alt+S");
   const [inputHotkey, setInputHotkey] = useState("Alt+X");
+  // 切换划词图标的快捷键（默认 Alt+W）
+  const [iconHotkey, setIconHotkey] = useState("Alt+W");
   const [ocrLang, setOcrLang] = useState("auto");
   const [theme, setTheme] = useState<Theme>("system");
-  // 选中文字后在光标旁弹翻译按钮（默认开）
-  const [selectionIcon, setSelectionIcon] = useState(true);
   const [saveError, setSaveError] = useState("");
   // get_config 重试耗尽：表单停在默认值，此时绝不能允许保存（会把默认值覆盖到真配置上）
   const [loadFailed, setLoadFailed] = useState(false);
@@ -70,9 +69,9 @@ export function useConfigForm() {
           setHotkey(cfg.hotkey || "Alt+Z");
           setScreenshotHotkey(cfg.screenshot_hotkey || "Alt+S");
           setInputHotkey(cfg.input_hotkey || "Alt+X");
+          setIconHotkey(cfg.icon_hotkey || "Alt+W");
           setOcrLang(cfg.ocr_lang || "auto");
           setTheme(cfg.theme ?? "system");
-          setSelectionIcon(cfg.selection_icon ?? true);
         })
         .catch(() => {
           if (cancelled) return;
@@ -147,13 +146,6 @@ export function useConfigForm() {
     saveSources(sources, next).catch((e) => setSaveError(String(e)));
   };
 
-  // 划词图标开关：即时生效（Rust 端每次探测现读配置）
-  const toggleSelectionIcon = () => {
-    const next = !selectionIcon;
-    setSelectionIcon(next);
-    saveSelectionIcon(next).catch((e) => setSaveError(String(e)));
-  };
-
   // 额外源勾选/取消：默认源已关闭时，不能取消最后一个额外源
   const toggleSource = (id: string) => {
     if (sources.includes(id) && !builtin && sources.length === 1) {
@@ -180,7 +172,7 @@ export function useConfigForm() {
     setSaved(false);
     setSaveError("");
     try {
-      await saveSettings({ hotkey, screenshotHotkey, inputHotkey, ocrLang });
+      await saveSettings({ hotkey, screenshotHotkey, inputHotkey, iconHotkey, ocrLang });
       flashSaved();
     } catch (err) {
       setSaveError(String(err));
@@ -191,9 +183,9 @@ export function useConfigForm() {
     builtin, sources, srcTab, setSrcTab, dragId, setDragId,
     appid, setAppid, secret, setSecret, tcId, setTcId, tcKey, setTcKey,
     cfgSrc, setCfgSrc, hotkey, setHotkey, screenshotHotkey, setScreenshotHotkey,
-    inputHotkey, setInputHotkey, ocrLang, setOcrLang, theme, setTheme,
-    selectionIcon, saveError, setSaveError, loadFailed, saved,
-    ready, toggleBuiltin, toggleSource, moveSource, toggleSelectionIcon,
+    inputHotkey, setInputHotkey, iconHotkey, setIconHotkey, ocrLang, setOcrLang, theme, setTheme,
+    saveError, setSaveError, loadFailed, saved,
+    ready, toggleBuiltin, toggleSource, moveSource,
     saveBaiduKeys, saveTencentKeys, saveGeneral,
   };
 }

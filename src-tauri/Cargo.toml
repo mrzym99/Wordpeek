@@ -28,7 +28,6 @@ tokio = { version = "1", features = ["time"] }   # 每源翻译超时兜底
 tauri-plugin-opener = "2.7.1"
 tauri-plugin-single-instance = "2"   # 禁止多开：第二次启动只唤醒已有实例
 tauri-plugin-dialog = "2"   # 权限缺失时弹原生对话框（Rust 侧调用，前端不需要权限）
-tauri-plugin-notification = "2"   # Windows 启动提示：发系统 toast 告知已在后台运行（macOS 菜单栏有图标，不需要）
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [

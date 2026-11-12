@@ -1,0 +1,14 @@
+/* 回执 HUD：无边框透明窗里的深色胶囊，宽度随文案伸缩（短文案不占满窗宽） */
+.hud {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  white-space: nowrap;
+  padding: 14px 22px;
+  border-radius: 12px;
+  background: rgba(24, 24, 28, 0.92);
+  color: #f2f2f5;
+  font-size: 14px;
+  user-select: none;
+}

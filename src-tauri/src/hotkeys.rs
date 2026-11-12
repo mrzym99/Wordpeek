@@ -75,7 +75,7 @@ pub(crate) fn register_hotkeys(app: &AppHandle, cfg: &crate::translate::AppConfi
         eprintln!("[shortcut] 注销旧快捷键失败: {e}");
     }
     // 有重复直接全不注册
-    if let Err(e) = validate_hotkeys(&[&cfg.hotkey, &cfg.screenshot_hotkey, &cfg.input_hotkey]) {
+    if let Err(e) = validate_hotkeys(&[&cfg.hotkey, &cfg.screenshot_hotkey, &cfg.input_hotkey, &cfg.icon_hotkey]) {
         eprintln!("[shortcut] {e}");
         return vec![e];
     }
@@ -104,6 +104,11 @@ pub(crate) fn register_hotkeys(app: &AppHandle, cfg: &crate::translate::AppConfi
             crate::windows::open_input_window(app);
         }
     });
+    reg!(cfg.icon_hotkey, |app: &AppHandle, _s, event| {
+        if event.state == ShortcutState::Pressed {
+            crate::translate::toggle_selection_icon(app);
+        }
+    });
     failed
 }
 
@@ -123,10 +128,12 @@ mod tests {
 
     #[test]
     fn validate_hotkeys_rejects_duplicates() {
-        assert!(validate_hotkeys(&["Ctrl+Alt+T", "Ctrl+Alt+S", "Ctrl+Alt+I"]).is_ok());
+        assert!(validate_hotkeys(&["Ctrl+Alt+T", "Ctrl+Alt+S", "Ctrl+Alt+I", "Alt+W"]).is_ok());
         // 大小写/空白不同视为同一个键
         assert!(validate_hotkeys(&["Ctrl+Alt+T", "ctrl+alt+t", "Ctrl+Alt+I"]).is_err());
         assert!(validate_hotkeys(&["Ctrl+Alt+T", "Ctrl+Alt+S", "Ctrl+Alt+S"]).is_err());
+        // 第四键（划词图标开关）与其它键重复同样拒绝
+        assert!(validate_hotkeys(&["Alt+Z", "Alt+S", "Alt+X", "alt+z"]).is_err());
         let err = validate_hotkeys(&["Ctrl+Alt+T", "Ctrl+Alt+T", "Ctrl+Alt+I"]).unwrap_err();
         assert!(err.contains("重复"), "错误信息应说明原因: {err}");
     }

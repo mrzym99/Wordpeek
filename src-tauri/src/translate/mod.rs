@@ -51,6 +51,9 @@ pub struct AppConfig {
     pub builtin_sources: bool,
     #[serde(default = "default_input_hotkey")]
     pub input_hotkey: String,
+    /// 划词图标开关的快捷键：按下翻转 selection_icon，不用进取设置页
+    #[serde(default = "default_icon_hotkey")]
+    pub icon_hotkey: String,
     /// 划词弹窗宽度（逻辑像素）：用户拖拽后落盘，重启恢复；高度自适应不存
     #[serde(default = "default_popup_width")]
     pub popup_width: f64,
@@ -91,6 +94,10 @@ fn default_builtin_sources() -> bool {
 
 fn default_input_hotkey() -> String {
     "Alt+X".into()
+}
+
+fn default_icon_hotkey() -> String {
+    "Alt+W".into()
 }
 
 fn default_popup_width() -> f64 {
@@ -150,6 +157,7 @@ impl Default for AppConfig {
             screenshot_hotkey: default_screenshot_hotkey(),
             ocr_lang: default_ocr_lang(),
             input_hotkey: default_input_hotkey(),
+            icon_hotkey: default_icon_hotkey(),
             builtin_sources: default_builtin_sources(),
             popup_width: default_popup_width(),
             settings_section: default_settings_section(),
@@ -299,9 +307,9 @@ fn persist<F: FnOnce(&mut AppConfig)>(
         let mut guard = state.lock();
         let mut cfg = guard.clone();
         mutate(&mut cfg);
-        crate::hotkeys::validate_hotkeys(&[&cfg.hotkey, &cfg.screenshot_hotkey, &cfg.input_hotkey])?;
+        crate::hotkeys::validate_hotkeys(&[&cfg.hotkey, &cfg.screenshot_hotkey, &cfg.input_hotkey, &cfg.icon_hotkey])?;
         // 快捷键格式不对会在注册时静默失败，保存时就拦住
-        for h in [&cfg.hotkey, &cfg.screenshot_hotkey, &cfg.input_hotkey] {
+        for h in [&cfg.hotkey, &cfg.screenshot_hotkey, &cfg.input_hotkey, &cfg.icon_hotkey] {
             crate::hotkeys::parse_hotkey(h)?;
         }
         cfg.sources = enabled_sources(&cfg);
@@ -380,12 +388,14 @@ pub fn save_settings(
     hotkey: String,
     screenshot_hotkey: String,
     input_hotkey: String,
+    icon_hotkey: String,
     ocr_lang: String,
 ) -> Result<(), String> {
     persist(app, state, |c| {
         c.hotkey = hotkey;
         c.screenshot_hotkey = screenshot_hotkey;
         c.input_hotkey = input_hotkey;
+        c.icon_hotkey = icon_hotkey;
         c.ocr_lang = ocr_lang;
     })
 }
@@ -446,31 +456,36 @@ pub fn save_theme(app: AppHandle, state: State<SharedConfig>, theme: String) -> 
     write_config(&path, &snapshot)
 }
 
-/// 划词图标开关：不走 persist；鼠标监听后台探测时每次现读该字段，改完立即生效
-#[tauri::command]
-pub fn save_selection_icon(
-    app: AppHandle,
-    state: State<SharedConfig>,
-    enabled: bool,
-) -> Result<(), String> {
-    let path = config_path(&app).ok_or("无法定位配置目录")?;
-    let _write = CONFIG_WRITE.lock();
-    let snapshot = {
-        let mut guard = state.lock();
-        if guard.selection_icon == enabled {
-            return Ok(());
-        }
-        guard.selection_icon = enabled;
-        guard.clone()
+/// 划词图标开关（全局快捷键 icon_hotkey 触发）：翻转 selection_icon 并落盘；
+/// 鼠标监听后台探测时每次现读该字段，改完立即生效。切换后弹系统通知反馈新状态
+/// （mac 未授权通知时静默失败，功能不受影响）
+pub(crate) fn toggle_selection_icon(app: &AppHandle) {
+    let Some(path) = config_path(app) else {
+        eprintln!("[icon] 无法定位配置目录，切换未落盘");
+        return;
     };
-    write_config(&path, &snapshot)?;
+    // 锁内只翻字段取快照，磁盘 I/O 在锁外（同其余 save_* 命令）
+    let (enabled, snapshot) = {
+        let shared = app.state::<SharedConfig>();
+        let mut guard = shared.lock();
+        guard.selection_icon = !guard.selection_icon;
+        (guard.selection_icon, guard.clone())
+    };
+    let _write = CONFIG_WRITE.lock();
+    if let Err(e) = write_config(&path, &snapshot) {
+        eprintln!("[icon] 切换落盘失败: {e}");
+    }
     // 关闭时顺手把可能还显着的图标收掉
     if !enabled {
         if let Some(win) = app.get_webview_window("icon") {
             let _ = win.hide();
         }
     }
-    Ok(())
+    // 反馈用屏上 HUD（系统 toast 显示太久且连按排队，看不出当前状态；mac 无 toast 也能统一）
+    crate::windows::show_hud(
+        app,
+        if enabled { "划词图标已开启" } else { "划词图标已关闭" },
+    );
 }
 
 /// 语言方向检测：按「中文词数 vs 英文词数」加权判定主体语言（中文词 ≈2 汉字、英文词 5~6 字母，

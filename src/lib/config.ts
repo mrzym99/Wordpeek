@@ -22,6 +22,7 @@ export function saveSettings(fields: {
   hotkey: string;
   screenshotHotkey: string;
   inputHotkey: string;
+  iconHotkey: string;
   ocrLang: string;
 }) {
   return invoke("save_settings", fields);
@@ -40,9 +41,4 @@ export function saveSettingsSection(section: string) {
 /** 外观主题（外观 tab）：system | light | dark */
 export function saveTheme(theme: "system" | "light" | "dark") {
   return invoke("save_theme", { theme });
-}
-
-/** 划词图标开关（快捷键 tab）：选中文字后在光标旁弹翻译按钮 */
-export function saveSelectionIcon(enabled: boolean) {
-  return invoke("save_selection_icon", { enabled });
 }

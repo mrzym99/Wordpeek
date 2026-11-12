@@ -110,7 +110,6 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             // 平台初始化（macOS：Dock 策略 + 主线程缓存屏幕信息）
             #[cfg(any(windows, target_os = "macos"))]
@@ -203,25 +202,12 @@ fn main() {
 
             tray::setup_tray(app)?;
 
-            // Windows 启动提示：托盘图标在右下角不显眼，发一条系统通知告知已在后台运行（macOS 菜单栏有图标，无需提示）
-            #[cfg(windows)]
-            {
-                // 注册 AUMID：安装版 toast 能以应用身份弹出（dev 不设 app_id，不影响）
-                platform::windows::register_aumid(&handle.config().identifier);
-                let notify_handle = handle.clone();
-                std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_millis(800));
-                    use tauri_plugin_notification::NotificationExt;
-                    if let Err(e) = notify_handle
-                        .notification()
-                        .builder()
-                        .title("Wordpeek 已启动，划词翻译正在后台运行")
-                        .show()
-                    {
-                        eprintln!("[notify] startup toast failed: {e}");
-                    }
-                });
-            }
+            // 启动提示：屏上 HUD 胶囊 1.2s 自动关，mac/Windows 同一套（原 Windows 系统 toast 驻留约 7s 且 mac 不支持）
+            let hud_handle = handle.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(800));
+                windows::show_hud(&hud_handle, "Wordpeek 已启动，划词翻译正在后台运行");
+            });
 
             let cfg = app
                 .state::<parking_lot::Mutex<translate::AppConfig>>()
@@ -243,6 +229,7 @@ fn main() {
             screenshot::screenshot_finish,
             screenshot::screenshot_cancel,
             windows::fit_window,
+            windows::hud_take_text,
             copy_text,
             last_mouse_down,
             cursor_pos,
@@ -256,8 +243,6 @@ fn main() {
             translate::save_settings,
             translate::save_popup_width,
             translate::save_settings_section,
-            translate::save_theme,
-            translate::save_selection_icon,
             translate::save_theme
         ])
         .build(tauri::generate_context!())
