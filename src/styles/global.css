@@ -17,69 +17,80 @@ body,
   display: flow-root;
 }
 
-/* ===== 设计 token：中性灰 + VS Code 蓝；任何 ≤13px 文字不低于 4.5:1，改色前先算一遍 ===== */
+/* ===== 设计 token：冷调中性灰 + 靛蓝；任何 ≤13px 文字不低于 4.5:1，改色前先算一遍 ===== */
 :root {
   color-scheme: light; /* 原生滚动条/表单控件跟着主题走 */
-  /* 三层表面照 VS Code：外壳面（深）< 内容面 < 抬起面，内容永远比外壳浅 */
+  /* 三层表面：外壳面（深）< 内容面 < 抬起面，内容永远比外壳浅 */
   --paper: #ffffff; /* 内容面：卡片、设置右侧内容 */
   --paper-raised: #ffffff; /* 抬起面：浮层、聚焦输入、选中项（浅色下与内容面同色，靠边框/阴影区分） */
-  --wash: #f3f3f3; /* 外壳面：设置左菜单、输入窗口底、内嵌填充块 */
-  --wash-hover: #e8e8e8;
-  --ink: #202020; /* 16.3:1 */
-  --ink-2: #616161; /* 6.2:1 */
-  --ink-3: #6e6e6e; /* 5.1:1，不承载唯一信息 */
-  --line: #e5e5e5;
-  --hairline: rgba(0, 0, 0, 0.07); /* 极轻的分界线：给圆角面板描边用，不抢眼 */
-  --thumb: rgba(0, 0, 0, 0.22);
-  --accent: #005fb8; /* VS Code 蓝，6.3:1（wash 上 5.7） */
-  /* 实心控件（按钮、选中 tab）的底色与字色：白字才够 4.5:1；--accent 留给文字、描边、焦点环 */
-  --accent-solid: #005fb8; /* 白字 6.3:1 */
+  --wash: #f5f6f8; /* 外壳面：设置左菜单、输入窗口底、内嵌填充块（带一点蓝的冷灰） */
+  --wash-hover: #eceef2;
+  --ink: #17181c; /* 17.7:1 */
+  --ink-2: #5b6069; /* 6.3:1 */
+  --ink-3: #676c75; /* 5.3:1（wash 上 4.9），不承载唯一信息 */
+  --line: #e6e8ec;
+  --line-strong: #d5d9e0; /* 输入框 hover 描边：比 --line 明显、比 --accent 安静 */
+  --hairline: rgba(23, 24, 28, 0.08); /* 极轻的分界线：给圆角面板描边用，不抢眼 */
+  --thumb: rgba(23, 24, 28, 0.2);
+  --accent: #2b5cff; /* 靛蓝，5.2:1（wash 上 4.8） */
+  /* 实心控件（主按钮）的底色与字色：--accent 上白字 5.2:1，够 4.5 */
+  --accent-solid: #2b5cff;
   --on-accent: #ffffff;
-  --accent-wash: #e8f1fb;
-  --danger: #a1260d; /* 7.5:1 */
+  --accent-wash: #eef2ff;
+  --accent-line: #c9d5ff; /* 强调态描边（chip/输入 hover）：只做轮廓，不铺面 */
+  --danger: #b3261e; /* 6.5:1 */
 
-  --font-read: ui-serif, "New York", "Songti SC", Georgia, serif;
-  --font-ui: -apple-system, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+  /* Inter / Newsreader 装了就用（离线应用不引外链字体），没装落到系统里最接近的那一档 */
+  --font-ui: "Inter", "Segoe UI Variable Text", "Segoe UI", -apple-system, "PingFang SC",
+    "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  --font-read: "Newsreader", ui-serif, "New York", Georgia, "Songti SC", "SimSun", serif;
+  --font-mono: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
 
-  --t-head: 19px;
+  --t-head: 21px;
   --t-lead: 15px;
   --t-body: 13px;
   --t-small: 12px;
   --t-micro: 11px;
 
-  --r-xs: 8px;
-  --r-md: 12px;
-  --r-lg: 18px;
+  --r-xs: 6px;
+  --r-sm: 8px; /* 按钮 / 输入 / 内嵌块：一种形状贯穿全应用 */
+  --r-md: 10px;
+  --r-lg: 14px;
   --r-pill: 999px;
 
   /* 弹层阴影：三层才有「浮起来」的质感，单层大 blur 只会显脏 */
-  --shadow-pop: 0 0 0 1px rgba(38, 36, 70, 0.06), 0 2px 6px rgba(38, 36, 70, 0.06), 0 10px 28px rgba(38, 36, 70, 0.1);
+  --shadow-pop: 0 0 0 1px rgba(23, 24, 28, 0.06), 0 1px 2px rgba(23, 24, 28, 0.05),
+    0 10px 28px rgba(23, 24, 28, 0.1);
+  --shadow-btn: 0 1px 2px rgba(23, 24, 28, 0.12);
 
   --ease: cubic-bezier(0.2, 0.7, 0.3, 1);
-  --dur: 140ms;
+  --dur: 150ms;
 }
 
 /* 主题由 <html data-theme> 决定（system 在 JS 里先解析成 light/dark），样式表只有两套 token */
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --paper: #1f1f1f; /* 内容面 */
-  --paper-raised: #2b2b2b; /* 抬起面：浮层、聚焦输入、选中项 */
-  --wash: #181818; /* 外壳面：设置左菜单、输入窗口底、内嵌填充块 */
-  --wash-hover: #2a2a2a;
-  --ink: #cccccc; /* 10.3:1 */
-  --ink-2: #a5a5a5; /* 6.7:1 */
-  --ink-3: #8e8e8e; /* 5.0:1 */
-  --line: #3c3c3c;
+  --paper: #1c1d21; /* 内容面 */
+  --paper-raised: #26272c; /* 抬起面：浮层、聚焦输入、选中项 */
+  --wash: #141519; /* 外壳面：设置左菜单、输入窗口底、内嵌填充块 */
+  --wash-hover: #22242a;
+  --ink: #e7e8ec; /* 13.8:1 */
+  --ink-2: #a6aab3; /* 7.2:1 */
+  --ink-3: #8d929c; /* 5.4:1（抬起面 4.8） */
+  --line: #2f3238;
+  --line-strong: #3d424b;
   --hairline: rgba(255, 255, 255, 0.07);
-  --thumb: rgba(255, 255, 255, 0.22);
-  --accent: #3794ff; /* VS Code 蓝，5.4:1 */
-  --accent-solid: #1f6feb; /* 白字 4.6:1：--accent 那种亮蓝上白字只有 3.1:1 */
+  --thumb: rgba(255, 255, 255, 0.2);
+  --accent: #8aa4ff; /* 7.1:1 */
+  --accent-solid: #3a5fe0; /* 白字 5.4:1：--accent 那种亮蓝上白字不够 */
   --on-accent: #ffffff;
-  --accent-wash: #142b42;
-  --danger: #f48771; /* 6.7:1 */
+  --accent-wash: #1b2340;
+  --accent-line: #34406b;
+  --danger: #ff8a80; /* 7.4:1 */
 
   /* 同上：弹层阴影同样分层，深色下加浓才有层次 */
-  --shadow-pop: 0 0 0 1px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.4), 0 10px 28px rgba(0, 0, 0, 0.5);
+  --shadow-pop: 0 0 0 1px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.45), 0 12px 32px rgba(0, 0, 0, 0.55);
+  --shadow-btn: 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 
 /* ===== 卡片外壳与内容区（划词卡专用；输入窗用 InputPage 自己的 .layout） ===== */
@@ -98,10 +109,16 @@ body,
   border-radius: var(--r-lg);
   background: var(--paper);
   color: var(--ink);
-  font: var(--t-body) / 1.6 var(--font-ui);
+  font: var(--t-body) / 1.65 var(--font-ui);
   border: 1px solid var(--line);
   overflow-y: auto;
   user-select: text;
+}
+
+/* 卡面是主要阅读面：中文开抗锯齿，笔画不显胖 */
+.card,
+.layout {
+  -webkit-font-smoothing: antialiased;
 }
 
 /* 只收缩不拉伸（flex: 0 1 auto）否则自适应退化；max-height 让顶到屏幕上限后剩余内容框内滚动 */
@@ -135,12 +152,14 @@ html:not(.is-capped) .card-body::-webkit-scrollbar {
 .win-head {
   display: none;
 }
+/* macOS 自绘头部：跟着所在窗口的底走（设置窗是纸面，输入窗是外壳灰），
+   不能写死颜色，否则两个窗口的头总有一个和身体不同色 */
 :root[data-os="mac"] .win-head {
   display: block;
   position: absolute;
   inset: 0 0 auto 0;
   height: 28px;
-  background: var(--wash);
+  background: inherit;
 }
 
 /* ===== 跨组件复用的文本/状态原语 ===== */
@@ -158,7 +177,7 @@ html:not(.is-capped) .card-body::-webkit-scrollbar {
   font-family: var(--font-read);
   font-size: var(--t-head);
   font-weight: 500;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
   color: var(--ink);
   line-height: 1.25;
   background: transparent;
@@ -176,26 +195,33 @@ html:not(.is-capped) .card-body::-webkit-scrollbar {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
-  /* 美 / 英两组音标之间的间距（DictPop 小卡里折行时行距在其 module.css 收紧） */
-  gap: 8px;
+  /* 美 / 英两组音标之间的间距（各自带 padding，这里只留 2px；
+     DictPop 小卡里折行时行距在其 module.css 收紧） */
+  gap: 2px;
 }
 
-/* 音标：词典惯例是衬线斜体，不用等宽 */
+/* 音标：词典惯例是衬线斜体，不用等宽；做成可按的小胶囊，hover 才亮 */
 .phonetic {
   cursor: pointer;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
+  padding: 1px 6px 2px;
+  border-radius: var(--r-xs);
   font-family: var(--font-read);
   font-style: italic;
   font-size: var(--t-small);
   color: var(--ink-3);
+  transition:
+    color var(--dur) var(--ease),
+    background-color var(--dur) var(--ease);
 }
 .phonetic svg {
   flex-shrink: 0;
 }
 .phonetic:hover {
   color: var(--accent);
+  background: var(--accent-wash);
 }
 
 /* 文字+图标行内组合（已授权/已复制/Star 按钮） */
@@ -208,9 +234,16 @@ button svg {
   vertical-align: -2px;
 }
 
+/* 等待态：呼吸式明暗，不做骨架屏（窗口高度跟着内容走，骨架一插入就抖） */
 .loading {
   color: var(--ink-3);
   font-size: var(--t-small);
+  animation: soft-pulse 1.4s var(--ease) infinite;
+}
+@keyframes soft-pulse {
+  50% {
+    opacity: 0.45;
+  }
 }
 .error {
   margin-top: 10px;
@@ -218,23 +251,34 @@ button svg {
   white-space: pre-wrap;
 }
 
-/* 图标按钮：复制/关闭等 */
+/* 图标按钮：复制/关闭等。悬停给一块圆角底，比只换字色更像可按 */
 .icon-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  width: 20px;
+  height: 20px;
   border: none;
+  border-radius: var(--r-xs);
   background: transparent;
   color: var(--ink-3);
   line-height: 1;
   cursor: pointer;
   padding: 0;
+  transition:
+    color var(--dur) var(--ease),
+    background-color var(--dur) var(--ease),
+    opacity var(--dur) var(--ease);
 }
 .icon-btn.ok {
   color: var(--accent);
 }
 .icon-btn:hover:not(.ok) {
   color: var(--ink);
+  background: var(--wash-hover);
+}
+.icon-btn:active:not(.ok) {
+  transform: translateY(0.5px);
 }
 /* 重新翻译进行中：图标旋转 */
 .icon-btn.spinning {
@@ -246,11 +290,11 @@ button svg {
   }
 }
 
-/* 文字按钮：卡片里的小动作（对比各源 / 重新翻译 / 详细释义） */
+/* 次要按钮：卡片里的小动作（对比各源 / 重新翻译 / 翻译）。与主按钮同一种圆角 */
 .text-btn {
   border: 1px solid var(--line);
-  border-radius: var(--r-pill);
-  background: transparent;
+  border-radius: var(--r-sm);
+  background: var(--paper-raised);
   color: var(--ink-2);
   font: inherit;
   font-size: var(--t-small);
@@ -259,8 +303,12 @@ button svg {
   white-space: nowrap;
 }
 .text-btn:hover:not(:disabled) {
-  border-color: var(--accent);
+  border-color: var(--accent-line);
+  background: var(--accent-wash);
   color: var(--accent);
+}
+.text-btn:active:not(:disabled) {
+  transform: translateY(0.5px);
 }
 .text-btn:disabled {
   color: var(--ink-3);
@@ -283,30 +331,43 @@ button svg {
   padding: 2px 0 2px 22px;
   color: var(--ink);
 }
+/* 序号走等宽 + 表格数字：多条释义时序号竖成一列，正文不跟着抖 */
 .senses li::before {
-  content: counter(sense) ".";
+  content: counter(sense);
   position: absolute;
   left: 0;
-  top: 2px;
-  width: 16px;
+  top: 3px;
+  width: 14px;
   text-align: right;
   color: var(--ink-3);
-  font: var(--t-small) / 1.7 var(--font-ui);
+  font: var(--t-micro) / 1.8 var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
+/* 词性：词典惯例斜体衬线，压到 --ink-3 让正文更跳 */
 .pos {
-  margin-right: 5px;
-  color: var(--ink-2);
+  margin-right: 6px;
+  color: var(--ink-3);
+  font-family: var(--font-read);
   font-weight: 400;
   font-style: italic;
+  font-size: 1.05em;
+  letter-spacing: 0.01em;
 }
 
 /* ===== 表单原语（设置各页 + HotkeyRecorder 共用） ===== */
+/* 复选框 / 单选钮原生控件也跟着主色，不出现浏览器默认的另一种蓝 */
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--accent-solid);
+}
+
 .field {
   display: block;
   margin-bottom: 12px;
   color: var(--ink-2);
   font-size: var(--t-small);
 }
+/* 输入控件：内容面上用「纸底 + 1px 描边」，比灰底方块干净；hover 描边加深、聚焦亮描边 */
 .field input,
 .field select {
   display: block;
@@ -314,13 +375,17 @@ button svg {
   box-sizing: border-box;
   margin-top: 6px;
   padding: 6px 10px;
-  border-radius: var(--r-xs);
+  border-radius: var(--r-sm);
   border: 1px solid var(--line);
-  background: var(--wash);
+  background: var(--paper);
   color: var(--ink);
   font: inherit;
   font-size: var(--t-body);
   outline: none;
+}
+.field input:hover:not(:focus),
+.field select:hover:not(:focus) {
+  border-color: var(--line-strong);
 }
 .field input:focus,
 .field select:focus {
@@ -367,6 +432,7 @@ button {
   border-radius: var(--r-pill);
   font-size: var(--t-micro);
   font-weight: 600;
+  letter-spacing: 0.02em;
   color: var(--accent);
   background: var(--accent-wash);
 }

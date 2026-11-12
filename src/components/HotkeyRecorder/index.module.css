@@ -1,4 +1,12 @@
-/* 快捷键录制中：输入框高亮（.field input 的基础样式来自 Settings 的 .field） */
+/* 快捷键输入框：等宽字体更像「按键」；.field input 的 `font: inherit` 会盖掉这里，
+   所以必须 !important（含字型的短写不能用）*/
+.input {
+  font-family: var(--font-mono) !important;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+}
+
+/* 快捷键录制中：输入框高亮 */
 .recording {
   border-color: var(--accent) !important;
   box-shadow: 0 0 0 3px var(--accent-wash);

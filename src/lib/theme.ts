@@ -2,6 +2,7 @@
     样式表里就是两套 token，没有第三套 */
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 
 export type Theme = "system" | "light" | "dark";
 /** Tauri 原生窗口的主题只有亮暗两态 */
@@ -13,6 +14,17 @@ let applied: Theme = "system";
 
 function setDomTheme(dark: boolean) {
   document.documentElement.dataset.theme = dark ? "dark" : "light";
+  syncCaption();
+}
+
+/** 系统标题栏跟窗口 body 同色：Win11 默认按壁纸给标题栏上 Mica 色，跟外壳差一截。
+    设置窗和输入窗的 body 都是外壳灰 --wash（卡片才是纸面），标题栏也跟外壳走（Rust 侧无边框窗忽略） */
+function syncCaption() {
+  const css = getComputedStyle(document.documentElement);
+  invoke("set_caption_color", {
+    bg: css.getPropertyValue("--wash").trim(),
+    fg: css.getPropertyValue("--ink").trim(),
+  }).catch(() => {});
 }
 
 export function applyTheme(theme: Theme) {

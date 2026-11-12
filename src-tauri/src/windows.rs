@@ -173,6 +173,68 @@ pub(crate) fn hud_take_text() -> Option<String> {
     HUD_TEXT.lock().take()
 }
 
+/// 系统标题栏跟窗口 body 同色（前端每次主题落地时把当前 --paper/--wash/--ink 传上来）。
+/// Win11 默认给标题栏铺壁纸调的 Mica 色，和纸面/外壳灰差一截，看上去像没对齐；
+/// Win10 及更早不认这些属性，调用失败静默忽略
+#[tauri::command]
+pub(crate) fn set_caption_color(window: tauri::WebviewWindow, bg: String, fg: String) {
+    // 无边框透明小窗（划词弹窗/图标/截图/HUD）没有 NC 区域，不用管
+    if !window.is_decorated().unwrap_or(false) {
+        return;
+    }
+    #[cfg(windows)]
+    {
+        use ::windows::Win32::Foundation::{COLORREF, HWND};
+        use ::windows::Win32::Graphics::Dwm::{
+            DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR,
+        };
+        use ::windows::Win32::UI::WindowsAndMessaging::{
+            SetWindowPos, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+        };
+        // DWM 要的是 0x00bbggrr，不是 CSS 的 0xrrggbb
+        let parse = |hex: &str| -> Option<COLORREF> {
+            let h = hex.trim().trim_start_matches('#');
+            let n = u32::from_str_radix(h, 16).ok().filter(|_| h.len() == 6)?;
+            Some(COLORREF((n & 0x00ff00) | ((n >> 16) & 0xff) | ((n & 0xff) << 16)))
+        };
+        let Ok(hwnd) = window.hwnd() else {
+            return;
+        };
+        let hwnd = HWND(hwnd.0 as *mut core::ffi::c_void);
+        for (attr, hex) in [
+            (DWMWA_CAPTION_COLOR, &bg),
+            (DWMWA_BORDER_COLOR, &bg),
+            (DWMWA_TEXT_COLOR, &fg),
+        ] {
+            let Some(color) = parse(hex) else {
+                continue;
+            };
+            unsafe {
+                let _ = DwmSetWindowAttribute(
+                    hwnd,
+                    attr,
+                    &color as *const _ as *const core::ffi::c_void,
+                    std::mem::size_of::<COLORREF>() as u32,
+                );
+            }
+        }
+        // 属性写完要一次 NC 重算，否则窗口还挂着旧标题栏的合成表面
+        unsafe {
+            let _ = SetWindowPos(
+                hwnd,
+                None,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+            );
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = (window, bg, fg);
+}
+
 /// 显示设置窗口（齿轮按钮/托盘菜单共用）。点 ✕ 即销毁回收常驻 renderer；一级菜单选择已存配置，重开自动回到上次停留的菜单
 #[tauri::command]
 pub(crate) fn open_settings(app: AppHandle) {
@@ -182,7 +244,7 @@ pub(crate) fn open_settings(app: AppHandle) {
         "Wordpeek 设置",
         "/?page=settings",
         600.0,
-        440.0,
+        460.0,
         false,
         true,
         false,

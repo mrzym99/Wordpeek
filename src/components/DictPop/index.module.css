@@ -49,15 +49,16 @@
   white-space: nowrap;
 }
 /* 小卡窄：放不下时允许在 美 / 英 之间折行（全局容器默认 nowrap）；
-   行距收紧，列距沿用全局 .phonetic-container 的 8px */
+   行距收紧，列距沿用全局 .phonetic-container 的 2px */
 .phon :global(.phonetic-container) {
   flex-wrap: wrap;
   row-gap: 2px;
 }
 .word {
   font-family: var(--font-read);
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 600;
+  letter-spacing: -0.01em;
   color: var(--ink);
   white-space: nowrap;
 }

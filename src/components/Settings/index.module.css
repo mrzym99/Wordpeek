@@ -1,7 +1,7 @@
 /* 独立设置窗口：左侧窄菜单 + 右侧内容，保存按钮贴底。
    本模块覆盖设置窗口全部专属样式；.field/.field-hint 等表单原语在 global.css */
 
-/* 窗口底铺外壳面，左菜单与右内容各自是一张同色的圆角面板，中间只留 8px 缝，不画分隔线 */
+/* 窗口底色 = 菜单原底色（外壳灰）；菜单本身不再有底，只留选中高亮 */
 .layout {
   height: 100%;
   box-sizing: border-box;
@@ -9,19 +9,16 @@
   padding: 8px;
   gap: 8px;
   color: var(--ink);
-  font: var(--t-body) / 1.6 var(--font-ui);
+  font: var(--t-body) / 1.65 var(--font-ui);
   display: flex;
 }
 
-/* 菜单窄而安静：铺外壳面（与头部同色），选中项用抬起面 + 左侧 3px 竖条 */
+/* 菜单窄而安静：直接坐在窗口底上（无面板、无描边），选中项用抬起面 + 左侧 3px 竖条 */
 .nav {
-  width: 104px;
-  flex: 0 0 104px;
-  padding: 14px 8px;
+  width: 110px;
+  flex: 0 0 110px;
+  padding: 14px 8px 0;
   box-sizing: border-box;
-  background: var(--wash);
-  border: 1px solid var(--hairline);
-  border-radius: var(--r-md);
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -39,6 +36,9 @@
   font: inherit;
   font-size: var(--t-small);
   cursor: pointer;
+  transition:
+    background-color var(--dur) var(--ease),
+    color var(--dur) var(--ease);
 }
 .navItem:hover {
   background: var(--wash-hover);
@@ -48,6 +48,7 @@
   background: var(--paper-raised);
   color: var(--ink);
   font-weight: 600;
+  box-shadow: var(--shadow-btn);
 }
 .navItem:global(.active)::before {
   content: "";
@@ -63,7 +64,15 @@
 .content {
   flex: 1;
   min-width: 0;
-  /* 内容面：与左菜单同一张纸，靠中间那道 8px 外壳面缝隙分开 */
+  display: flex;
+  flex-direction: column;
+}
+
+/* 内容白卡片：tab 行留在卡片外的窗口底上，卡片只包表单 */
+.card {
+  position: relative; /* 关于页右下角的吉祥物靠它定位 */
+  flex: 1;
+  min-height: 0;
   background: var(--paper);
   border: 1px solid var(--hairline);
   border-radius: var(--r-md);
@@ -73,47 +82,49 @@
   overflow-y: auto;
 }
 /* 表单列不拉满窗口宽：600px 窗口里 440 是舒服的阅读宽度 */
-.content > * {
+.card > * {
+  position: relative;
+  z-index: 1;
   max-width: 440px;
+  /* 不缩：子项被压矮后手风琴展开体会被自身 overflow 裁掉，卡片也涨不出滚动条 */
+  flex-shrink: 0;
 }
-.content::-webkit-scrollbar {
+.card::-webkit-scrollbar {
   width: 6px;
 }
-.content::-webkit-scrollbar-thumb {
+.card::-webkit-scrollbar-thumb {
   background: var(--thumb);
   border-radius: 3px;
 }
 
-.sectionHeading {
-  font-size: var(--t-lead);
-  font-weight: 600;
-  color: var(--ink);
-  margin-bottom: 14px;
-}
-
-/* 可选分组标题 */
-.groupHeading {
-  font-size: var(--t-small);
-  font-weight: 600;
-  color: var(--ink-2);
-  margin: 16px 0 8px;
-}
-
-/* 保存密钥 / 启用开关行 */
+/* 开关：checkbox 自绘成胶囊轨道 + 圆点（圆点用 radial-gradient，input 上不支持伪元素） */
 .switch {
   display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: var(--t-body);
-  color: var(--ink);
+  flex: 0 0 auto;
   cursor: pointer;
-  white-space: nowrap;
 }
 .switch input {
-  accent-color: var(--accent);
+  appearance: none;
+  width: 32px;
+  height: 18px;
+  margin: 0;
+  border-radius: 999px;
+  background-color: var(--line);
+  background-image: radial-gradient(circle at center, #fff 0 6.5px, transparent 6.5px);
+  background-size: 14px 14px;
+  background-repeat: no-repeat;
+  background-position: 2px center;
   cursor: pointer;
+  transition:
+    background-color var(--dur) var(--ease),
+    background-position var(--dur) var(--ease);
+}
+.switch input:checked {
+  background-color: var(--accent);
+  background-position: 16px center;
 }
 .switch input:disabled {
+  opacity: 0.4;
   cursor: not-allowed;
 }
 
@@ -136,6 +147,30 @@
   text-align: right;
 }
 
+/* 每个页面右下角的吉祥物：贴卡片右下、不占布局，裁成圆、边缘软收。
+   内容在上层（.card > * 抬高 z-index），控件/文字压住它，只是角落的装饰 */
+.mascot {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  z-index: 0;
+  width: 240px;
+  height: 240px;
+  object-fit: cover;
+  object-position: center bottom;
+  pointer-events: none;
+  user-select: none;
+  opacity: 0.9;
+  /* 裁成圆并大面积虚化边缘：55% 以内实心，往外一路淡到透明，边线完全看不出 */
+  -webkit-mask-image: radial-gradient(circle closest-side, #000 55%, transparent 100%);
+  mask-image: radial-gradient(circle closest-side, #000 55%, transparent 100%);
+}
+/* 深色纸面上原图偏暗，提亮 + 提高不透明度，让它看得清但仍是角落底纹 */
+:root[data-theme="dark"] .mascot {
+  opacity: 0.6;
+  filter: brightness(1.25) saturate(1.08);
+}
+
 .aboutText p {
   margin: 0 0 8px;
   color: var(--ink-2);
@@ -145,12 +180,12 @@
   font-weight: 600;
 }
 
-/* 更新检查/权限行：提示文字占满一行，操作按钮独立一行 */
+/* 更新检查/权限行：提示文字一行，操作按钮独立一行（上下布局，不做左右分栏） */
 .updateTip {
-  margin-top: 4px;
+  margin-top: 12px;
 }
 .updateTip + .updateTip {
-  margin-top: 12px;
+  margin-top: 14px;
 }
 .tipText {
   display: block;
@@ -164,17 +199,25 @@
 }
 .updateBtn {
   border: 1px solid var(--line);
-  border-radius: var(--r-pill);
-  background: var(--wash);
+  border-radius: var(--r-sm);
+  background: var(--paper-raised);
   color: var(--ink-2);
   font-size: var(--t-small);
   padding: 3px 12px;
   cursor: pointer;
   white-space: nowrap;
+  transition:
+    color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease),
+    background-color var(--dur) var(--ease);
 }
 .updateBtn:hover:not(:disabled) {
-  border-color: var(--accent);
+  border-color: var(--accent-line);
+  background: var(--accent-wash);
   color: var(--accent);
+}
+.updateBtn:active:not(:disabled) {
+  transform: translateY(0.5px);
 }
 .updateBtn:disabled {
   color: var(--ink-3);
@@ -220,130 +263,177 @@
   }
 }
 
+/* 主按钮：小一号、只在强调态铺淡蓝，不抢表单项的注意力 */
 .saveBtn {
-  padding: 6px 18px;
-  border: none;
-  border-radius: var(--r-md);
-  background: var(--accent-solid);
-  color: var(--on-accent);
+  padding: 3px 12px;
+  border: 1px solid var(--accent-line);
+  border-radius: var(--r-sm);
+  background: var(--accent-wash);
+  color: var(--accent);
   font: inherit;
+  font-size: var(--t-small);
   font-weight: 600;
   cursor: pointer;
+  transition:
+    background-color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease),
+    color var(--dur) var(--ease);
 }
 .saveBtn:hover:not(:disabled) {
-  filter: brightness(0.94);
+  background: var(--accent-line);
+  border-color: var(--accent);
+}
+.saveBtn:active:not(:disabled) {
+  background: var(--accent-wash);
 }
 .saveBtn:disabled {
+  border-color: transparent;
   background: var(--wash);
   color: var(--ink-3);
   cursor: not-allowed;
 }
 
-/* 设置里的主题选择器：独占一行，贴着 .field 的标签文字下方 */
-.themeToggle {
+/* 主题三档图标：贴在菜单底部，选中项与菜单选中项同一套抬起面 */
+.themeIcons {
   display: flex;
-  width: fit-content;
-  margin-top: 6px;
+  gap: 2px;
+  margin-top: auto;
+  padding: 10px 0 4px;
+}
+.themeIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  background: none;
+  border-radius: var(--r-xs);
+  color: var(--ink-3);
+  cursor: pointer;
+  transition:
+    background-color var(--dur) var(--ease),
+    color var(--dur) var(--ease);
+}
+.themeIcon:hover {
+  background: var(--wash-hover);
+  color: var(--ink);
+}
+.themeIcon:global(.active) {
+  background: var(--paper-raised);
+  color: var(--ink);
+  box-shadow: var(--shadow-btn);
 }
 
-/* ===== 翻译源勾选 + 拖拽排序 ===== */
-.sourceList {
-  margin-bottom: 6px;
-}
-.sourceItem {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 6px;
-  border-radius: var(--r-xs);
-  user-select: none; /* 拖拽时别选中文本 */
-}
-.sourceItem:hover {
-  background: var(--wash);
-}
-.sourceItem.off {
-  color: var(--ink-3);
-}
+/* ===== 翻译源列表：一行一个源，行首拖拽排序、行尾开关 ===== */
 .dragHandle {
   width: 14px;
+  flex: 0 0 14px;
   color: var(--ink-3);
   cursor: grab;
+  user-select: none; /* 拖拽时别选中文本 */
+}
+/* 未启用的源不可拖（拖进列表会被动启用） */
+.accItem.off .dragHandle {
+  cursor: default;
 }
 
-/* 翻译源子页横向 tab：源配置 / 排序 */
-.subTabs {
-  display: flex;
-  gap: 2px;
-  margin-bottom: 14px;
-  border-bottom: 1px solid var(--line);
+/* 源配置手风琴：一个描边圆角盒子里装几行源，行间细线分隔（参考样式 */
+.accList {
+  /* 不透明：右下角吉祥物只在该露出的空白处出现，不从行间透上来 */
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  overflow: hidden; /* 首行 hover 底色不冒出圆角 */
 }
-.subTab {
-  border: none;
-  background: none;
-  font: inherit;
+.accItem + .accItem {
+  border-top: 1px solid var(--line);
+}
+/* 行壳：整行是拖拽单元，内含标题按钮 / 状态 / 开关 / 锹头 */
+.accHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 12px;
   font-size: var(--t-body);
-  color: var(--ink-2);
-  padding: 5px 12px;
-  cursor: pointer;
-  border-radius: var(--r-xs) var(--r-xs) 0 0;
-  border-bottom: 2px solid transparent;
+  transition: background-color var(--dur) var(--ease);
 }
-.subTab:hover {
-  color: var(--ink);
-}
-.subTab:global(.active) {
-  color: var(--accent);
-  font-weight: 600;
-  border-bottom-color: var(--accent);
-}
-
-/* 源配置 tab：左侧菜单选源 + 右侧密钥表单 */
-.configSplit {
-  display: flex;
-  gap: 16px;
-  align-items: flex-start;
-}
-.configMenu {
-  width: 72px;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.configMenuItem {
-  position: relative;
-  padding: 6px 8px;
-  border: none;
-  background: none;
-  text-align: left;
-  border-radius: var(--r-xs);
-  font: inherit;
-  font-size: var(--t-small);
-  color: var(--ink-2);
-  cursor: pointer;
-  white-space: nowrap;
-}
-.configMenuItem:hover {
+.accHead:hover {
   background: var(--wash);
-  color: var(--ink);
 }
-.configMenuItem:global(.active) {
-  background: var(--wash);
-  color: var(--accent);
-  font-weight: 600;
-}
-.configDot {
-  position: absolute;
-  top: 7px;
-  right: 8px;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-}
-.configForm {
+/* 标题才可点开/收起：开关单独一行时点不到开关就展开了 */
+.accTitle {
   flex: 1;
   min-width: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: inherit;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+/* 内置默认源那行不能展开，标题不做成按钮 */
+.accStatic {
+  cursor: default;
+}
+.accItem.off .accTitle,
+.accItem.off .dragHandle {
+  color: var(--ink-3);
+}
+.accChevronBtn {
+  display: inline-flex;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+/* 锹头用 SVG：文字字符的基线会让它偏上，旋转时也不是绕行高中心 */
+.accChevron {
+  flex: 0 0 auto;
+  color: var(--ink-3);
+  transition: transform var(--dur) var(--ease);
+}
+.accItem.open .accChevron {
+  transform: rotate(90deg);
+}
+/* 无锹头的行占位，保持开关右边缘对齐 */
+.accChevronEmpty {
+  flex: 0 0 14px;
+}
+/* 展开体用内容区的亮面（不压灰）：浅色下与纸面同色、深色下比纸面亮一档 */
+.accBody {
+  background: var(--paper-raised);
+  display: flex;
+  flex-direction: column;
+  padding: 0 12px 14px;
+}
+.accBody .saveBtn {
+  align-self: flex-end;
+  margin-top: 4px;
+}
+
+/* 权限行（仅 macOS）：借用源列表的行外观，但整行不可点，所以不吃 hover 底色 */
+.permItem .accHead:hover {
+  background: none;
+}
+/* 标题后面的次要说明：同一行内小字灰 */
+.permHint {
+  margin-left: 8px;
+  font-size: var(--t-small);
+  font-weight: 400;
+  color: var(--ink-3);
+}
+/* 下一步该授权的那项：按钮用强调色，指引视线 */
+.updateBtnNext {
+  border-color: var(--accent-line);
+  background: var(--accent-wash);
+  color: var(--accent);
 }
 
 /* macOS 自绘标题栏：让出 28px 头部 + 8px 面板留白 */

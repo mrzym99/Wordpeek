@@ -1,7 +1,9 @@
 /* 通用内容框：浅灰圆角框 + 框内右上角复制按钮（对齐多源对比行的样式） */
 .box {
   background: var(--wash);
-  border-radius: var(--r-xs);
+  border-radius: var(--r-sm);
+  /* 用 inset 描边而不是 border：框内高度不因描边变化，注释与实测高度对得上 */
+  box-shadow: inset 0 0 0 1px var(--hairline);
   padding: 6px 12px 10px;
   margin-bottom: 10px;
 }
@@ -13,9 +15,10 @@
   gap: 8px;
 }
 .label {
-  font-size: var(--t-small);
+  font-size: var(--t-micro);
   font-weight: 600;
-  color: var(--ink-2);
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
 }
 .actions {
   display: flex;

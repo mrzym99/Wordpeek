@@ -46,28 +46,25 @@ export default function PermTab() {
 
   return (
     <>
-      <div className={s.sectionHeading}>系统权限</div>
-      <div className={s.aboutText}>
-        <p>
-          Wordpeek 需要两项系统权限：划词翻译靠<b>辅助功能</b>模拟 Cmd+C 读取选中文本，
-          截图翻译靠<b>屏幕录制</b>截取屏幕像素。
-        </p>
-        <p>
-          请按顺序授权：先<b>辅助功能</b>，再<b>屏幕录制</b>。从系统设置回到本页会自动刷新状态。
-        </p>
+      <div className="field-hint" style={{ marginBottom: 12 }}>
+        按顺序授权，从系统设置回到本页会自动刷新状态。
       </div>
-      <PermRow
-        label="辅助功能"
-        kind="accessibility"
-        ok={perms?.accessibility}
-        next={next === "accessibility"}
-      />
-      <PermRow
-        label="屏幕录制"
-        kind="screen_capture"
-        ok={perms?.screen_capture}
-        next={next === "screen_capture"}
-      />
+      <div className={s.accList}>
+        <PermRow
+          label="辅助功能"
+          hint="读取选中文本（Cmd+C）"
+          kind="accessibility"
+          ok={perms?.accessibility}
+          next={next === "accessibility"}
+        />
+        <PermRow
+          label="屏幕录制"
+          hint="截取屏幕像素（截图翻译）"
+          kind="screen_capture"
+          ok={perms?.screen_capture}
+          next={next === "screen_capture"}
+        />
+      </div>
       {grantedNow && (
         <div className={s.updateTip}>
           <span className={s.tipText}>权限已更新，重启应用后生效（屏幕录制必须重启才生效）</span>
@@ -84,39 +81,39 @@ export default function PermTab() {
 
 function PermRow({
   label,
+  hint,
   kind,
   ok,
   next,
 }: {
   label: string;
+  hint: string;
   kind: PermKind;
   ok: boolean | undefined;
   next: boolean;
 }) {
   return (
-    <div className={s.updateTip}>
-      <span className={s.tipText}>
-        {label}：
-        {ok ? (
-          <span className="i-txt">
-            已授权 <CheckIcon />
-          </span>
-        ) : next ? (
-          "未授权（下一步）"
-        ) : (
-          "未授权"
-        )}
-      </span>
-      {!ok && (
-        <div className={s.tipActions}>
-          <button
-            className={s.updateBtn}
-            onClick={() => invoke("open_permission_settings", { kind }).catch(() => {})}
-          >
-            去授权
-          </button>
-        </div>
-      )}
+    <div className={`${s.accItem} ${s.permItem}`}>
+      <div className={s.accHead}>
+        <span className={`${s.accTitle} ${s.accStatic}`}>
+          {label}
+          <span className={s.permHint}>{hint}</span>
+        </span>
+        {/* 状态就写在按钮里：已授权 = 不可点的按钮，未授权 = 去授权（下一步那项用强调色） */}
+        <button
+          className={s.updateBtn + (next ? " " + s.updateBtnNext : "")}
+          disabled={!!ok}
+          onClick={() => invoke("open_permission_settings", { kind }).catch(() => {})}
+        >
+          {ok ? (
+            <span className="i-txt">
+              已授权 <CheckIcon />
+            </span>
+          ) : (
+            "去授权"
+          )}
+        </button>
+      </div>
     </div>
   );
 }

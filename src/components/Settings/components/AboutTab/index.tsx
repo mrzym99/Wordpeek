@@ -4,12 +4,13 @@ import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { UpdateProgress, UpdateStatus } from "../../../../types";
 import { IS_MAC, REPO_URL } from "../../../../hooks/useConfigForm";
+import { StarIcon } from "../../../icons";
 import s from "../../index.module.css";
 
 /** 字节数 → 一位数 MB 文本 */
 const mb = (bytes: number) => `${(bytes / 1048576).toFixed(1)} MB`;
 
-/** 「关于」页：版本信息 + 更新检查/安装（下载进度由 update-progress 事件驱动） */
+/** 「关于」页：版本/配置位置 + 更新检查安装 + 开源入口（下载进度由 update-progress 事件驱动） */
 export default function AboutTab() {
   const [update, setUpdate] = useState<UpdateStatus | null>(null);
   const [checking, setChecking] = useState(false);
@@ -89,27 +90,26 @@ export default function AboutTab() {
 
   return (
     <>
-      <div className={s.sectionHeading}>关于</div>
       <div className={s.aboutText}>
         <p>
           Wordpeek{update ? ` v${update.current_version}` : ""}
           <span className="app-beta">beta</span> — 最小划词翻译
         </p>
-        <p>在任意窗口选中单词，按快捷键，鼠标旁弹出翻译卡片。</p>
         <p>
-          设置保存于{" "}
+          配置存于{" "}
           {IS_MAC
-            ? "~/Library/Application Support/com.wordpeek.desktop/config.json"
-            : "%APPDATA%\\com.wordpeek.desktop\\config.json"}
+            ? "~/Library/Application Support/com.wordpeek.desktop"
+            : "%APPDATA%\\com.wordpeek.desktop"}
         </p>
       </div>
+
       <div className={s.updateTip}>
         {update?.available ? (
           <>
             <span className={s.tipText}>
               {IS_MAC
-                ? `发现新版本 v${update.new_version}，请前往 GitHub Releases 下载安装包`
-                : `发现新版本 v${update.new_version}，下载安装完成后将自动重启`}
+                ? `发现新版本 v${update.new_version}`
+                : `发现新版本 v${update.new_version}，安装后自动重启`}
             </span>
             <div className={s.tipActions}>
               {IS_MAC ? (
@@ -151,9 +151,7 @@ export default function AboutTab() {
           </>
         ) : (
           <>
-            <span className={s.tipText}>
-              {checked ? "当前已是最新版本。" : "检查 GitHub Releases 获取新版本。"}
-            </span>
+            <span className={s.tipText}>{checked ? "当前已是最新版本" : "检查 GitHub 上的新版本"}</span>
             <div className={s.tipActions}>
               <button className={s.updateBtn} onClick={checkUpdate} disabled={checking}>
                 {checking ? "检查中…" : "检查更新"}
@@ -163,6 +161,26 @@ export default function AboutTab() {
         )}
       </div>
       {updateError && <div className="field-error">{updateError}</div>}
+
+      {/* 开源入口：合并原「其他」页的 Star / Issue，去掉推荐语文案 */}
+      <div className={s.updateTip}>
+        <span className={s.tipText}>
+          <code>mrzym99/Wordpeek</code>
+        </span>
+        <div className={s.tipActions}>
+          <button className={s.updateBtn} onClick={() => openUrl(REPO_URL).catch(() => {})}>
+            <span className="i-txt">
+              点个 Star <StarIcon />
+            </span>
+          </button>
+          <button
+            className={s.updateBtn}
+            onClick={() => openUrl(REPO_URL + "/issues").catch(() => {})}
+          >
+            反馈 Issue
+          </button>
+        </div>
+      </div>
     </>
   );
 }

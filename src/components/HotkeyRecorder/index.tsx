@@ -68,7 +68,7 @@ export default function HotkeyRecorder({ value, onChange }: { value: string; onC
   return (
     <>
       <input
-        className={recording ? s.recording : ""}
+        className={recording ? `${s.input} ${s.recording}` : s.input}
         readOnly
         value={recording ? "" : displayHotkey(value)}
         placeholder={recording ? "按下新的组合键（Esc 取消）" : ""}

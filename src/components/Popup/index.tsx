@@ -13,6 +13,7 @@ import ContentBox from "../ContentBox";
 import SourceBox from "../SourceBox";
 import TranslateBar from "../TranslateBar";
 import Phonetic from "../Phonetic";
+import logo from "../../assets/logo.png";
 import { useAutoFitWindow } from "../../hooks/useAutoFitWindow";
 import { focusCard, useCardDismiss } from "../../hooks/useCardDismiss";
 import { isSentenceText } from "../../lib/text";
@@ -336,6 +337,7 @@ export default function Popup() {
       <div className={s.wordHead}>
         {/* 品牌独占标题行左侧；版本号留在设置 → 关于，弹窗里只留名字 */}
         <div className={s.appTitle}>
+          <img src={logo} alt="" draggable={false} />
           Wordpeek<span className="app-beta">beta</span>
         </div>
         {/* 对比各源：固定标题行右上角，两种模式都有（设置入口在托盘菜单，不占弹窗标题行） */}

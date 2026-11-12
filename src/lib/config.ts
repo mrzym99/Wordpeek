@@ -17,7 +17,8 @@ export function saveTencent(secretId: string, secretKey: string) {
   return invoke("save_tencent", { secretId: secretId.trim(), secretKey: secretKey.trim() });
 }
 
-/** 快捷键 + OCR 语言（快捷键/截图翻译 tab 的「保存」按钮）；注意 Tauri 参数是 camelCase */
+/** 快捷键（快捷键 tab 的「保存」按钮）；注意 Tauri 参数是 camelCase。
+ *  ocrLang 已无 UI，固定传 "auto"：后端 save_settings 仍要求该参数 */
 export function saveSettings(fields: {
   hotkey: string;
   screenshotHotkey: string;

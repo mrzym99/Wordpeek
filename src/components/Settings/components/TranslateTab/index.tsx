@@ -1,43 +1,42 @@
 import { SOURCE_ITEMS, type ConfigForm } from "../../../../hooks/useConfigForm";
 import s from "../../index.module.css";
 
-/** 「翻译」页：翻译源勾选+拖拽排序（列表）/ 源配置（密钥表单），横向 tab 切换 */
+/** 「翻译」页：一个列表兼做启用、排序和密钥配置（点行展开表单），不再分子 tab */
 export default function TranslateTab({ f }: { f: ConfigForm }) {
-  return (
-    <>
-      {/* 翻译源两个子页：列表（勾选+拖拽排序）/ 源配置，横向 tab 切换 */}
-      <div className={s.subTabs}>
-        <button className={s.subTab + (f.srcTab === "list" ? " active" : "")} onClick={() => f.setSrcTab("list")}>
-          翻译源
-        </button>
-        <button className={s.subTab + (f.srcTab === "config" ? " active" : "")} onClick={() => f.setSrcTab("config")}>
-          源配置
-        </button>
-      </div>
-      {f.srcTab === "list" ? <SourceList f={f} /> : <SourceConfig f={f} />}
-    </>
-  );
-}
+  // 已启用的按用户拖出来的顺序在前，未启用的按 SOURCE_ITEMS 原序跟在后面
+  const order = [...f.sources, ...SOURCE_ITEMS.map((it) => it.id).filter((id) => !f.sources.includes(id))];
 
-function SourceList({ f }: { f: ConfigForm }) {
   return (
     <>
-      <div className={s.groupHeading}>翻译源（至少保留一个）</div>
-      <div className={s.sourceList}>
-        <div className={s.sourceItem + (f.builtin ? "" : " " + s.off)}>
-          <label className={s.switch}>
-            <input type="checkbox" checked={f.builtin} onChange={f.toggleBuiltin} />
-            默认源：有道词典 / 必应翻译（内置，免 Key）
-          </label>
+      <div className={s.accList}>
+        {/* 内置默认源：免 Key，没有表单可展开，只给开关 */}
+        <div className={s.accItem}>
+          <div className={s.accHead}>
+            <span className={s.dragHandle} />
+            <span className={s.accTitle + " " + s.accStatic}>内置默认源（有道 / 必应，免 Key）</span>
+            <label className={s.switch}>
+              <input type="checkbox" checked={f.builtin} onChange={f.toggleBuiltin} />
+            </label>
+            <span className={s.accChevronEmpty} />
+          </div>
         </div>
-        {f.sources.map((id) => {
+
+        {order.map((id) => {
           const item = SOURCE_ITEMS.find((it) => it.id === id);
           if (!item) return null;
+          const enabled = f.sources.includes(id);
+          const open = f.cfgSrc === id;
+          const isReady = f.ready(id);
+          // 密钥没填就不给开；已启用的永远能关（关掉不受此限）
+          const blocked = item.needKey && !isReady && !enabled;
+          const toggle = () => f.setCfgSrc(open ? "" : (id as "baidu" | "tencent"));
+
           return (
             <div
               key={id}
-              className={s.sourceItem}
-              draggable
+              className={s.accItem + (open ? " " + s.open : "") + (enabled ? "" : " " + s.off)}
+              // 只有启用中的源可拖：禁用行拖进列表会被当成"插进 sources"而被动启用
+              draggable={enabled}
               onDragStart={(e) => {
                 // 窗口已关 dragDropEnabled；setData 不调 WebView2 里 drop 不触发
                 e.dataTransfer.setData("text/plain", id);
@@ -52,107 +51,90 @@ function SourceList({ f }: { f: ConfigForm }) {
               }}
               onDragEnd={() => f.setDragId("")}
             >
-              <span className={s.dragHandle} title="拖拽调整顺序">
-                ⠿
-              </span>
-              <label className={s.switch}>
-                <input
-                  type="checkbox"
-                  checked
-                  disabled={item.needKey && !f.ready(item.id)}
-                  title={item.needKey && !f.ready(item.id) ? "密钥未配置，请先在「源配置」里填写" : undefined}
-                  onChange={() => f.toggleSource(id)}
-                />
-                {item.label}
-              </label>
+              <div className={s.accHead}>
+                <span className={s.dragHandle} title={enabled ? "拖拽调整顺序" : "启用后可拖拽排序"}>
+                  ⠿
+                </span>
+                <button type="button" className={s.accTitle} onClick={toggle}>
+                  {item.label.replace("（需密钥）", "")}
+                </button>
+                <label className={s.switch} title={blocked ? "密钥未填，填好后可启用" : undefined}>
+                  <input
+                    type="checkbox"
+                    checked={enabled}
+                    disabled={blocked}
+                    onChange={() => f.toggleSource(id)}
+                  />
+                </label>
+                <button type="button" className={s.accChevronBtn} onClick={toggle} aria-label="展开 / 收起">
+                  <svg className={s.accChevron} width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
+                    <path
+                      d="M6 3.5 10.5 8 6 12.5"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </button>
+              </div>
+
+              {open && (
+                <div className={s.accBody}>
+                  {id === "baidu" ? (
+                    <>
+                      <label className="field">
+                        APP ID
+                        <input
+                          value={f.appid}
+                          placeholder="百度翻译开放平台 appid"
+                          onChange={(e) => f.setAppid(e.target.value)}
+                        />
+                      </label>
+                      <label className="field">
+                        密钥
+                        <input
+                          type="password"
+                          value={f.secret}
+                          placeholder="百度翻译开放平台密钥"
+                          onChange={(e) => f.setSecret(e.target.value)}
+                        />
+                      </label>
+                    </>
+                  ) : (
+                    <>
+                      <label className="field">
+                        SecretId
+                        <input
+                          value={f.tcId}
+                          placeholder="腾讯云访问管理 API 密钥 SecretId"
+                          onChange={(e) => f.setTcId(e.target.value)}
+                        />
+                      </label>
+                      <label className="field">
+                        SecretKey
+                        <input
+                          type="password"
+                          value={f.tcKey}
+                          placeholder="腾讯云访问管理 API 密钥 SecretKey"
+                          onChange={(e) => f.setTcKey(e.target.value)}
+                        />
+                      </label>
+                    </>
+                  )}
+                  <button
+                    className={s.saveBtn}
+                    onClick={id === "baidu" ? f.saveBaiduKeys : f.saveTencentKeys}
+                    disabled={f.loadFailed}
+                  >
+                    保存
+                  </button>
+                </div>
+              )}
             </div>
           );
         })}
-        {SOURCE_ITEMS.filter((it) => !f.sources.includes(it.id)).map((it) => (
-          <div key={it.id} className={s.sourceItem + " " + s.off}>
-            <span className={s.dragHandle} />
-            <label className={s.switch}>
-              <input
-                type="checkbox"
-                checked={false}
-                disabled={it.needKey && !f.ready(it.id)}
-                title={it.needKey && !f.ready(it.id) ? "密钥未配置，请先在「源配置」里填写" : undefined}
-                onChange={() => f.toggleSource(it.id)}
-              />
-              {it.label}
-            </label>
-          </div>
-        ))}
-      </div>
-      <div className="field-hint">
-        默认源免 Key：单词用有道、句子用必应，失败自动降级；额外源在「源配置」填好密钥后勾选
       </div>
     </>
-  );
-}
-
-function SourceConfig({ f }: { f: ConfigForm }) {
-  return (
-    // 源配置：左侧菜单选源，右侧编辑对应密钥
-    <div className={s.configSplit}>
-      <div className={s.configMenu}>
-        {SOURCE_ITEMS.map((it) => (
-          <button
-            key={it.id}
-            type="button"
-            className={s.configMenuItem + (f.cfgSrc === it.id ? " active" : "")}
-            onClick={() => f.setCfgSrc(it.id as "baidu" | "tencent")}
-          >
-            {it.label.replace("（需密钥）", "")}
-            {f.ready(it.id) && <span className={s.configDot} title="已配置" />}
-          </button>
-        ))}
-      </div>
-      <div className={s.configForm}>
-        {f.cfgSrc === "baidu" ? (
-          <>
-            <div className={s.groupHeading}>百度翻译密钥（可选）</div>
-            <label className="field">
-              APP ID
-              <input
-                value={f.appid}
-                placeholder="百度翻译开放平台 appid"
-                onChange={(e) => f.setAppid(e.target.value)}
-              />
-            </label>
-            <label className="field">
-              密钥
-              <input
-                type="password"
-                value={f.secret}
-                placeholder="百度翻译开放平台密钥"
-                onChange={(e) => f.setSecret(e.target.value)}
-              />
-            </label>
-          </>
-        ) : (
-          <>
-            <div className={s.groupHeading}>腾讯云密钥（可选）</div>
-            <label className="field">
-              SecretId
-              <input
-                value={f.tcId}
-                placeholder="腾讯云访问管理 API 密钥 SecretId"
-                onChange={(e) => f.setTcId(e.target.value)}
-              />
-            </label>
-            <label className="field">
-              SecretKey
-              <input
-                type="password"
-                value={f.tcKey}
-                placeholder="腾讯云访问管理 API 密钥 SecretKey"
-                onChange={(e) => f.setTcKey(e.target.value)}
-              />
-            </label>
-          </>
-        )}
-      </div>
-    </div>
   );
 }

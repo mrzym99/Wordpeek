@@ -4,25 +4,31 @@
 }
 .label {
   display: block;
-  font-size: var(--t-small);
+  font-size: var(--t-micro);
   font-weight: 600;
-  color: var(--ink-2);
-  margin-bottom: 4px;
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+  margin-bottom: 5px;
 }
 
-/* 灰底多行文本框：划词原文 / 截图原文与译文共用（textarea 与只读 div 同一外观） */
+/* 纸底多行文本框：划词原文 / 截图原文与译文共用（textarea 与只读 div 同一外观）；
+   两种背景都成立——落在卡片纸面上靠描边分界，落在输入窗口灰面上靠纸底抬起 */
 .text {
   white-space: pre-wrap;
   /* 高度跟内容走；空内容的高度下限由 textarea 变体的 min-height 提供 */
   field-sizing: content;
   max-height: calc(100vh - 67px);
   overflow-y: auto;
-  background: var(--wash);
-  border-radius: var(--r-xs);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
   padding: 8px 12px;
   font-size: var(--t-body);
-  line-height: 1.6;
+  line-height: 1.65;
   margin-bottom: 10px;
+  transition:
+    border-color var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
 }
 
 /* textarea 变体：可编辑区复用 .text 外观 */
@@ -30,16 +36,19 @@ textarea.text {
   display: block;
   width: 100%;
   box-sizing: border-box;
-  /* 未聚焦时也要能看出这是个输入框：外壳面与框底色相近，只靠底色分不出边界 */
-  border: 1px solid var(--line);
   outline: none;
   resize: vertical;
   min-height: 56px;
   padding: 7px 11px;
   font-family: inherit;
 }
+textarea.text:hover:not(:focus) {
+  border-color: var(--line-strong);
+}
+/* 聚焦：亮描边 + 一层淡环，和设置页输入框同一套语言 */
 textarea.text:focus {
-  box-shadow: inset 0 0 0 1.5px var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-wash);
 }
 
 /* 自适应高度过程中不出滚动条（同 global.css 里 .card-body 的规则） */

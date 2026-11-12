@@ -2,7 +2,9 @@
 .list {
   margin-top: 12px;
   background: var(--wash);
-  border-radius: var(--r-md);
+  border-radius: var(--r-sm);
+  /* inset 描边：列表高度不受边框影响，与卡片内其它块同一形状 */
+  box-shadow: inset 0 0 0 1px var(--hairline);
   overflow: hidden;
 }
 .row {
@@ -18,9 +20,10 @@
   gap: 8px;
 }
 .label {
-  font-size: var(--t-small);
+  font-size: var(--t-micro);
   font-weight: 600;
-  color: var(--ink-2);
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
 }
 /* 复制按钮：hover 行时才浮现 */
 .row :global(.icon-btn) {

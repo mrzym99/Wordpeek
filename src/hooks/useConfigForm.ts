@@ -9,7 +9,7 @@ import {
 } from "../lib/config";
 import type { Theme } from "../lib/theme";
 
-export type SettingsSection = "translate" | "hotkey" | "shot" | "appearance" | "perm" | "about" | "other";
+export type SettingsSection = "translate" | "hotkey" | "perm" | "about";
 
 /** macOS 需要在系统设置里手动授权；Windows 无此概念，菜单也不显示 */
 export const IS_MAC = navigator.userAgent.includes("Macintosh");
@@ -31,21 +31,21 @@ const keysReady = (a: string, b: string) => a.trim() !== "" && b.trim() !== "";
 export function useConfigForm() {
   const [builtin, setBuiltin] = useState(true);
   const [sources, setSources] = useState<string[]>([]);
-  // 翻译源区域子 tab：「list」勾选+排序列表 /「config」源配置（密钥）
-  const [srcTab, setSrcTab] = useState<"list" | "config">("list");
   const [dragId, setDragId] = useState("");
   const [appid, setAppid] = useState("");
   const [secret, setSecret] = useState("");
   const [tcId, setTcId] = useState("");
   const [tcKey, setTcKey] = useState("");
-  const [cfgSrc, setCfgSrc] = useState<"baidu" | "tencent">("baidu");
+  // 源配置手风琴展开的源（"" = 全部收起）
+  const [cfgSrc, setCfgSrc] = useState<"baidu" | "tencent" | "">("baidu");
   const [hotkey, setHotkey] = useState("Alt+Z");
   const [screenshotHotkey, setScreenshotHotkey] = useState("Alt+S");
   const [inputHotkey, setInputHotkey] = useState("Alt+X");
   // 切换划词图标的快捷键（默认 Alt+W）
   const [iconHotkey, setIconHotkey] = useState("Alt+W");
-  const [ocrLang, setOcrLang] = useState("auto");
   const [theme, setTheme] = useState<Theme>("system");
+  // 一级菜单：上次停留的页面（老配置里可能存着已删掉的 shot/appearance/other，按白名单回落）
+  const [section, setSection] = useState<SettingsSection>("translate");
   const [saveError, setSaveError] = useState("");
   // get_config 重试耗尽：表单停在默认值，此时绝不能允许保存（会把默认值覆盖到真配置上）
   const [loadFailed, setLoadFailed] = useState(false);
@@ -70,8 +70,11 @@ export function useConfigForm() {
           setScreenshotHotkey(cfg.screenshot_hotkey || "Alt+S");
           setInputHotkey(cfg.input_hotkey || "Alt+X");
           setIconHotkey(cfg.icon_hotkey || "Alt+W");
-          setOcrLang(cfg.ocr_lang || "auto");
           setTheme(cfg.theme ?? "system");
+          const sec = cfg.settings_section;
+          if (sec === "translate" || sec === "hotkey" || sec === "about" || (sec === "perm" && IS_MAC)) {
+            setSection(sec);
+          }
         })
         .catch(() => {
           if (cancelled) return;
@@ -138,7 +141,7 @@ export function useConfigForm() {
   // 内置默认源开关：关掉它是唯一源时禁止
   const toggleBuiltin = () => {
     if (builtin && sources.length === 0) {
-      denyToggle("至少保留一个翻译源：请先勾选额外源，再关闭默认源");
+      denyToggle("至少保留一个翻译源");
       return;
     }
     const next = !builtin;
@@ -149,7 +152,7 @@ export function useConfigForm() {
   // 额外源勾选/取消：默认源已关闭时，不能取消最后一个额外源
   const toggleSource = (id: string) => {
     if (sources.includes(id) && !builtin && sources.length === 1) {
-      denyToggle("至少保留一个翻译源：默认源已关闭，不能取消最后一个源");
+      denyToggle("至少保留一个翻译源");
       return;
     }
     const next = sources.includes(id) ? sources.filter((s) => s !== id) : [...sources, id];
@@ -172,7 +175,8 @@ export function useConfigForm() {
     setSaved(false);
     setSaveError("");
     try {
-      await saveSettings({ hotkey, screenshotHotkey, inputHotkey, iconHotkey, ocrLang });
+      // OCR 语言不再单独设置，固定跟随系统（后端 save_settings 仍带这个字段）
+      await saveSettings({ hotkey, screenshotHotkey, inputHotkey, iconHotkey, ocrLang: "auto" });
       flashSaved();
     } catch (err) {
       setSaveError(String(err));
@@ -180,10 +184,10 @@ export function useConfigForm() {
   };
 
   return {
-    builtin, sources, srcTab, setSrcTab, dragId, setDragId,
+    builtin, sources, dragId, setDragId,
     appid, setAppid, secret, setSecret, tcId, setTcId, tcKey, setTcKey,
     cfgSrc, setCfgSrc, hotkey, setHotkey, screenshotHotkey, setScreenshotHotkey,
-    inputHotkey, setInputHotkey, iconHotkey, setIconHotkey, ocrLang, setOcrLang, theme, setTheme,
+    inputHotkey, setInputHotkey, iconHotkey, setIconHotkey, theme, setTheme, section, setSection,
     saveError, setSaveError, loadFailed, saved,
     ready, toggleBuiltin, toggleSource, moveSource,
     saveBaiduKeys, saveTencentKeys, saveGeneral,

@@ -39,42 +39,69 @@
   cursor: move;
 }
 
-/* 品牌字（划词卡片左上的唯一标识；版本号在设置 → 关于） */
+/* 品牌（划词卡片左上的唯一标识；版本号在设置 → 关于）。
+   带应用图标，卡面才像成品而不是一块灰底 */
 .appTitle {
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: var(--t-small);
   font-weight: 600;
+  letter-spacing: -0.01em;
   color: var(--ink-2);
+}
+.appTitle img {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  flex-shrink: 0;
 }
 
 .badges {
   margin-top: 6px;
 }
+/* 考试类型：描边胶囊，不铺色 —— 一组标签排开也不显脏 */
 .badge {
   display: inline-block;
-  padding: 0 8px;
-  margin: 0 4px 2px 0;
+  padding: 0 7px;
+  margin: 0 5px 3px 0;
+  border: 1px solid var(--accent-line);
   border-radius: var(--r-pill);
-  background: var(--wash);
-  color: var(--ink-2);
+  background: transparent;
+  color: var(--accent);
   font-size: var(--t-micro);
-  line-height: 18px;
+  line-height: 16px;
+  letter-spacing: 0.02em;
 }
 
-/* 小节：词形变化 / 同义词。柔和版不画分隔线，交给间距 */
+/* 小节：词形变化 / 同义词。标题后接一条细线，分段感靠规则线而不是留白堆 */
 .section {
   margin-top: 16px;
 }
 .sectionTitle {
-  font-size: var(--t-small);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--t-micro);
   font-weight: 600;
-  color: var(--ink-2);
-  margin-bottom: 6px;
+  letter-spacing: 0.05em;
+  color: var(--ink-3);
+  margin-bottom: 7px;
+}
+/* 标题右侧自动填满的细线（弹窗宽度自适应，flex:1 才量得准） */
+.sectionTitle::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
 }
 .posTag {
   color: var(--ink-3);
   font-weight: 400;
   font-style: italic;
+  font-family: var(--font-read);
+  letter-spacing: 0.01em;
 }
 
 .wordForms {
@@ -93,30 +120,43 @@
   color: var(--accent);
   cursor: pointer;
   font-family: var(--font-read);
+  text-decoration: underline;
+  text-decoration-color: var(--accent-line);
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
 }
 .linkBtn:hover {
-  text-decoration: underline;
-  text-underline-offset: 2px;
+  text-decoration-color: currentColor;
 }
 
 .synos {
   font-size: var(--t-small);
 }
+/* 同义词：描边胶囊，hover 才上色；一排排开也不抢正文 */
 .syno {
   display: inline-flex;
   align-items: center;
   margin: 2px 6px 2px 0;
   padding: 0 10px;
-  border: none;
+  border: 1px solid var(--line);
   border-radius: var(--r-pill);
-  background: var(--wash);
-  color: var(--accent);
+  background: var(--paper);
+  color: var(--ink-2);
   font: inherit;
-  line-height: 22px;
+  line-height: 20px;
   cursor: pointer;
+  transition:
+    color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease),
+    background-color var(--dur) var(--ease);
 }
 .syno:hover {
+  border-color: var(--accent-line);
   background: var(--accent-wash);
+  color: var(--accent);
+}
+.syno:active {
+  transform: translateY(0.5px);
 }
 
 /* ===== 截图翻译结果区 ===== */
@@ -129,7 +169,7 @@
 .shotSenses {
   margin: 0 0 10px;
   background: var(--wash);
-  border-radius: var(--r-xs);
+  border-radius: var(--r-sm);
   padding: 8px 12px;
 }
 .shotSenses li {

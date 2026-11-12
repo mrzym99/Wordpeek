@@ -7,7 +7,7 @@
   min-height: 100vh;
   background: var(--wash);
   color: var(--ink);
-  font: var(--t-body) / 1.6 var(--font-ui);
+  font: var(--t-body) / 1.65 var(--font-ui);
 }
 
 /* 头部占了 28px，内容高度上限同步收紧（29 = 原 padding 14×2 + 1） */

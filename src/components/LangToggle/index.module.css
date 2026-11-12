@@ -1,29 +1,41 @@
-/* 目标语言切换（智能 / → 英文 / → 中文），TranslateBar 与设置页主题选择共用 */
+/* 目标语言切换（智能 / → 英文 / → 中文），TranslateBar 与设置页主题选择共用。
+   分段控件：轨道是灰面，选中段抬起成纸面 + 阴影（不铺色，免得三颗蓝块抢主线） */
 .toggle {
   display: inline-flex;
+  gap: 2px;
+  padding: 2px;
   border: 1px solid var(--line);
   border-radius: var(--r-pill);
-  background: var(--wash);
-  overflow: hidden;
+  /* 轨道用 hover 灰而非 wash：纸面上 wash 太接近白，抬起段就看不出来 */
+  background: var(--wash-hover);
 }
 .toggle button {
   border: none;
+  border-radius: var(--r-pill);
   background: none;
   font: inherit;
   font-size: var(--t-small);
   color: var(--ink-2);
-  padding: 4px 12px;
+  padding: 2px 12px;
   cursor: pointer;
+  transition:
+    color var(--dur) var(--ease),
+    background-color var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
 }
-.toggle button + button {
-  border-left: 1px solid var(--line);
+.toggle button:hover:not(:disabled):not(:global(.active)) {
+  color: var(--ink);
+}
+.toggle button:active:not(:disabled) {
+  transform: translateY(0.5px);
 }
 .toggle button:global(.active) {
-  background: var(--accent-solid);
-  color: var(--on-accent);
+  background: var(--paper-raised);
+  color: var(--ink);
   font-weight: 600;
+  box-shadow: var(--shadow-btn);
 }
-/* 禁用只调非选中段的字色：选中段保持白字蓝底，灰掉反而像坏了 */
+/* 禁用只调非选中段的字色：选中段保持抬起态，灰掉反而像坏了 */
 .toggle button:disabled:not(:global(.active)) {
   color: var(--ink-3);
   cursor: default;

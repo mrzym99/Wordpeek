@@ -230,6 +230,7 @@ fn main() {
             screenshot::screenshot_cancel,
             windows::fit_window,
             windows::hud_take_text,
+            windows::set_caption_color,
             copy_text,
             last_mouse_down,
             cursor_pos,
