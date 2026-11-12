@@ -160,10 +160,7 @@
   object-position: center bottom;
   pointer-events: none;
   user-select: none;
-  opacity: 0.9;
-  /* 裁成圆并大面积虚化边缘：55% 以内实心，往外一路淡到透明，边线完全看不出 */
-  -webkit-mask-image: radial-gradient(circle closest-side, #000 55%, transparent 100%);
-  mask-image: radial-gradient(circle closest-side, #000 55%, transparent 100%);
+  opacity: 0.7;
 }
 /* 深色纸面上原图偏暗，提亮 + 提高不透明度，让它看得清但仍是角落底纹 */
 :root[data-theme="dark"] .mascot {
