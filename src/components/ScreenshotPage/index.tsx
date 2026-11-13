@@ -12,6 +12,8 @@ export default function ScreenshotPage() {
   // 定格背景：触发瞬间的快照（data URL）；空 = 后端编码失败，退回透明遮罩对实时桌面
   const [frozen, setFrozen] = useState("");
   const dragging = useRef(false);
+  // 松手已交给 finish（后端会隐藏本窗口，隐藏引发的 blur 不是用户取消），此时 blur 不再 cancel
+  const finished = useRef(false);
 
   // screenshot-start：后端抓完屏就把遮罩显示了（暗底 + 十字），这里只负责把定格画面换上。
   // 不碰 sel/dragging：用户可能已经开始拖框了，重置会把选区打断
@@ -55,6 +57,10 @@ export default function ScreenshotPage() {
     };
     const onBlur = () => {
       reset();
+      if (finished.current) {
+        finished.current = false; // 下一轮截图会话重新计
+        return;
+      }
       invoke("screenshot_cancel");
     };
     document.addEventListener("keydown", onKey, true);
@@ -91,6 +97,7 @@ export default function ScreenshotPage() {
       invoke("screenshot_cancel");
       return;
     }
+    finished.current = true;
     invoke("screenshot_finish", { x, y, w, h });
   };
 

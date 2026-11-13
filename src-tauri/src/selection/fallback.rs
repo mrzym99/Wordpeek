@@ -149,7 +149,7 @@ pub(crate) fn handle_hotkey_trigger(app: &AppHandle) {
             println!("[grab] UIA/AX 直读命中");
             let (cx, cy) = platform::cursor_pos();
             hide_selection_icon(&app);
-            SessionManager::show_card(&app, &text, cx + 12, cy + 16, SOURCE_HOTKEY);
+            SessionManager::show_card(&app, &text, cx, cy, SOURCE_HOTKEY);
             return;
         }
         // 读不到选区：模拟复制键借剪贴板取词（备份/恢复全程，备份读不到就整轮放弃）
@@ -159,7 +159,7 @@ pub(crate) fn handle_hotkey_trigger(app: &AppHandle) {
                 println!("[grab] got text: {:?} at ({}, {})", text, cx, cy);
                 crate::platform::debug_log(&format!("grab got {:.20}", text)); // [DEBUG-m0u5]
                 hide_selection_icon(&app);
-                SessionManager::show_card(&app, &text, cx + 12, cy + 16, SOURCE_HOTKEY_FALLBACK);
+                SessionManager::show_card(&app, &text, cx, cy, SOURCE_HOTKEY_FALLBACK);
             }
             None => {
                 println!("[grab] no text captured");

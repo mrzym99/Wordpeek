@@ -160,10 +160,19 @@
 }
 
 /* ===== 截图翻译结果区 ===== */
-.shotLoading {
-  font-size: var(--t-small);
+/* 翻译中的遮罩：旧内容不卸载，只盖一层薄雾 + 提示，结果回来才替换 → 卡片只跳一次 */
+.busy {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--paper) 62%, transparent);
   color: var(--ink-3);
-  margin-bottom: 8px;
+  font-size: var(--t-small);
+  cursor: progress;
 }
 /* 内容框里的截图释义：灰底块 + 去序号 */
 .shotSenses {

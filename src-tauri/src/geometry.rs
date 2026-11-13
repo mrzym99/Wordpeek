@@ -109,6 +109,31 @@ pub(crate) fn clamp_to_screen(app: &AppHandle, label: &str, x: i32, y: i32) -> (
     (cx, cy)
 }
 
+/// 划词卡片定位（物理像素）：光标下方正中，最后钳进屏幕。
+/// 水平以光标为中心（`cx - w/2`），底部超出时由钳位上推
+pub(crate) fn place_below_rect(
+    rect: (i32, i32, i32, i32),
+    win_w: i32,
+    win_h: i32,
+    cx: i32,
+    cy: i32,
+    gap: i32,
+) -> (i32, i32) {
+    clamp_rect_to_monitor(rect, win_w, win_h, cx - win_w / 2, cy + gap)
+}
+
+/// `place_below_rect` 的窗口包装：找不到窗口/尺寸/显示器就退回右下偏置
+pub(crate) fn place_below_cursor(app: &AppHandle, label: &str, x: i32, y: i32) -> (i32, i32) {
+    const GAP: i32 = 16;
+    let Some(win) = app.get_webview_window(label) else {
+        return (x + 12, y + GAP);
+    };
+    let (Ok(size), Some(rect)) = (win.outer_size(), usable_rect_at(&win, x, y)) else {
+        return (x + 12, y + GAP);
+    };
+    place_below_rect(rect, size.width as i32, size.height as i32, x, y, GAP)
+}
+
 /// 窗口高与 webview 视口高的差值（标题栏高度），按窗口名缓存一次
 pub(crate) fn viewport_inset(label: &str, win_h: f64, viewport_h: f64) -> f64 {
     static INSETS: std::sync::OnceLock<parking_lot::Mutex<std::collections::HashMap<String, f64>>> =
@@ -186,6 +211,19 @@ mod tests {
         assert_eq!(snap_to_scale(214.0, 1.0), 214.0);
         assert_eq!(snap_to_scale(214.5, 2.0), 215.0);
         assert_eq!(snap_to_scale(400.0, 1.25), 400.0);
+    }
+
+    #[test]
+    fn place_below_is_centered_horizontally() {
+        let rect = (0, 0, 1920, 1080);
+        // 屏幕中间：卡片水平以光标居中、垂直在其下方
+        assert_eq!(place_below_rect(rect, 400, 300, 1000, 500, 16), (800, 516));
+        // 光标贴右缘：向右超出 → 钳回屏内
+        assert_eq!(place_below_rect(rect, 400, 300, 1900, 500, 16), (1520, 516));
+        // 靠近底部：纵向被钳回屏内
+        assert_eq!(place_below_rect(rect, 400, 300, 1000, 1000, 16), (800, 780));
+        // 副屏在左侧（负坐标）
+        assert_eq!(place_below_rect((-1920, 0, 1920, 1080), 400, 300, -1000, 500, 16), (-1200, 516));
     }
 
     #[test]

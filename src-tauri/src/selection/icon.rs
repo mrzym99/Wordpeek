@@ -77,6 +77,6 @@ pub(crate) fn translate_selection_icon(app: AppHandle) -> Result<(), String> {
         .take_icon_text(now_ms())
         .ok_or("没有缓存的选中文本")?;
     hide_selection_icon(&app);
-    SessionManager::show_card(&app, &text, cx + 12, cy + 16, super::SOURCE_ICON);
+    SessionManager::show_card(&app, &text, cx, cy, super::SOURCE_ICON);
     Ok(())
 }

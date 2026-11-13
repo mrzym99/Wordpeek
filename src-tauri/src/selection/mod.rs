@@ -9,7 +9,7 @@
 //! 同文本去重 → 位置钳制 → emit `selection`。
 
 mod fallback;
-mod normalize;
+pub(crate) mod normalize;
 pub(crate) mod probe; // windows.rs 看门狗读 LAST_WORKER_UP_MS（[DEBUG-m0u5] 插桩，诊断完改回 mod probe）
 // gesture / icon 的个别符号被 main.rs 命令与 invoke_handler 直接引用，公开到 crate 内
 pub(crate) mod gesture;
@@ -119,7 +119,7 @@ impl SessionManager {
             s.last_text = Some(text.clone());
             s.last_shown_ms = now;
         }
-        let (cx, cy) = crate::geometry::clamp_to_screen(app, "main", x, y);
+        let (cx, cy) = crate::geometry::place_below_cursor(app, "main", x, y);
         let _ = app.emit(
             "selection",
             Selection {

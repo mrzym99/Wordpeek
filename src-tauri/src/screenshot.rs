@@ -316,26 +316,29 @@ pub(crate) fn screenshot_finish(app: AppHandle, x: i32, y: i32, w: i32, h: i32) 
             .clone();
         let payload = match crate::ocr::recognize(&png, &ocr_lang) {
             Ok(lines) => {
-                let text = lines
+                let raw = lines
                     .iter()
                     .map(|l| l.text.as_str())
                     .collect::<Vec<_>>()
                     .join("\n");
-                if text.trim().is_empty() {
-                    shot_payload(false, None, None, Some("未识别到文字，请框选包含文字的区域".into()), &ctx)
-                } else {
-                    // 翻译（主源→降级；整句需百度 key，错误信息会引导）
-                    let cfg = app
-                        .state::<parking_lot::Mutex<translate::AppConfig>>()
-                        .lock()
-                        .clone();
-                    // OCR 文本中英不定：按内容自动检测目标语言
-                    let to = translate::detect_to(&text);
-                    match tauri::async_runtime::block_on(crate::translate::translate_text(
-                        &cfg, &text, to
-                    )) {
-                        Ok(info) => shot_payload(true, Some(text), Some(info), None, &ctx),
-                        Err(e) => shot_payload(true, Some(text), None, Some(e), &ctx),
+                // OCR 把屏幕折行当硬换行：走与划词同一套清洗（单换行→空格/中文不补空格，段落空行保留）
+                let text = crate::selection::normalize::normalize_selection(&raw);
+                match text {
+                    None => shot_payload(false, None, None, Some("未识别到文字，请框选包含文字的区域".into()), &ctx),
+                    Some(text) => {
+                        // 翻译（主源→降级；整句需百度 key，错误信息会引导）
+                        let cfg = app
+                            .state::<parking_lot::Mutex<translate::AppConfig>>()
+                            .lock()
+                            .clone();
+                        // OCR 文本中英不定：按内容自动检测目标语言
+                        let to = translate::detect_to(&text);
+                        match tauri::async_runtime::block_on(crate::translate::translate_text(
+                            &cfg, &text, to,
+                        )) {
+                            Ok(info) => shot_payload(true, Some(text), Some(info), None, &ctx),
+                            Err(e) => shot_payload(true, Some(text), None, Some(e), &ctx),
+                        }
                     }
                 }
             }
@@ -354,18 +357,24 @@ pub(crate) fn screenshot_finish(app: AppHandle, x: i32, y: i32, w: i32, h: i32) 
 pub(crate) fn screenshot_cancel(app: AppHandle) {
     // 取消结束会话，释放热键互斥
     let _guard = FlagGuard(&SCREENSHOT_IN_PROGRESS);
-    let (was_visible, main_was_visible);
     {
         let state = app.state::<ScreenshotState>();
         let mut session = state.0.lock();
-        was_visible = session.settings_was_visible;
-        main_was_visible = session.main_was_visible;
+        // finish 已经拿走选区正在 OCR/翻译：后续隐藏遮罩引发的 blur 不算取消，
+        // 否则会把 main 卡恢复到旧位置，结果到达后再居中，闪一下
+        if session.screen.is_none() {
+            return;
+        }
+        let was_visible = session.settings_was_visible;
+        let main_was_visible = session.main_was_visible;
         session.screen = None;
+        session.settings_was_visible = false;
+        session.main_was_visible = false;
+        if let Some(win) = app.get_webview_window("screenshot") {
+            let _ = win.hide();
+        }
+        show_window(&app, "settings", was_visible);
+        show_window(&app, "main", main_was_visible);
     }
-    if let Some(win) = app.get_webview_window("screenshot") {
-        let _ = win.hide();
-    }
-    show_window(&app, "settings", was_visible);
-    show_window(&app, "main", main_was_visible);
     println!("[screenshot] cancelled");
 }

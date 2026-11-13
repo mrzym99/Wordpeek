@@ -8,6 +8,13 @@
   font-weight: 600;
   letter-spacing: 0.04em;
   color: var(--ink-3);
+}
+/* 标签 + 右侧附加按钮同一行：两者共用一行，不额外占高度 */
+.labelRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   margin-bottom: 5px;
 }
 

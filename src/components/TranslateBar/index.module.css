@@ -6,6 +6,12 @@
   gap: 10px;
   margin: -2px 0 10px;
 }
+/* 右侧按钮组：附加按钮（对比各源）与执行按钮同排贴右 */
+.right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 /* 执行按钮与左侧分段控件同高、同一颗边框胶囊；比正文里的 .text-btn 再重一点 */
 .bar :global(.text-btn) {
   padding: 4px 14px;

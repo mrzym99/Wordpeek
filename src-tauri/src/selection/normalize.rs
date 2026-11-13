@@ -45,7 +45,16 @@ fn merge_hyphen_breaks(s: &str) -> String {
     out
 }
 
-/// 折叠硬换行：单个 `\n`（PDF/终端复制特征）→ 空格；连续 2 个以上保留为段落分隔（原样保留）
+/// 宽字符（CJK/假名/谚文/全角）：中文折行两侧补空格会读出「中文 换行」，故不补
+fn is_wide(c: char) -> bool {
+    matches!(c as u32,
+        0x1100..=0x115F | 0x2E80..=0x2EFF | 0x3000..=0x303F | 0x3040..=0x33FF
+        | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xAC00..=0xD7A3 | 0xF900..=0xFAFF
+        | 0xFE30..=0xFE4F | 0xFF00..=0xFF60 | 0xFFE0..=0xFFE6 | 0x20000..=0x3FFFD)
+}
+
+/// 折叠硬换行：单个 `\n`（PDF/终端复制特征）→ 空格（两侧都是宽字符则不补）；
+/// 连续 2 个以上保留为段落分隔（原样保留）
 fn collapse_soft_breaks(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
@@ -62,7 +71,13 @@ fn collapse_soft_breaks(s: &str) -> String {
                     out.push('\n');
                 }
             } else {
-                out.push(' ');
+                let wide_pair = matches!(
+                    (out.chars().next_back(), chars.peek().copied()),
+                    (Some(a), Some(b)) if is_wide(a) && is_wide(b)
+                );
+                if !wide_pair {
+                    out.push(' ');
+                }
             }
             continue;
         }
@@ -159,6 +174,24 @@ mod tests {
         assert_eq!(
             normalize_selection("para one\n\npara two").as_deref(),
             Some("para one\n\npara two")
+        );
+    }
+
+    #[test]
+    fn cjk_line_breaks_join_without_space() {
+        assert_eq!(
+            normalize_selection("中文\n换行").as_deref(),
+            Some("中文换行")
+        );
+        // 中文与西文之间还是要有空格
+        assert_eq!(
+            normalize_selection("中文\nEnglish").as_deref(),
+            Some("中文 English")
+        );
+        // 日文假名同样不补空格
+        assert_eq!(
+            normalize_selection("これは\nテストです").as_deref(),
+            Some("これはテストです")
         );
     }
 

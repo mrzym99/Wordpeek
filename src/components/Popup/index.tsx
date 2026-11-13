@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { PhysicalPosition } from "@tauri-apps/api/dpi";
+import { LogicalSize, PhysicalPosition } from "@tauri-apps/api/dpi";
 import { savePopupWidth } from "../../lib/config";
 import type { AppConfig, Selection, ShotResult, SourceResult, WordInfo } from "../../types";
 import SenseList from "../SenseList";
@@ -18,6 +18,9 @@ import { useAutoFitWindow } from "../../hooks/useAutoFitWindow";
 import { focusCard, useCardDismiss } from "../../hooks/useCardDismiss";
 import { isSentenceText } from "../../lib/text";
 
+/** 截图卡固定宽度（逻辑像素）：与输入翻译窗口同宽，原文框才装得下 */
+const SHOT_CARD_WIDTH = 560;
+
 /** 划词/截图统一弹窗：同一张卡片，标题行 = 可编辑原文 + 「对比各源」按钮 */
 export default function Popup() {
   const win = getCurrentWindow();
@@ -32,6 +35,8 @@ export default function Popup() {
   // 「对比各源」请求序号：收起对比/新配置到达时作废在途请求
   const compareSeq = useRef(0);
   const [info, setInfo] = useState<WordInfo | null>(null);
+  // 主翻译在途：期间保留上一份内容不卸载，只盖一层遮罩，结果到达后一次性替换（卡片只跳一次）
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const cardRef = useRef<HTMLDivElement | null>(null);
   // 小卡锚定/测量容器：溢出底部时计入 scrollHeight，窗口自适应长高包住小卡
@@ -72,9 +77,8 @@ export default function Popup() {
 
   const inShot = !!shotResult;
   const activeText = (inShot ? draft : word).trim();
-  const mainLoading = inShot
-    ? !!shotResult!.text && !shotResult!.info && !shotResult!.error
-    : !info && !error && activeText !== "";
+  // 遮罩 + 统一 busy：两种模式都等结果回来才换内容
+  const mainLoading = busy;
 
   // 列出勾选的额外源译文（默认翻译的结果直接复用主卡片数据，不重复请求）
   const runCompare = async (text: string) => {
@@ -145,8 +149,9 @@ export default function Popup() {
   const retranslate = (text: string, to: string = shotTo) => {
     if (!text.trim()) return;
     setCompareOpen(false); // 原文变了，旧对比结果作废
-    setShotResult((r) => (r ? { ...r, info: null, error: null } : r));
+    setShotResult((r) => (r ? { ...r, error: null } : r)); // 旧译文留着给遮罩垫高
     const seq = ++seqRef.current; // 连点方向时，慢的旧请求不能覆盖新结果
+    setBusy(true);
     invoke<WordInfo>("translate", { text, to })
       .then((info) => {
         if (seqRef.current !== seq) return;
@@ -154,7 +159,10 @@ export default function Popup() {
       })
       .catch((e) => {
         if (seqRef.current !== seq) return;
-        setShotResult((r) => (r ? { ...r, error: String(e) } : r));
+        setShotResult((r) => (r ? { ...r, info: null, error: String(e) } : r));
+      })
+      .finally(() => {
+        if (seqRef.current === seq) setBusy(false);
       });
   };
 
@@ -170,12 +178,29 @@ export default function Popup() {
     let unlistenResized: (() => void) | undefined;
     let widthTimer: number | undefined;
     let selSeq = 0; // selection 处理器序号（见 sel 回调内注释）
+    // 截图模式：卡片固定 560 宽且屏幕居中；退出后回到用户拖出来的宽度（不把 560 写进配置）
+    let inShotMode = false;
+    let selWidth = 0;
 
     // 异步订阅竞态防护：StrictMode 会 挂载→清理→再挂载，listen 的 Promise
     // 若在清理后才 resolve，不判 disposed 的话监听器永远退不掉
     let disposed = false;
 
     const setup = async () => {
+      selWidth = (await win.outerSize()).width / (await win.scaleFactor());
+      // 只改宽不改高（高度由 refit 按内容决定）；已经是目标宽就不动，避开 resize 事件噪声。
+      // 失败（ACL 未授权等）不能阻断后面的 show，否则卡片永远出不来
+      const applyWidth = async (logicalW: number) => {
+        try {
+          const scale = await win.scaleFactor();
+          const inner = await win.innerSize();
+          if (Math.abs(inner.width / scale - logicalW) < 0.5) return;
+          await win.setSize(new LogicalSize(logicalW, inner.height / scale));
+        } catch (err) {
+          console.error("设置卡片宽度失败", err);
+        }
+      };
+
       // x/y 已在 Rust 端钳制到光标所在屏幕内
       const sel = await listen<Selection>("selection", async (e) => {
         // 连续两次划词：旧处理器（跨屏 DPI 轮询最长等 500ms）醒来后
@@ -185,6 +210,8 @@ export default function Popup() {
         const { text, x, y } = e.payload;
         setShotResult(null); // 新的划词到达，退出截图模式
         setCompareOpen(false);
+        inShotMode = false;
+        await applyWidth(selWidth);
         // 跨屏 setPosition 触发 WM_DPICHANGED，tao 异步按「保持逻辑尺寸」重设窗口会覆盖
         // refit 的尺寸；scale 变了就等窗口尺寸稳定再 show+refit
         const sf0 = await win.scaleFactor();
@@ -200,10 +227,11 @@ export default function Popup() {
           }
         }
         if (stale()) return;
+        // 同截图路径：隐藏态先把高度量定，show 出来就是最终尺寸
+        await refit();
         markShown(); // 记录 show 时刻 + 启动收起轮询（不依赖 blur 送达）
         await win.show();
         await win.setFocus();
-        refit(); // 不依赖焦点事件：窗口重开时残留的拖拽高度立刻按内容纠正
         lookup(text.trim());
         // macOS Accessory 应用 makeKey 偶发不生效：焦点没立起来 blur 通道就整个
         // 失灵，卡片失去「点外面收起」的触发器，多试几次把焦点立起来
@@ -219,34 +247,40 @@ export default function Popup() {
         setCompareOpen(false); // 新一轮结果收起旧对比
         setDraft(e.payload.text ?? ""); // 新一轮结果重置编辑副本
         setShotTo("auto"); // 新一轮回到自动检测，不沿用上轮手动方向
-        const { virtual, mouse, work } = e.payload;
-        try {
-          // 两步定位：先粗移到鼠标旁——窗口落到目标屏后 Windows 按该屏缩放重新解释尺寸，
-          // 此时再量真实尺寸（outerSize）钳制，避免跨屏 DPI 漂移
-          await win.setPosition(new PhysicalPosition(mouse.x + 4, mouse.y + 4));
+        const { virtual, work } = e.payload;
+        inShotMode = true;
+        // 居中基准取光标所在屏的工作区（排除任务栏），拿不到则退回虚拟屏
+        const bx = work.width > 0 ? work.x : virtual.x;
+        const by = work.height > 0 ? work.y : virtual.y;
+        const bw = work.width > 0 ? work.width : virtual.width;
+        const bh = work.height > 0 ? work.height : virtual.height;
+        // 按当前外框尺寸算居中坐标；宽度/高度变化后再调一次就是同屏内的微调
+        const centerAt = async () => {
           const size = await win.outerSize();
-          // 钳制在光标所在屏的工作区内（排除任务栏）；拿不到则退回虚拟屏
-          const bx = work.width > 0 ? work.x : virtual.x;
-          const by = work.height > 0 ? work.y : virtual.y;
-          const bw = work.width > 0 ? work.width : virtual.width;
-          const bh = work.height > 0 ? work.height : virtual.height;
-          // 水平：鼠标居中；垂直：鼠标下方 4px；靠边时整体收进工作区
-          const px = Math.max(
-            bx + 4,
-            Math.min(mouse.x - size.width / 2, bx + bw - size.width - 4)
+          await win.setPosition(
+            new PhysicalPosition(
+              Math.round(bx + (bw - size.width) / 2),
+              Math.round(by + (bh - size.height) / 2)
+            )
           );
-          const py = Math.max(
-            by + 4,
-            Math.min(mouse.y + 4, by + bh - size.height - 4)
-          );
-          await win.setPosition(new PhysicalPosition(Math.round(px), Math.round(py)));
+        };
+        try {
+          // 整个定位过程都在隐藏态完成：任何中间态都不该露脸（mouse 只用于挑屏，落点直接算居中）
+          await win.hide();
+          // 先落到截图所在屏（跳屏时 Windows 按该屏缩放重新解释窗口）→ 撑到 560 宽 → 隐藏态量定高度
+          await centerAt();
+          await applyWidth(SHOT_CARD_WIDTH);
+          await new Promise((r) => setTimeout(r, 0));
+          await refit();
+          // 高度变了，同一屏内再纠一次居中
+          await centerAt();
         } catch (err) {
           // 定位失败（权限/取尺寸异常）也要把卡片弹出来，沿用上次位置
           console.error("定位截图卡片失败", err);
         }
         markShown(); // 记录 show 时刻 + 启动收起轮询（不依赖 blur 送达）
         await win.show();
-        refit();
+        await win.setFocus();
         // 和选词路径同样的问题：没 await show 就 setFocus，焦点常立不起来，
         // 只能退化成「先点内部再点外部」才收得掉
         await focusCard();
@@ -257,8 +291,10 @@ export default function Popup() {
       // 用户拖宽弹窗后防抖落盘；高度动画引发的等宽 resize 被「与上次已存宽度比较」过滤，不频繁写盘
       let savedWidth = 0;
       const resized = await win.onResized(async (e) => {
+        if (inShotMode) return; // 截图卡宽度固定 560，不写进 popup_width
         const s = await win.scaleFactor();
         const w = e.payload.width / s;
+        selWidth = w;
         if (Math.abs(w - savedWidth) <= 0.5) return;
         if (widthTimer !== undefined) clearTimeout(widthTimer);
         widthTimer = window.setTimeout(() => {
@@ -288,6 +324,7 @@ export default function Popup() {
     lastLooked.current = "";
     setWord("");
     setInfo(null);
+    setBusy(false);
     setError("");
     setShotResult(null);
     setDraft("");
@@ -308,22 +345,25 @@ export default function Popup() {
   const lookup = async (w: string) => {
     lastLooked.current = w;
     setWord(w);
-    setInfo(null);
     setError("");
     setCompareOpen(false); // 同义词跳查收起旧对比
     const seq = ++seqRef.current;
+    setBusy(true);
     try {
       const res = await invoke<WordInfo>("translate", { text: w });
       if (seqRef.current !== seq) return; // 已有更新的查询，丢弃过期结果
       setInfo(res);
     } catch (err) {
       if (seqRef.current !== seq) return;
+      setInfo(null); // 失败要清掉旧内容，别让上一词的结果配着报错一起显示
       setError(String(err));
+    } finally {
+      if (seqRef.current === seq) setBusy(false);
     }
   };
 
 
-  const shotLoading = inShot && !!shotResult!.text && !shotResult!.info && !shotResult!.error;
+  const shotLoading = inShot && busy;
   // 对比区只列勾选的额外源：主翻译本身就是某个额外源（如默认源关闭时百度兜底）时跳过该行避免重复
   const mainSource = inShot ? shotResult?.info?.source : info?.source;
   const compareRows: SourceResult[] | null = rows?.filter(
@@ -363,7 +403,6 @@ export default function Popup() {
 
       <div className="card-body" ref={bindBody}>
       {error && <div className="error">{error}</div>}
-      {!inShot && !info && !error && <div className="loading">翻译中...</div>}
 
       {/* 划词模式：有道词典 → 经典排版「单词 + 音标」一行；其它源（整句翻译降级）→ 保留原文框 */}
       {!inShot && info && info.source === "youdao" && (
@@ -416,7 +455,7 @@ export default function Popup() {
               label="原文"
               value={draft}
               onChange={setDraft}
-              rows={3}
+              rows={6}
               onEnter={() => retranslate(draft)}
             />
           )}
@@ -428,7 +467,6 @@ export default function Popup() {
               busy={shotLoading}
             />
           )}
-          {shotLoading && <div className={s.shotLoading}>翻译中…</div>}
           {shotResult.error && <div className="error">{shotResult.error}</div>}
           {shotResult.info && (
             <ContentBox
@@ -505,6 +543,13 @@ export default function Popup() {
             <div className="error">没有可对比的额外源，可在设置 → 翻译里勾选</div>
           )}
         </>
+      )}
+
+      {/* 翻译中遮罩：盖住 card-body，旧内容留在下面，结果回来才替换 */}
+      {busy && (
+        <div className={s.busy} role="status">
+          翻译中…
+        </div>
       )}
 
       {/* 划词小释义卡：fixed 定位挂在视口上，不参与窗口自适应的 scrollHeight 测量 */}

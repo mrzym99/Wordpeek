@@ -1,4 +1,4 @@
-import type { LegacyRef } from "react";
+import type { LegacyRef, ReactNode } from "react";
 import s from "./index.module.css";
 
 /**
@@ -14,6 +14,7 @@ export default function SourceBox({
   rows = 3,
   placeholder,
   label,
+  action,
   textareaRef,
 }: {
   value: string;
@@ -25,17 +26,27 @@ export default function SourceBox({
   placeholder?: string;
   /** 框头标签（如「原文」），不传则不显示 */
   label?: string;
+  /** 标签行右侧的附加按钮（如「对比各源」）：与标签同一行，不另占高度 */
+  action?: ReactNode;
   /** 需要外部聚焦输入框时传入 ref（输入翻译窗口唤起时聚焦） */
   textareaRef?: LegacyRef<HTMLTextAreaElement>;
 }) {
   return (
     <div className={s.box}>
-      {label && <span className={s.label}>{label}</span>}
+      {(label || action) && (
+        <div className={s.labelRow}>
+          {label && <span className={s.label}>{label}</span>}
+          {action}
+        </div>
+      )}
       <textarea
         ref={textareaRef}
         className={s.text}
         value={value}
         rows={rows}
+        // rows 在新 WebView2 里会被 field-sizing: content 盖掉（空框只有 min-height 56px），
+        // 这里按行数补一个下限，新旧内核都拿到同样高的框
+        style={{ minHeight: `calc(${rows} * 1.65em + 16px)` }}
         placeholder={placeholder}
         spellCheck={false}
         onChange={(e) => onChange(e.target.value)}

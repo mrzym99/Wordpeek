@@ -61,7 +61,10 @@ export default function SettingsPage() {
           {section === "translate" && <TranslateTab f={f} />}
           {section === "hotkey" && <HotkeyTab f={f} />}
           {section === "perm" && IS_MAC && <PermTab />}
-          {section === "about" && <AboutTab />}
+          {/* 常驻不卸载：切 tab 回来时更新检查/下载进度仍在（下载中切走再回来不重置） */}
+          <div hidden={section !== "about"}>
+            <AboutTab />
+          </div>
 
           <div className={s.footer}>
             {f.saveError && <span className={s.saveError}>{f.saveError}</span>}

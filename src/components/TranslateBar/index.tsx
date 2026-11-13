@@ -1,5 +1,6 @@
 import { ArrowRightIcon } from "../icons";
 import LangToggle, { type LangOption } from "../LangToggle";
+import type { ReactNode } from "react";
 import s from "./index.module.css";
 
 export type TranslateTo = "auto" | "en" | "zh";
@@ -18,10 +19,12 @@ interface Props {
   busy?: boolean;
   /** 只是没内容可翻（如输入框为空） */
   disabled?: boolean;
+  /** 右侧附加按钮（如输入窗口的「对比各源」），排在执行按钮左边；截图卡片不传 */
+  extra?: ReactNode;
 }
 
 /** 目标语言切换 + 执行按钮。输入窗口与截图卡片共用，左边切换、右边执行 */
-export default function TranslateBar({ to, onPick, onRun, busy, disabled }: Props) {
+export default function TranslateBar({ to, onPick, onRun, busy, disabled, extra }: Props) {
   return (
     <div className={s.bar}>
       <LangToggle
@@ -31,9 +34,12 @@ export default function TranslateBar({ to, onPick, onRun, busy, disabled }: Prop
         disabled={busy}
         ariaLabel="目标语言"
       />
-      <button className="text-btn" disabled={busy || disabled} onClick={onRun}>
-        {busy ? "翻译中…" : "翻译"}
-      </button>
+      <div className={s.right}>
+        {extra}
+        <button className="text-btn" disabled={busy || disabled} onClick={onRun}>
+          {busy ? "翻译中…" : "翻译"}
+        </button>
+      </div>
     </div>
   );
 }
