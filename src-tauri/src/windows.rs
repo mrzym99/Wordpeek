@@ -86,6 +86,34 @@ fn center_window(win: &tauri::WebviewWindow) {
     let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
 }
 
+/// 藏起窗口并返回藏之前的真实可见性（供事后恢复）
+pub(crate) fn hide_window(app: &AppHandle, label: &str) -> bool {
+    match app.get_webview_window(label) {
+        Some(w) if w.is_visible().unwrap_or(false) => {
+            let _ = w.hide();
+            true
+        }
+        _ => false,
+    }
+}
+
+/// 按记录的可见性恢复窗口（和 hide_window 配对，各调用点共用同一对 label）
+pub(crate) fn show_window(app: &AppHandle, label: &str, was_visible: bool) {
+    if was_visible {
+        if let Some(w) = app.get_webview_window(label) {
+            let _ = w.show();
+        }
+    }
+}
+
+/// 开始翻译就把设置窗关掉：截图/输入/划词都会激活 App，激活时 macOS 会把还开着的设置窗
+/// 一起带到卡片下面（用户看到的「设置页面跟一起弹出来」）；设置窗本来就是用完即弃（点 ✕ 即销毁）
+pub(crate) fn close_settings(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("settings") {
+        let _ = w.close();
+    }
+}
+
 /// 已存在则 show+置前；没建过就在事件循环线程按需创建为隐藏态（内容就绪后前端自己 show），首次创建居中。
 /// macOS 用 Overlay 标题栏（交通灯浮在自绘头部上）；drag_drop: true 加 disable_drag_drop_handler（设置窗要拖拽排序）；
 /// borderless: true 建为无边框透明置顶小窗（划词切换 HUD），已存在时只 show 不抢焦点
@@ -253,6 +281,8 @@ pub(crate) fn open_settings(app: AppHandle) {
 
 /// 显示输入翻译窗口（托盘菜单/快捷键共用）。点 ✕ 即销毁，回收常驻 WebView2 renderer（~60MB）
 pub(crate) fn open_input_window(app: &AppHandle) {
+    // 先关掉设置窗：输入窗抢前台时 App 激活会把它一起带到卡片下面
+    close_settings(app);
     spawn_or_show_window(
         app,
         "input",

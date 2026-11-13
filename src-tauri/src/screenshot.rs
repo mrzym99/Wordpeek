@@ -3,6 +3,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::windows::{hide_window, show_window};
 use crate::{translate, FlagGuard};
 
 /// 截图进行中的去重标志：连按热键时后一场直接忽略（两个会话会抢同一扇遮罩窗）
@@ -27,35 +28,14 @@ fn alert_permission(app: &AppHandle, message: &str, kind: crate::platform::Permi
     }
 }
 
-/// 截图会话状态：触发时保存全屏快照与设置窗口可见性，finish 时再裁剪
+/// 截图会话状态：触发时保存全屏快照，finish 时再裁剪
 #[derive(Default)]
 pub(crate) struct ScreenshotState(parking_lot::Mutex<ScreenshotSession>);
 
 #[derive(Default)]
 struct ScreenshotSession {
     screen: Option<crate::capture::CapturedScreen>,
-    settings_was_visible: bool,
     main_was_visible: bool,
-}
-
-/// 藏起自家窗口并返回藏之前的真实可见性（供事后恢复）；与 show_window 是截图会话专用的配对原语
-fn hide_window(app: &AppHandle, label: &str) -> bool {
-    match app.get_webview_window(label) {
-        Some(w) if w.is_visible().unwrap_or(false) => {
-            let _ = w.hide();
-            true
-        }
-        _ => false,
-    }
-}
-
-/// 按会话记录的可见性恢复窗口（和 hide_window 配对，各调用点共用同一对 label）
-fn show_window(app: &AppHandle, label: &str, was_visible: bool) {
-    if was_visible {
-        if let Some(w) = app.get_webview_window(label) {
-            let _ = w.show();
-        }
-    }
 }
 
 /// 本轮触发时刻：只用于打印「触发→遮罩出现」的链路耗时，定位延迟用
@@ -105,13 +85,11 @@ fn open_session(app: &AppHandle) -> bool {
         }
     }
     // 抓屏前先藏自家窗口：否则设置窗/结果卡片会被拍进截图，且新遮罩弹出时旧卡片还压在屏幕上
-    let was_visible = hide_window(app, "settings");
+    // 设置窗直接关掉：既不会被拍进截图，也不会因 App 激活被带到卡片下面（用完即弃的窗口）
+    crate::windows::close_settings(app);
     let main_was_visible = hide_window(app, "main");
-    // 抓屏失败/找不到遮罩窗时要恢复刚才藏掉的窗口，否则设置窗凭空消失
-    let restore_windows = || {
-        show_window(app, "settings", was_visible);
-        show_window(app, "main", main_was_visible);
-    };
+    // 抓屏失败/找不到遮罩窗时要恢复刚才藏掉的主窗，否则卡片凭空消失
+    let restore_windows = || show_window(app, "main", main_was_visible);
     let screen = match crate::platform::capture_virtual_screen() {
         Ok(s) => s,
         Err(e) => {
@@ -145,7 +123,6 @@ fn open_session(app: &AppHandle) -> bool {
     {
         let mut session = state.0.lock();
         session.screen = Some(screen);
-        session.settings_was_visible = was_visible;
         session.main_was_visible = main_was_visible;
     }
 
@@ -282,7 +259,6 @@ pub(crate) fn screenshot_finish(app: AppHandle, x: i32, y: i32, w: i32, h: i32) 
     let state = app.state::<ScreenshotState>();
     let mut session = state.0.lock();
     let screen = session.screen.take().ok_or("没有进行中的截图会话")?;
-    let was_visible = session.settings_was_visible;
     let win = app.get_webview_window("screenshot").ok_or("截图窗口不存在")?;
     let _ = win.hide();
     // 松手瞬间的光标位置（物理像素），结果卡片弹到鼠标旁边；OCR 完再取会被用户移走
@@ -345,9 +321,6 @@ pub(crate) fn screenshot_finish(app: AppHandle, x: i32, y: i32, w: i32, h: i32) 
             Err(e) => shot_payload(false, None, None, Some(e), &ctx),
         };
         let _ = app.emit_to("main", "screenshot-result", payload);
-
-        // 截图前设置窗口可见则恢复
-        show_window(&app, "settings", was_visible);
     });
     Ok(())
 }
@@ -365,15 +338,12 @@ pub(crate) fn screenshot_cancel(app: AppHandle) {
         if session.screen.is_none() {
             return;
         }
-        let was_visible = session.settings_was_visible;
         let main_was_visible = session.main_was_visible;
         session.screen = None;
-        session.settings_was_visible = false;
         session.main_was_visible = false;
         if let Some(win) = app.get_webview_window("screenshot") {
             let _ = win.hide();
         }
-        show_window(&app, "settings", was_visible);
         show_window(&app, "main", main_was_visible);
     }
     println!("[screenshot] cancelled");

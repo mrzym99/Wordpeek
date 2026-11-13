@@ -2,9 +2,10 @@
 //! 该端点是官方 App / Chrome 扩展自己走的匿名翻译路径，比网页版 jsonrpc（已被 WAF 封杀）稳定。
 //! 参考实现：DeepLX（github.com/OwO-Network/DeepLX）translate/translate.go。
 //!
-//! 为什么走 curl.exe 子进程而不是 reqwest：DeepL 风控认 TLS 指纹，实测
+//! 为什么走系统 curl 子进程而不是 reqwest：DeepL 风控认 TLS 指纹，实测
 //! reqwest 的 rustls 和 schannel(native-tls) 指纹一律 429，只有系统 curl
-//! （Win10 1803+ 自带，Schannel 指纹）能过。子进程开销约 100ms，划词场景无感。
+//! （Windows 是 Schannel 指纹的 curl.exe，macOS 是 SecureTransport 的 /usr/bin/curl）能过。
+//! 子进程开销约 100ms，划词场景无感。
 //! 风险点：DeepL App Store 换版本后 app_version 过期会全 IP 429，届时更新下面三个常量。
 
 use std::process::Stdio;
@@ -49,7 +50,8 @@ async fn translate_deepl(text: &str, to: &str) -> Result<WordInfo, String> {
     });
 
     // Authorization: None 是字面量——匿名档的认证标记，缺了走另一条服务端分支
-    let mut cmd = tokio::process::Command::new("curl.exe");
+    // Windows 的可执行名叫 curl.exe（Win10 1803+ 自带）；macOS 叫 curl，硬写 curl.exe 会 spawn ENOENT
+    let mut cmd = tokio::process::Command::new(if cfg!(windows) { "curl.exe" } else { "curl" });
     cmd.args([
         "-s",
         "--max-time",

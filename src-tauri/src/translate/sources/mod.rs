@@ -9,9 +9,6 @@ use crate::translate::{AppConfig, WordInfo};
 /// 网页端免 Key 接口都按浏览器 UA 放行
 pub(crate) const WEB_UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15";
 
-/// 降级源单独给短超时：境外端点不通时会挂到 15s，把整条链拖死
-pub(crate) const FALLBACK_TIMEOUT: Duration = Duration::from_secs(6);
-
 /// 全局共享的 HTTP 客户端：连接池只建一次（曾每次 Client::new()，高频调用内存缓慢上涨）
 pub(crate) fn http() -> &'static reqwest::Client {
     static HTTP: OnceLock<reqwest::Client> = OnceLock::new();
@@ -58,8 +55,6 @@ pub(crate) trait TranslateSource: Sync {
 static SOURCES: &[(&str, &dyn TranslateSource)] = &[
     ("youdao", &youdao_dict::YoudaoDict),
     ("bing", &bing::Bing),
-    ("youdaoai", &youdao_ai::YouDaoAi),
-    ("glm", &glm::Glm),
     ("deepl", &deepl::Deepl),
 ];
 
@@ -70,8 +65,6 @@ pub(crate) fn find_source(id: &str) -> Option<&'static dyn TranslateSource> {
 
 pub(crate) mod bing;
 pub(crate) mod deepl;
-pub(crate) mod glm;
-pub(crate) mod youdao_ai;
 pub(crate) mod youdao_dict;
 
 #[cfg(test)]
@@ -80,7 +73,7 @@ mod tests {
 
     #[test]
     fn registry_contains_all_declared_sources() {
-        for id in ["youdao", "bing", "youdaoai", "glm", "deepl"] {
+        for id in ["youdao", "bing", "deepl"] {
             assert!(find_source(id).is_some(), "注册表缺源: {id}");
         }
         assert!(find_source("nope").is_none());

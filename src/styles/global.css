@@ -97,8 +97,8 @@ body,
 .card {
   position: relative;
   /* 卡片贴窗口边缘：系统原生缩放的缩放光标正好落在卡片边框上。
-     阴影已去掉，不再需要透明阴影画布；窗口边缘 = 卡片边框。
-     margin 决定 autofit 的 CARD_CHROME=35 与 Popup 的 chrome=67，改这里要同步改两处 */
+     投影交给系统（Windows DWM / macOS 窗口 shadow），不需要 CSS 阴影画布，
+     窗口边缘 = 卡片边框。margin 决定 autofit 的 CARD_CHROME=35 与 Popup 的 chrome=67，改这里要同步改两处 */
   margin: 0;
   height: 100%;
   box-sizing: border-box;
@@ -117,6 +117,14 @@ body,
 .card,
 .layout {
   -webkit-font-smoothing: antialiased;
+}
+
+/* macOS 无边框透明窗系统不给圆角（Windows 交给 DWM），只能自己画；
+   投影跟着窗口内容的 alpha 走（tauri.conf.json 的 shadow），圆角形状也会被跟随，
+   所以不用留透明边距画 CSS 阴影，卡片贴边、缩放光标仍落在卡片边框上 */
+:root[data-os="mac"] .card {
+  border-radius: var(--r-lg);
+  border: 1px solid var(--line);
 }
 
 /* 只收缩不拉伸（flex: 0 1 auto）否则自适应退化；max-height 让顶到屏幕上限后剩余内容框内滚动 */

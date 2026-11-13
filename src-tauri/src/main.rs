@@ -239,7 +239,6 @@ fn main() {
             translate::translate,
             translate::get_config,
             translate::save_sources,
-            translate::save_glm,
             translate::save_settings,
             translate::save_popup_width,
             translate::save_settings_section,

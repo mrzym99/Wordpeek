@@ -12,19 +12,13 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 
-#[derive(Serialize, Deserialize, Clone, Default)]
-pub struct GlmConfig {
-    #[serde(default)]
-    pub apikey: String,
-}
-
 /// 应用配置，持久化在 app_config_dir/config.json
 #[derive(Serialize, Deserialize, Clone)]
 pub struct AppConfig {
     /// 旧字段：曾用于「百度启用为主源」，现仅作迁移依据（见 migrate_sources）
     #[serde(default = "default_source")]
     pub source: String,
-    /// 句子翻译源勾选（有 序即降级链）：deepl/bing 至少保留一个；glm 已下线（仅作后端源保留）
+    /// 句子翻译主源（单选，设置页互斥）："deepl" | "bing"；必应永远在链尾兜底
     #[serde(default = "default_sources")]
     pub sources: Vec<String>,
     #[serde(default = "default_hotkey")]
@@ -51,8 +45,6 @@ pub struct AppConfig {
     /// 选中文字后在光标旁弹翻译按钮（默认开）
     #[serde(default = "default_selection_icon")]
     pub selection_icon: bool,
-    #[serde(default)]
-    pub glm: GlmConfig,
 }
 
 fn default_source() -> String {
@@ -96,22 +88,21 @@ fn default_selection_icon() -> bool {
 }
 
 fn default_sources() -> Vec<String> {
-    vec!["deepl".into(), "bing".into()]
+    // 句子主源单选（设置页互斥）；必应永远在链尾兜底，不靠这个字段
+    vec!["deepl".into()]
 }
 
-/// 老配置迁移：句子源多选勾选归一化——只留 deepl/bing（glm 已下线，丢弃），
+/// 老配置迁移：句子源多选勾选归一化——只留 deepl/bing，
 /// 按固定顺序去重，空则回默认；旧 sentence_source 字段由 serde 忽略
 fn migrate_sources(cfg: &mut AppConfig) {
-    let has = |id: &str, v: &[String]| v.iter().any(|s| s == id);
-    let (deepl, bing) = (
-        has("deepl", &cfg.sources),
-        has("bing", &cfg.sources),
-    );
-    cfg.sources = match (deepl, bing) {
-        (true, true) => vec!["deepl".into(), "bing".into()],
-        (true, false) => vec!["deepl".into()],
-        (false, true) => vec!["bing".into()],
-        (false, false) => default_sources(),
+    let has = |id: &str| cfg.sources.iter().any(|s| s == id);
+    // 句子源已改成单选：老配置里 deepl+bing 同时勾的收敛到 deepl（必应永远在链尾兜底）
+    cfg.sources = if has("deepl") {
+        vec!["deepl".into()]
+    } else if has("bing") {
+        vec!["bing".into()]
+    } else {
+        default_sources()
     };
 }
 
@@ -129,7 +120,6 @@ impl Default for AppConfig {
             settings_section: default_settings_section(),
             selection_icon: default_selection_icon(),
             theme: default_theme(),
-            glm: GlmConfig::default(),
         }
     }
 }
@@ -232,22 +222,7 @@ pub fn load_config(app: &AppHandle) -> AppConfig {
 
 #[tauri::command]
 pub fn get_config(state: State<SharedConfig>) -> AppConfig {
-    let mut cfg = state.lock().clone();
-    // 密钥打码后再发：明文密钥不该离开后端；设置页保存时 "***" 按未修改处理
-    if !cfg.glm.apikey.is_empty() {
-        cfg.glm.apikey = "***".into();
-    }
-    cfg
-}
-
-/// 打码后的密钥按「保持原值」处理，否则设置页回显的掩码会把真密钥覆盖掉
-fn keep_masked(masked: &str, current: &str) -> String {
-    let t = masked.trim();
-    if t == "***" {
-        current.to_string()
-    } else {
-        t.to_string()
-    }
+    state.lock().clone()
 }
 
 /// 模块化落盘：以后端当前配置为基底，只改调用方负责的字段后整体写回，杜绝「一处保存覆盖另一处」
@@ -298,26 +273,12 @@ pub fn save_sources(
         return Err("句子翻译至少保留一个源：DeepL 或 必应".into());
     }
     persist(app, state, |c| {
-        // 归一化：只认 deepl/bing，固定顺序
-        c.sources = match (has("deepl"), has("bing")) {
-            (true, true) => vec!["deepl".into(), "bing".into()],
-            (true, false) => vec!["deepl".into()],
-            _ => vec!["bing".into()],
+        // 归一化：单选，只认 deepl/bing（老调用方可能传两个，deepl 优先）
+        c.sources = if has("deepl") {
+            vec!["deepl".into()]
+        } else {
+            vec!["bing".into()]
         };
-    })
-}
-
-/// 智谱 GLM API key（源配置 tab）
-#[tauri::command]
-pub fn save_glm(
-    app: AppHandle,
-    state: State<SharedConfig>,
-    apikey: String,
-) -> Result<(), String> {
-    persist(app, state, |c| {
-        c.glm = GlmConfig {
-            apikey: keep_masked(&apikey, &c.glm.apikey),
-        }
     })
 }
 
@@ -511,16 +472,16 @@ mod tests {
     }
 
     #[test]
-    fn migrate_sources_normalizes_deepl_bing() {
-        // 新配置无勾选：默认 DeepL + 必应
+    fn migrate_sources_normalizes_to_single_source() {
+        // 新配置无勾选：默认 DeepL（必应永远在链尾兜底）
         let mut cfg: AppConfig = serde_json::from_str("{}").unwrap();
         migrate_sources(&mut cfg);
-        assert_eq!(cfg.sources, vec!["deepl", "bing"]);
-        // 旧勾选（含已下线的 glm）只留 deepl/bing，按固定顺序去重
+        assert_eq!(cfg.sources, vec!["deepl"]);
+        // 老配置同时勾了 deepl+bing（还带未知 id）：收敛到 deepl
         let mut cfg: AppConfig =
             serde_json::from_str(r#"{"sources":["bing","glm","deepl"]}"#).unwrap();
         migrate_sources(&mut cfg);
-        assert_eq!(cfg.sources, vec!["deepl", "bing"]);
+        assert_eq!(cfg.sources, vec!["deepl"]);
         // 只勾必应：保留单选
         let mut cfg: AppConfig = serde_json::from_str(r#"{"sources":["bing"]}"#).unwrap();
         migrate_sources(&mut cfg);
@@ -528,18 +489,18 @@ mod tests {
         // 勾选为空/全不可用：回默认
         let mut cfg: AppConfig = serde_json::from_str(r#"{"sources":["glm"]}"#).unwrap();
         migrate_sources(&mut cfg);
-        assert_eq!(cfg.sources, vec!["deepl", "bing"]);
+        assert_eq!(cfg.sources, vec!["deepl"]);
     }
 
     #[test]
     fn legacy_baidu_primary_migrates_to_default_sources() {
-        // 旧「启用为主源」= source: "baidu"；百度源已下线，归默认句子源 DeepL/必应
+        // 旧「启用为主源」= source: "baidu"；百度源已下线（Depl 可能已勾过）→ 句子主源 Deepl
         let mut cfg: AppConfig = serde_json::from_str(
             r#"{"source":"baidu","baidu":{"appid":"a","secret":"b"}}"#,
         )
         .unwrap();
         migrate_sources(&mut cfg);
-        assert_eq!(cfg.sources, vec!["deepl", "bing"]);
+        assert_eq!(cfg.sources, vec!["deepl"]);
     }
 
     #[test]

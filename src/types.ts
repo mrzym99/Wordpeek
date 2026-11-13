@@ -5,10 +5,6 @@ export interface Selection {
   y: number;
 }
 
-export interface GlmConfig {
-  apikey: string;
-}
-
 /** 配置文件结构（与后端 AppConfig 对应，snake_case） */
 export interface AppConfig {
   source: string;
@@ -24,8 +20,6 @@ export interface AppConfig {
   settings_section?: string;
   theme?: "system" | "light" | "dark";
   selection_icon?: boolean;
-  /** 老配置缺字段时后端 serde 补默认 */
-  glm?: GlmConfig;
 }
 
 export interface UpdateStatus {

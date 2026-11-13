@@ -17,6 +17,7 @@ import logo from "../../assets/logo.png";
 import { useAutoFitWindow } from "../../hooks/useAutoFitWindow";
 import { focusCard, useCardDismiss } from "../../hooks/useCardDismiss";
 import { isSentenceText } from "../../lib/text";
+import { sourceLabel } from "../../lib/sourceLabels";
 
 /** 截图卡固定宽度（逻辑像素）：与输入翻译窗口同宽，原文框才装得下 */
 const SHOT_CARD_WIDTH = 560;
@@ -328,7 +329,6 @@ export default function Popup() {
       )}
       {!inShot && info && info.source !== "youdao" && (
         <SourceBox
-          label="原文"
           value={word}
           onChange={setWord}
           rows={2}
@@ -354,7 +354,6 @@ export default function Popup() {
         <>
           {shotResult.text && (
             <SourceBox
-              label="原文"
               value={draft}
               onChange={setDraft}
               rows={6}
@@ -372,7 +371,7 @@ export default function Popup() {
           {shotResult.error && <div className="error">{shotResult.error}</div>}
           {shotResult.info && (
             <ContentBox
-              label="译文"
+              label={sourceLabel(shotResult.info.source)}
               copied={copied === "translation"}
               onCopy={() => doCopy("translation", shotResult.info!.senses.join("\n"))}
             >
@@ -387,7 +386,7 @@ export default function Popup() {
         <>
           {isSentenceText(info.word) ? (
             <ContentBox
-              label="译文"
+              label={sourceLabel(info.source)}
               copied={copied === "translation"}
               onCopy={() => doCopy("translation", info.senses.join("\n"))}
             >

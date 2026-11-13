@@ -4,25 +4,14 @@
 use crate::translate::{AppConfig, WordInfo};
 use super::sources::find_source;
 
-/// 仅作降级用的免 Key 源：不进「大模型翻译」等按需入口，避免白名单外多跑几个开放 demo 端点
-pub(crate) const FALLBACK_SOURCES: [&str; 1] = ["youdaoai"];
-
-/// 翻译顺序：有道词典（单词，必用）在前；句子源二选一——选了 GLM 先大模型，
-/// 选 DeepL（默认）走 DeepL→必应；免 Key 的有道 AI 永远垫底。
-/// GLM 没 key/请求失败时 capable 过滤与逐源尝试自动落回 DeepL/必应，翻译永远可用
+/// 翻译顺序：有道词典（单词，必用）在前；句子主源（单选）其次；必应永远垫底兜底
 pub(crate) fn build_order(cfg: &AppConfig) -> Vec<String> {
     let mut order = vec!["youdao".into()];
-    // 勾选的句子源按固定顺序进链；两个全没勾（异常配置）兜底必应
-    let has = |id: &str| cfg.sources.iter().any(|s| s == id);
-    if has("deepl") {
+    if cfg.sources.iter().any(|s| s == "deepl") {
         order.push("deepl".into());
     }
-    if has("bing") || !has("deepl") {
-        order.push("bing".into());
-    }
-    for s in FALLBACK_SOURCES {
-        order.push(s.into());
-    }
+    // 必应不靠勾选：主源挂了就用它兜底（选的就是必应时也只进链一次）
+    order.push("bing".into());
     order
 }
 
@@ -82,27 +71,27 @@ mod tests {
 
     #[test]
     fn youdao_is_always_first() {
-        // 默认勾选 DeepL+必应：有道 → DeepL → 必应 → 有道AI 垫底
+        // 默认主源 DeepL：有道 → DeepL → 必应兜底
         let cfg = AppConfig::default();
-        assert_eq!(build_order(&cfg), vec!["youdao", "deepl", "bing", "youdaoai"]);
-        // 只勾必应：DeepL 不进链
+        assert_eq!(build_order(&cfg), vec!["youdao", "deepl", "bing"]);
+        // 主源选必应：DeepL 不进链，必应只进一次
         let mut cfg = AppConfig::default();
         cfg.sources = vec!["bing".into()];
-        assert_eq!(build_order(&cfg), vec!["youdao", "bing", "youdaoai"]);
-        // 两个全没勾（异常配置）：兜底必应
+        assert_eq!(build_order(&cfg), vec!["youdao", "bing"]);
+        // 主源为空（异常配置）：只剩必应兜底
         let mut cfg = AppConfig::default();
         cfg.sources.clear();
-        assert_eq!(build_order(&cfg), vec!["youdao", "bing", "youdaoai"]);
+        assert_eq!(build_order(&cfg), vec!["youdao", "bing"]);
     }
 
     #[test]
     fn capable_order_filters_by_supports_and_ready() {
         let mut cfg = AppConfig::default();
         // 译为英文：有道词典（仅英→中）被 supports 过滤，DeepL 仍是第一主力
-        assert_eq!(capable_order(&cfg, "en"), vec!["deepl", "bing", "youdaoai"]);
-        // 只勾必应：链里只剩必应 + 兜底
+        assert_eq!(capable_order(&cfg, "en"), vec!["deepl", "bing"]);
+        // 只勾必应：链里只剩必应
         cfg.sources = vec!["bing".into()];
-        assert_eq!(capable_order(&cfg, "zh"), vec!["youdao", "bing", "youdaoai"]);
+        assert_eq!(capable_order(&cfg, "zh"), vec!["youdao", "bing"]);
     }
 
     // 真网络请求：默认忽略，跑法 cargo test -- --ignored

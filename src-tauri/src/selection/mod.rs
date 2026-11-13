@@ -119,6 +119,8 @@ impl SessionManager {
             s.last_text = Some(text.clone());
             s.last_shown_ms = now;
         }
+        // 开始翻译：设置窗（用得着的时候才开）先关掉，免得 App 激活时被一起带到卡片下面
+        crate::windows::close_settings(app);
         let (cx, cy) = crate::geometry::place_below_cursor(app, "main", x, y);
         let _ = app.emit(
             "selection",

@@ -9,6 +9,7 @@ import SourceBox from "../SourceBox";
 import LoadingOverlay from "../LoadingOverlay";
 import TranslateBar from "../TranslateBar";
 import Phonetic from "../Phonetic";
+import { sourceLabel } from "../../lib/sourceLabels";
 import s from "./index.module.css";
 
 /** 输入翻译窗口（?page=input）：打字/粘贴 → 默认翻译；勾选源按「对比各源」按需逐个补 */
@@ -102,8 +103,8 @@ export default function InputPage() {
           const rows: CompareRow[] = [
             ...(defaultInfo
               ? [{
-                  source: "default",
-                  label: "默认翻译",
+                  source: defaultInfo.source,
+                  label: sourceLabel(defaultInfo.source, "默认翻译"),
                   ok: true,
                   senses: defaultInfo.senses,
                   error: null,
