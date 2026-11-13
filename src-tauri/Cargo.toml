@@ -24,7 +24,7 @@ sha2 = "0.10"     # TC3 签名哈希
 image = { version = "0.25", default-features = false, features = ["png"] }
 base64 = "0.22"
 parking_lot = "0.12"
-tokio = { version = "1", features = ["time"] }   # 每源翻译超时兜底
+tokio = { version = "1", features = ["time", "process"] }   # 每源翻译超时兜底；deepl 源用 curl 子进程
 tauri-plugin-opener = "2.7.1"
 tauri-plugin-single-instance = "2"   # 禁止多开：第二次启动只唤醒已有实例
 tauri-plugin-dialog = "2"   # 权限缺失时弹原生对话框（Rust 侧调用，前端不需要权限）

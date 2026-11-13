@@ -2,8 +2,6 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { AppConfig } from "../types";
 import {
-  saveBaidu,
-  saveTencent,
   saveSources,
   saveSettings,
 } from "../lib/config";
@@ -17,27 +15,17 @@ export const IS_MAC = navigator.userAgent.includes("Macintosh");
 /** 项目仓库地址，推荐/反馈共用 */
 export const REPO_URL = "https://github.com/mrzym99/Wordpeek";
 
-/** 可配置的额外翻译源：主翻译内置（单词→有道、句子→必应），这里只列额外源 */
-export const SOURCE_ITEMS: { id: string; label: string; needKey: boolean }[] = [
-  { id: "baidu", label: "百度翻译（需密钥）", needKey: true },
-  { id: "tencent", label: "腾讯翻译（需密钥）", needKey: true },
+/** 可配置的句子翻译源：有道词典（单词）内置必用；deepl/bing 自由勾选，至少留一个 */
+export const SOURCE_ITEMS: { id: string; label: string }[] = [
+  { id: "deepl", label: "DeepL 翻译（免 Key）" },
+  { id: "bing", label: "必应翻译（免 Key）" },
 ];
-
-/** 密钥字段是否都已填写（勾选需密钥源的前提） */
-const keysReady = (a: string, b: string) => a.trim() !== "" && b.trim() !== "";
 
 /** 设置窗口各页共用的配置表单状态与动作。
  *  状态全在这一处（切页不丢），各 Tab 组件只管渲染自己那一块 */
 export function useConfigForm() {
-  const [builtin, setBuiltin] = useState(true);
-  const [sources, setSources] = useState<string[]>([]);
-  const [dragId, setDragId] = useState("");
-  const [appid, setAppid] = useState("");
-  const [secret, setSecret] = useState("");
-  const [tcId, setTcId] = useState("");
-  const [tcKey, setTcKey] = useState("");
-  // 源配置手风琴展开的源（"" = 全部收起）
-  const [cfgSrc, setCfgSrc] = useState<"baidu" | "tencent" | "">("baidu");
+  // 句子翻译源勾选（deepl/bing，至少一个）
+  const [sources, setSources] = useState<string[]>(["deepl", "bing"]);
   const [hotkey, setHotkey] = useState("Alt+Z");
   const [screenshotHotkey, setScreenshotHotkey] = useState("Alt+S");
   const [inputHotkey, setInputHotkey] = useState("Alt+X");
@@ -59,13 +47,11 @@ export function useConfigForm() {
       invoke<AppConfig>("get_config")
         .then((cfg) => {
           if (cancelled) return;
-          setBuiltin(cfg.builtin_sources ?? true);
-          setAppid(cfg.baidu.appid);
-          setSecret(cfg.baidu.secret);
-          setTcId(cfg.tencent?.secret_id ?? "");
-          setTcKey(cfg.tencent?.secret_key ?? "");
-          // 配置里勾着需密钥的源但密钥为空：本地显示为未勾选（下次保存会真正剥掉）
-          setSources((cfg.sources ?? []).filter((s) => sourceReady(s, cfg)));
+          setSources(
+            Array.isArray(cfg.sources) && cfg.sources.length > 0
+              ? cfg.sources
+              : ["deepl", "bing"]
+          );
           setHotkey(cfg.hotkey || "Alt+Z");
           setScreenshotHotkey(cfg.screenshot_hotkey || "Alt+S");
           setInputHotkey(cfg.input_hotkey || "Alt+X");
@@ -92,85 +78,31 @@ export function useConfigForm() {
     };
   }, []);
 
-  // 某个源的密钥是否就绪：配置加载后表单即真实值
-  const ready = (id: string) =>
-    id === "baidu" ? keysReady(appid, secret) : id === "tencent" ? keysReady(tcId, tcKey) : true;
-
   const flashSaved = () => {
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
   };
 
-  // 保存密钥后同步本地勾选（密钥清空时后端自动剥掉对应源）；
-  // 失败必须上抖，否则界面显示「已保存」而密钥没落盘
-  const syncAfterKeySave = async (id: string, isReady: boolean, save: () => Promise<unknown>) => {
-    await save();
-    if (!isReady && sources.includes(id)) {
-      const next = sources.filter((s) => s !== id);
-      setSources(next);
-      await saveSources(next, builtin);
-    }
-  };
-
-  const saveBaiduKeys = async () => {
-    setSaveError("");
-    try {
-      await syncAfterKeySave("baidu", keysReady(appid, secret), () => saveBaidu(appid, secret));
-      flashSaved();
-    } catch (err) {
-      setSaveError(String(err));
-    }
-  };
-
-  const saveTencentKeys = async () => {
-    setSaveError("");
-    try {
-      await syncAfterKeySave("tencent", keysReady(tcId, tcKey), () => saveTencent(tcId, tcKey));
-      flashSaved();
-    } catch (err) {
-      setSaveError(String(err));
-    }
-  };
-
-  // 约束提示：至少保留一个源；3s 后自动清除
+  // 约束提示：3s 后自动清除
   const denyToggle = (msg: string) => {
     setSaveError(msg);
     setTimeout(() => setSaveError(""), 3000);
   };
 
-  // 内置默认源开关：关掉它是唯一源时禁止
-  const toggleBuiltin = () => {
-    if (builtin && sources.length === 0) {
-      denyToggle("至少保留一个翻译源");
-      return;
-    }
-    const next = !builtin;
-    setBuiltin(next);
-    saveSources(sources, next).catch((e) => setSaveError(String(e)));
-  };
-
-  // 额外源勾选/取消：默认源已关闭时，不能取消最后一个额外源
+  // 句子源勾选：取消最后一个句子源时拦下（deepl/bing 至少留一个）
   const toggleSource = (id: string) => {
-    if (sources.includes(id) && !builtin && sources.length === 1) {
-      denyToggle("至少保留一个翻译源");
+    const next = sources.includes(id)
+      ? sources.filter((s) => s !== id)
+      : [...sources, id];
+    if (next.length === 0) {
+      denyToggle("句子翻译至少保留一个源：DeepL 或 必应");
       return;
     }
-    const next = sources.includes(id) ? sources.filter((s) => s !== id) : [...sources, id];
     setSources(next);
-    saveSources(next, builtin).catch((e) => setSaveError(String(e)));
+    saveSources(next).catch((e) => setSaveError(String(e)));
   };
 
-  // 拖拽排序：把 from 插到 to 之前
-  const moveSource = (from: string, to: string) => {
-    if (!from || from === to) return;
-    const next = sources.filter((s) => s !== from);
-    const at = next.indexOf(to);
-    next.splice(at < 0 ? next.length : at, 0, from);
-    setSources(next);
-    saveSources(next, builtin).catch((e) => setSaveError(String(e)));
-  };
-
-  // 快捷键 + OCR 语言的统一保存；密钥/翻译源各由自己的模块命令落盘
+  // 快捷键 + OCR 语言的统一保存；密钥/句子源各由自己的模块命令落盘
   const saveGeneral = async () => {
     setSaved(false);
     setSaveError("");
@@ -184,26 +116,13 @@ export function useConfigForm() {
   };
 
   return {
-    builtin, sources, dragId, setDragId,
-    appid, setAppid, secret, setSecret, tcId, setTcId, tcKey, setTcKey,
-    cfgSrc, setCfgSrc, hotkey, setHotkey, screenshotHotkey, setScreenshotHotkey,
+    sources,
+    hotkey, setHotkey, screenshotHotkey, setScreenshotHotkey,
     inputHotkey, setInputHotkey, iconHotkey, setIconHotkey, theme, setTheme, section, setSection,
     saveError, setSaveError, loadFailed, saved,
-    ready, toggleBuiltin, toggleSource, moveSource,
-    saveBaiduKeys, saveTencentKeys, saveGeneral,
+    toggleSource,
+    saveGeneral,
   };
 }
 
 export type ConfigForm = ReturnType<typeof useConfigForm>;
-
-/** 某个源的密钥是否就绪；不依赖组件状态的纯函数（加载时也用） */
-function sourceReady(id: string, cfg: AppConfig) {
-  switch (id) {
-    case "baidu":
-      return keysReady(cfg.baidu?.appid ?? "", cfg.baidu?.secret ?? "");
-    case "tencent":
-      return keysReady(cfg.tencent?.secret_id ?? "", cfg.tencent?.secret_key ?? "");
-    default:
-      return true;
-  }
-}

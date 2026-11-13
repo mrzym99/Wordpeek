@@ -13,20 +13,6 @@
 }
 
 /* 翻译中的遮罩：旧内容不卸载，只盖一层薄雾 + 提示，结果回来才替换 → 卡片只跳一次 */
-.busy {
-  position: absolute;
-  inset: 0;
-  z-index: 3;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--r-sm);
-  background: color-mix(in srgb, var(--wash) 62%, transparent);
-  color: var(--ink-3);
-  font-size: var(--t-small);
-  cursor: progress;
-}
-
 /* 内容高度上限：走 .card-body 的默认口径（33 = padding 16×2 + 1），与 chrome=33 对齐 */
 .layout :global(.card-body) {
   max-height: calc(100vh - 33px);

@@ -344,6 +344,16 @@
   border-radius: var(--r-md);
   overflow: hidden; /* 首行 hover 底色不冒出圆角 */
 }
+.accList + .groupTitle {
+  margin-top: 14px;
+}
+/* 手风琴分组标题：单词 / 句子 */
+.groupTitle {
+  font-size: 12px;
+  color: var(--ink-2);
+  margin-bottom: 6px;
+  padding-left: 2px;
+}
 .accItem + .accItem {
   border-top: 1px solid var(--line);
 }
@@ -410,9 +420,16 @@
   flex-direction: column;
   padding: 0 12px 14px;
 }
-.accBody .saveBtn {
-  align-self: flex-end;
+/* 保存行：已保存/报错提示在左，保存按钮在右 */
+.saveRow {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
   margin-top: 4px;
+}
+.accBody .saveBtn {
+  margin-top: 0;
 }
 
 /* 权限行（仅 macOS）：借用源列表的行外观，但整行不可点，所以不吃 hover 底色 */

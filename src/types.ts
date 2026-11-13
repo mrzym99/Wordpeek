@@ -5,19 +5,14 @@ export interface Selection {
   y: number;
 }
 
-export interface BaiduConfig {
-  appid: string;
-  secret: string;
-}
-
-export interface TencentConfig {
-  secret_id: string;
-  secret_key: string;
+export interface GlmConfig {
+  apikey: string;
 }
 
 /** 配置文件结构（与后端 AppConfig 对应，snake_case） */
 export interface AppConfig {
   source: string;
+  /** 句子翻译源勾选（有序即降级链）：deepl/bing，至少一个 */
   sources: string[];
   hotkey: string;
   screenshot_hotkey: string;
@@ -25,13 +20,12 @@ export interface AppConfig {
   input_hotkey: string;
   /** 切换划词图标的快捷键（老配置缺字段时后端 serde 补默认 Alt+W） */
   icon_hotkey: string;
-  builtin_sources: boolean;
   /** 设置窗口上次停留的一级菜单，重开时恢复 */
   settings_section?: string;
   theme?: "system" | "light" | "dark";
   selection_icon?: boolean;
-  baidu: BaiduConfig;
-  tencent: TencentConfig;
+  /** 老配置缺字段时后端 serde 补默认 */
+  glm?: GlmConfig;
 }
 
 export interface UpdateStatus {
@@ -90,7 +84,7 @@ export interface PermissionStatus {
   screen_capture: boolean;
 }
 
-/** 逐源对比结果（translate_all 命令） */
+/** 按需单源结果（大模型翻译等）：前端自拼行，SourceCompare 渲染 */
 export interface SourceResult {
   source: string;
   label: string;

@@ -4,7 +4,6 @@ mod pipeline;
 mod sources;
 
 pub use pipeline::translate_text;
-use pipeline::{SourceResult, translate_all_sources};
 
 use std::path::{Path, PathBuf};
 use parking_lot::Mutex;
@@ -12,22 +11,11 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use sources::find_source;
 
 #[derive(Serialize, Deserialize, Clone, Default)]
-pub struct BaiduConfig {
+pub struct GlmConfig {
     #[serde(default)]
-    pub appid: String,
-    #[serde(default)]
-    pub secret: String,
-}
-
-#[derive(Serialize, Deserialize, Clone, Default)]
-pub struct TencentConfig {
-    #[serde(default)]
-    pub secret_id: String,
-    #[serde(default)]
-    pub secret_key: String,
+    pub apikey: String,
 }
 
 /// 应用配置，持久化在 app_config_dir/config.json
@@ -36,8 +24,8 @@ pub struct AppConfig {
     /// 旧字段：曾用于「百度启用为主源」，现仅作迁移依据（见 migrate_sources）
     #[serde(default = "default_source")]
     pub source: String,
-    /// 参与翻译的源，按优先级排序（空 = 未设置过，加载时迁移补默认）
-    #[serde(default)]
+    /// 句子翻译源勾选（有 序即降级链）：deepl/bing 至少保留一个；glm 已下线（仅作后端源保留）
+    #[serde(default = "default_sources")]
     pub sources: Vec<String>,
     #[serde(default = "default_hotkey")]
     pub hotkey: String,
@@ -46,9 +34,6 @@ pub struct AppConfig {
     /// 截图 OCR 识别语言："auto" | "zh" | "en"
     #[serde(default = "default_ocr_lang")]
     pub ocr_lang: String,
-    /// 内置默认源（有道词典/必应翻译）是否启用；关闭后仅用勾选的额外源
-    #[serde(default = "default_builtin_sources")]
-    pub builtin_sources: bool,
     #[serde(default = "default_input_hotkey")]
     pub input_hotkey: String,
     /// 划词图标开关的快捷键：按下翻转 selection_icon，不用进取设置页
@@ -67,9 +52,7 @@ pub struct AppConfig {
     #[serde(default = "default_selection_icon")]
     pub selection_icon: bool,
     #[serde(default)]
-    pub baidu: BaiduConfig,
-    #[serde(default)]
-    pub tencent: TencentConfig,
+    pub glm: GlmConfig,
 }
 
 fn default_source() -> String {
@@ -86,10 +69,6 @@ fn default_screenshot_hotkey() -> String {
 
 fn default_ocr_lang() -> String {
     "auto".into()
-}
-
-fn default_builtin_sources() -> bool {
-    true
 }
 
 fn default_input_hotkey() -> String {
@@ -116,36 +95,24 @@ fn default_selection_icon() -> bool {
     true
 }
 
-/// 默认无额外源：主翻译内置（单词→有道、句子→必应），额外源由用户自己勾选
 fn default_sources() -> Vec<String> {
-    Vec::new()
+    vec!["deepl".into(), "bing".into()]
 }
 
-/// 只保留合法的额外源并去重：内置化的 youdao/bing/youdaoai、没配密钥的源（如百度）都剥掉，
-/// 否则会重复出现在对比区。空列表合法——主翻译不依赖额外源。
-pub(crate) fn enabled_sources(cfg: &AppConfig) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    for s in &cfg.sources {
-        let usable = match s.as_str() {
-            // 内置化的源不作额外源，避免对比区重复主翻译
-            "youdao" | "bing" | "youdaoai" => false,
-            _ => find_source(s).is_some_and(|src| src.ready(cfg)),
-        };
-        if usable && !out.contains(s) {
-            out.push(s.clone());
-        }
-    }
-    out
-}
-
-/// 老配置迁移：source = "baidu" 曾表「百度作主源」，等价于勾选百度作额外源
+/// 老配置迁移：句子源多选勾选归一化——只留 deepl/bing（glm 已下线，丢弃），
+/// 按固定顺序去重，空则回默认；旧 sentence_source 字段由 serde 忽略
 fn migrate_sources(cfg: &mut AppConfig) {
-    if !cfg.sources.is_empty() {
-        return;
-    }
-    if cfg.source == "baidu" {
-        cfg.sources.push("baidu".into());
-    }
+    let has = |id: &str, v: &[String]| v.iter().any(|s| s == id);
+    let (deepl, bing) = (
+        has("deepl", &cfg.sources),
+        has("bing", &cfg.sources),
+    );
+    cfg.sources = match (deepl, bing) {
+        (true, true) => vec!["deepl".into(), "bing".into()],
+        (true, false) => vec!["deepl".into()],
+        (false, true) => vec!["bing".into()],
+        (false, false) => default_sources(),
+    };
 }
 
 impl Default for AppConfig {
@@ -158,13 +125,11 @@ impl Default for AppConfig {
             ocr_lang: default_ocr_lang(),
             input_hotkey: default_input_hotkey(),
             icon_hotkey: default_icon_hotkey(),
-            builtin_sources: default_builtin_sources(),
             popup_width: default_popup_width(),
             settings_section: default_settings_section(),
             selection_icon: default_selection_icon(),
             theme: default_theme(),
-            baidu: BaiduConfig::default(),
-            tencent: TencentConfig::default(),
+            glm: GlmConfig::default(),
         }
     }
 }
@@ -269,17 +234,8 @@ pub fn load_config(app: &AppHandle) -> AppConfig {
 pub fn get_config(state: State<SharedConfig>) -> AppConfig {
     let mut cfg = state.lock().clone();
     // 密钥打码后再发：明文密钥不该离开后端；设置页保存时 "***" 按未修改处理
-    if !cfg.baidu.appid.is_empty() {
-        cfg.baidu.appid = "***".into();
-    }
-    if !cfg.baidu.secret.is_empty() {
-        cfg.baidu.secret = "***".into();
-    }
-    if !cfg.tencent.secret_id.is_empty() {
-        cfg.tencent.secret_id = "***".into();
-    }
-    if !cfg.tencent.secret_key.is_empty() {
-        cfg.tencent.secret_key = "***".into();
+    if !cfg.glm.apikey.is_empty() {
+        cfg.glm.apikey = "***".into();
     }
     cfg
 }
@@ -312,7 +268,6 @@ fn persist<F: FnOnce(&mut AppConfig)>(
         for h in [&cfg.hotkey, &cfg.screenshot_hotkey, &cfg.input_hotkey, &cfg.icon_hotkey] {
             crate::hotkeys::parse_hotkey(h)?;
         }
-        cfg.sources = enabled_sources(&cfg);
         *guard = cfg.clone();
         cfg
     };
@@ -331,51 +286,37 @@ fn persist<F: FnOnce(&mut AppConfig)>(
     Ok(())
 }
 
-/// 翻译源（翻译源 tab）：至少保留一个源的约束只在这里拦——删密钥的自动剥离允许清空到零
+/// 句子翻译源勾选（翻译源 tab）：deepl/bing 可自由勾选，至少保留一个
 #[tauri::command]
 pub fn save_sources(
     app: AppHandle,
     state: State<SharedConfig>,
     sources: Vec<String>,
-    builtin_sources: bool,
 ) -> Result<(), String> {
-    if !builtin_sources && sources.is_empty() {
-        return Err("至少保留一个翻译源：请先勾选额外源，再关闭默认源".into());
+    let has = |id: &str| sources.iter().any(|s| s == id);
+    if !has("deepl") && !has("bing") {
+        return Err("句子翻译至少保留一个源：DeepL 或 必应".into());
     }
     persist(app, state, |c| {
-        c.sources = sources;
-        c.builtin_sources = builtin_sources;
+        // 归一化：只认 deepl/bing，固定顺序
+        c.sources = match (has("deepl"), has("bing")) {
+            (true, true) => vec!["deepl".into(), "bing".into()],
+            (true, false) => vec!["deepl".into()],
+            _ => vec!["bing".into()],
+        };
     })
 }
 
-/// 百度密钥（源配置 tab）
+/// 智谱 GLM API key（源配置 tab）
 #[tauri::command]
-pub fn save_baidu(
+pub fn save_glm(
     app: AppHandle,
     state: State<SharedConfig>,
-    appid: String,
-    secret: String,
+    apikey: String,
 ) -> Result<(), String> {
     persist(app, state, |c| {
-        c.baidu = BaiduConfig {
-            appid: keep_masked(&appid, &c.baidu.appid),
-            secret: keep_masked(&secret, &c.baidu.secret),
-        }
-    })
-}
-
-/// 腾讯云密钥（源配置 tab）
-#[tauri::command]
-pub fn save_tencent(
-    app: AppHandle,
-    state: State<SharedConfig>,
-    secret_id: String,
-    secret_key: String,
-) -> Result<(), String> {
-    persist(app, state, |c| {
-        c.tencent = TencentConfig {
-            secret_id: keep_masked(&secret_id, &c.tencent.secret_id),
-            secret_key: keep_masked(&secret_key, &c.tencent.secret_key),
+        c.glm = GlmConfig {
+            apikey: keep_masked(&apikey, &c.glm.apikey),
         }
     })
 }
@@ -557,24 +498,6 @@ pub async fn translate(
     translate_text(&cfg, &text, to).await
 }
 
-/// 对比命令：一次列出各勾选源译文（输入翻译窗口 / 划词卡片「对比各源」按钮）。Tauri 要求带
-/// State 的 async 命令必须返回 Result，这里恒为 Ok——单源失败已在各自行里呈现，不让整次对比失败
-#[tauri::command]
-pub async fn translate_all(
-    state: State<'_, SharedConfig>,
-    text: String,
-    to: Option<String>,
-    // false = 只请求额外源（默认翻译的结果前端复用主卡片数据，不重复请求）
-    include_builtin: Option<bool>,
-) -> Result<Vec<SourceResult>, String> {
-    let cfg = state.lock().clone();
-    let include_builtin = include_builtin.unwrap_or(true);
-    Ok(
-        translate_all_sources(&cfg, &text, resolve_to(&text, to.as_deref()), include_builtin)
-            .await,
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -588,54 +511,35 @@ mod tests {
     }
 
     #[test]
-    fn migrate_sources_keeps_empty_for_old_configs() {
-        // 老配置没有 sources 字段 → 空 Vec 保持为空（额外源是可选项）
+    fn migrate_sources_normalizes_deepl_bing() {
+        // 新配置无勾选：默认 DeepL + 必应
         let mut cfg: AppConfig = serde_json::from_str("{}").unwrap();
-        assert!(cfg.sources.is_empty());
         migrate_sources(&mut cfg);
-        assert!(cfg.sources.is_empty());
-        // 迁移幂等：已有值时不再动
-        cfg.sources = vec!["baidu".into()];
-        let mut again = cfg.clone();
-        migrate_sources(&mut again);
-        assert_eq!(again.sources, vec!["baidu"]);
+        assert_eq!(cfg.sources, vec!["deepl", "bing"]);
+        // 旧勾选（含已下线的 glm）只留 deepl/bing，按固定顺序去重
+        let mut cfg: AppConfig =
+            serde_json::from_str(r#"{"sources":["bing","glm","deepl"]}"#).unwrap();
+        migrate_sources(&mut cfg);
+        assert_eq!(cfg.sources, vec!["deepl", "bing"]);
+        // 只勾必应：保留单选
+        let mut cfg: AppConfig = serde_json::from_str(r#"{"sources":["bing"]}"#).unwrap();
+        migrate_sources(&mut cfg);
+        assert_eq!(cfg.sources, vec!["bing"]);
+        // 勾选为空/全不可用：回默认
+        let mut cfg: AppConfig = serde_json::from_str(r#"{"sources":["glm"]}"#).unwrap();
+        migrate_sources(&mut cfg);
+        assert_eq!(cfg.sources, vec!["deepl", "bing"]);
     }
 
     #[test]
-    fn legacy_baidu_primary_migrates_to_extra_sources() {
-        // 旧「启用为主源」= source: "baidu"，现在等价于勾选百度作额外源
+    fn legacy_baidu_primary_migrates_to_default_sources() {
+        // 旧「启用为主源」= source: "baidu"；百度源已下线，归默认句子源 DeepL/必应
         let mut cfg: AppConfig = serde_json::from_str(
             r#"{"source":"baidu","baidu":{"appid":"a","secret":"b"}}"#,
         )
         .unwrap();
         migrate_sources(&mut cfg);
-        assert_eq!(cfg.sources, vec!["baidu"]);
-    }
-
-    #[test]
-    fn enabled_sources_keeps_only_extra_sources() {
-        let cfg = AppConfig::default();
-        assert!(enabled_sources(&cfg).is_empty());
-        // 有道/必应已内置化：老配置残留的会被剥掉，避免对比区重复主翻译
-        let mut cfg = AppConfig::default();
-        cfg.sources = vec!["youdao".into(), "baidu".into(), "bing".into(), "baidu".into()];
-        assert!(enabled_sources(&cfg).is_empty());
-        cfg.baidu = BaiduConfig {
-            appid: "a".into(),
-            secret: "b".into(),
-        };
-        assert_eq!(enabled_sources(&cfg), vec!["baidu"]);
-        // 腾讯同样需密钥（腾讯云 SecretId/SecretKey）：没配时剥掉，配了才可用
-        cfg.sources = vec!["tencent".into(), "nope".into()];
-        assert!(enabled_sources(&cfg).is_empty());
-        cfg.tencent = TencentConfig {
-            secret_id: "id".into(),
-            secret_key: "key".into(),
-        };
-        assert_eq!(enabled_sources(&cfg), vec!["tencent"]);
-        // 全非法 → 空列表合法（主翻译不受影响）
-        cfg.sources = vec!["nope".into()];
-        assert!(enabled_sources(&cfg).is_empty());
+        assert_eq!(cfg.sources, vec!["deepl", "bing"]);
     }
 
     #[test]

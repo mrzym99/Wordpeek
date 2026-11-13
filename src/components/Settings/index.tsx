@@ -67,13 +67,15 @@ export default function SettingsPage() {
           </div>
 
           <div className={s.footer}>
-            {f.saveError && <span className={s.saveError}>{f.saveError}</span>}
-            {f.saved && !f.saveError && <span className={s.savedTip}>已保存</span>}
-            {/* 源配置的保存按钮在各自手风琴项里；其他页统一走底栏 */}
+            {/* 翻译页的提示在各自手风琴的保存行里，底栏只剩快捷键页在用 */}
             {section === "hotkey" && (
-              <button className={s.saveBtn} onClick={f.saveGeneral}>
-                保存
-              </button>
+              <>
+                {f.saveError && <span className={s.saveError}>{f.saveError}</span>}
+                {f.saved && !f.saveError && <span className={s.savedTip}>已保存</span>}
+                <button className={s.saveBtn} onClick={f.saveGeneral}>
+                  保存
+                </button>
+              </>
             )}
           </div>
         </div>

@@ -4,10 +4,10 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LogicalSize, PhysicalPosition } from "@tauri-apps/api/dpi";
 import { savePopupWidth } from "../../lib/config";
-import type { AppConfig, Selection, ShotResult, SourceResult, WordInfo } from "../../types";
+import type { Selection, ShotResult, WordInfo } from "../../types";
 import SenseList from "../SenseList";
 import DictPop from "../DictPop";
-import SourceCompare from "../SourceCompare";
+import LoadingOverlay from "../LoadingOverlay";
 import s from "./index.module.css";
 import ContentBox from "../ContentBox";
 import SourceBox from "../SourceBox";
@@ -21,6 +21,10 @@ import { isSentenceText } from "../../lib/text";
 /** 截图卡固定宽度（逻辑像素）：与输入翻译窗口同宽，原文框才装得下 */
 const SHOT_CARD_WIDTH = 560;
 
+/** 等结果再 show 的最长等待（仅单词）：比它慢就先弹加载态卡片，避免「划了没反应」；
+ *  句子翻译慢，不等，立即 show 出半透明遮罩 */
+const SHOW_WAIT_MS = 400;
+
 /** 划词/截图统一弹窗：同一张卡片，标题行 = 可编辑原文 + 「对比各源」按钮 */
 export default function Popup() {
   const win = getCurrentWindow();
@@ -32,8 +36,6 @@ export default function Popup() {
   const lastLooked = useRef("");
   // 查词序号：丢弃晚到的旧请求结果，避免快速连查时结果错乱
   const seqRef = useRef(0);
-  // 「对比各源」请求序号：收起对比/新配置到达时作废在途请求
-  const compareSeq = useRef(0);
   const [info, setInfo] = useState<WordInfo | null>(null);
   // 主翻译在途：期间保留上一份内容不卸载，只盖一层遮罩，结果到达后一次性替换（卡片只跳一次）
   const [busy, setBusy] = useState(false);
@@ -50,14 +52,6 @@ export default function Popup() {
     },
     [setBody]
   );
-  const [compareOpen, setCompareOpen] = useState(false);
-  // 已勾选额外源个数：-1 = 未查到（避免按钮闪现），0 = 无；persist 已保证只含密钥就绪的源
-  const [extrasCount, setExtrasCount] = useState(-1);
-  const [rows, setRows] = useState<SourceResult[] | null>(null);
-  // rows 对应的原文：没变就直接复用缓存，不重新翻译
-  const [compareText, setCompareText] = useState("");
-  const [compareLoading, setCompareLoading] = useState(false);
-  const [compareError, setCompareError] = useState("");
   // 截图翻译结果（screenshot-result 事件）；非空时卡片切到截图模式
   const [shotResult, setShotResult] = useState<ShotResult | null>(null);
   // 截图原文可编辑副本：修掉 OCR 错误换行后可重新翻译
@@ -80,75 +74,9 @@ export default function Popup() {
   // 遮罩 + 统一 busy：两种模式都等结果回来才换内容
   const mainLoading = busy;
 
-  // 列出勾选的额外源译文（默认翻译的结果直接复用主卡片数据，不重复请求）
-  const runCompare = async (text: string) => {
-    if (!text.trim()) return;
-    // 请求序号：config-changed 重拉/连点对比时，慢的旧结果不能落进新文本的对比区
-    const seq = ++compareSeq.current;
-    setCompareText(text);
-    setCompareLoading(true);
-    setRows(null);
-    setCompareError("");
-    try {
-      const rs = await invoke<SourceResult[]>("translate_all", { text, to: "auto", includeBuiltin: false });
-      if (compareSeq.current !== seq) return;
-      setRows(rs);
-    } catch (err) {
-      if (compareSeq.current !== seq) return;
-      setCompareError(String(err));
-    } finally {
-      if (compareSeq.current === seq) setCompareLoading(false);
-    }
-  };
-
-  // 对比各源：只在第一次（或原文变了）时请求，之后切换是纯显示/隐藏，结果不销毁
-  const toggleCompare = () => {
-    if (compareOpen) {
-      setCompareOpen(false);
-      return;
-    }
-    setCompareOpen(true);
-    if (rows === null || compareText !== activeText) runCompare(activeText);
-  };
-
-  // ref 持最新状态给只注册一次的监听器读；listen() 异步，cleanup 先于 resolve
-  // 会泄漏监听器（旧闭包持有旧 runCompare，配置一变触发僵尸请求）
-  const compareState = useRef({ open: compareOpen, text: activeText });
-  compareState.current = { open: compareOpen, text: activeText };
-
-  // config-changed：对比区开着就按新配置重拉，收着只清缓存（下次展开再拉）
-  useEffect(() => {
-    let disposed = false;
-    const refreshExtras = () => {
-      invoke<AppConfig>("get_config")
-        .then((cfg) => setExtrasCount((cfg.sources ?? []).length))
-        .catch(() => {});
-    };
-    let unlisten: (() => void) | undefined;
-    listen("config-changed", () => {
-      refreshExtras();
-      const { open, text } = compareState.current;
-      if (open) runCompare(text);
-      else {
-        setRows(null);
-        setCompareText("");
-      }
-    }).then((f) => {
-      if (disposed) f(); // 晚到的订阅：立刻退订，不留泄漏
-      else unlisten = f;
-    });
-    refreshExtras();
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   // 用编辑后的截图原文重译，结果回填卡片（不清空 draft）
   const retranslate = (text: string, to: string = shotTo) => {
     if (!text.trim()) return;
-    setCompareOpen(false); // 原文变了，旧对比结果作废
     setShotResult((r) => (r ? { ...r, error: null } : r)); // 旧译文留着给遮罩垫高
     const seq = ++seqRef.current; // 连点方向时，慢的旧请求不能覆盖新结果
     setBusy(true);
@@ -209,8 +137,9 @@ export default function Popup() {
         const stale = () => mySel !== selSeq;
         const { text, x, y } = e.payload;
         setShotResult(null); // 新的划词到达，退出截图模式
-        setCompareOpen(false);
         inShotMode = false;
+        // 翻译请求先发出（不等定位），与下面的 setPosition/DPI 等待并行跑
+        const lookupDone = lookup(text.trim());
         await applyWidth(selWidth);
         // 跨屏 setPosition 触发 WM_DPICHANGED，tao 异步按「保持逻辑尺寸」重设窗口会覆盖
         // refit 的尺寸；scale 变了就等窗口尺寸稳定再 show+refit
@@ -227,12 +156,17 @@ export default function Popup() {
           }
         }
         if (stale()) return;
-        // 同截图路径：隐藏态先把高度量定，show 出来就是最终尺寸
+        // 单词：等结果再显示（结果在 SHOW_WAIT_MS 内回来，卡片带着完整内容 show，零闪烁），
+        // 慢了先弹加载态卡片；句子翻译慢，不等待，立即 show，遮罩盖在半透明层上转
+        if (!isSentenceText(text.trim())) {
+          await Promise.race([lookupDone, new Promise((r) => setTimeout(r, SHOW_WAIT_MS))]);
+          if (stale()) return;
+        }
+        // 隐藏态先把高度量定，show 出来就是最终尺寸
         await refit();
         markShown(); // 记录 show 时刻 + 启动收起轮询（不依赖 blur 送达）
         await win.show();
         await win.setFocus();
-        lookup(text.trim());
         // macOS Accessory 应用 makeKey 偶发不生效：焦点没立起来 blur 通道就整个
         // 失灵，卡片失去「点外面收起」的触发器，多试几次把焦点立起来
         if (!stale()) focusCard();
@@ -244,7 +178,6 @@ export default function Popup() {
       // 用真实窗口尺寸（outerSize，物理像素）锚制，避免估算偏差导致漂移
       const shot = await listen<ShotResult>("screenshot-result", async (e) => {
         setShotResult(e.payload);
-        setCompareOpen(false); // 新一轮结果收起旧对比
         setDraft(e.payload.text ?? ""); // 新一轮结果重置编辑副本
         setShotTo("auto"); // 新一轮回到自动检测，不沿用上轮手动方向
         const { virtual, work } = e.payload;
@@ -329,12 +262,6 @@ export default function Popup() {
     setShotResult(null);
     setDraft("");
     setShotTo("auto");
-    setCompareOpen(false);
-    compareSeq.current++; // 对比区已随卡片重置，在途的旧对比请求作废
-    setRows(null);
-    setCompareText("");
-    setCompareLoading(false);
-    setCompareError("");
     setCopied("");
   }, []);
 
@@ -346,7 +273,6 @@ export default function Popup() {
     lastLooked.current = w;
     setWord(w);
     setError("");
-    setCompareOpen(false); // 同义词跳查收起旧对比
     const seq = ++seqRef.current;
     setBusy(true);
     try {
@@ -364,11 +290,6 @@ export default function Popup() {
 
 
   const shotLoading = inShot && busy;
-  // 对比区只列勾选的额外源：主翻译本身就是某个额外源（如默认源关闭时百度兜底）时跳过该行避免重复
-  const mainSource = inShot ? shotResult?.info?.source : info?.source;
-  const compareRows: SourceResult[] | null = rows?.filter(
-    (r) => r.source !== mainSource
-  ) ?? null;
 
   return (
     <div className={"card " + s.card} ref={cardRef}>
@@ -379,25 +300,6 @@ export default function Popup() {
         <div className={s.appTitle}>
           <img src={logo} alt="" draggable={false} />
           Wordpeek<span className="app-beta">beta</span>
-        </div>
-        {/* 对比各源：固定标题行右上角，两种模式都有（设置入口在托盘菜单，不占弹窗标题行） */}
-        <div className={s.headActions}>
-          {activeText && extrasCount > 0 && (
-            <button
-              className="text-btn"
-              disabled={mainLoading}
-              title={
-                mainLoading
-                  ? "等默认翻译完成后再对比"
-                  : compareOpen
-                    ? "收起各源译文对比"
-                    : "在卡片底部追加各已勾选源的译文"
-              }
-              onClick={toggleCompare}
-            >
-              {compareOpen ? "收起对比" : "对比各源"}
-            </button>
-          )}
         </div>
       </div>
 
@@ -532,25 +434,9 @@ export default function Popup() {
           ))}
         </>
       )}
-      {compareOpen && (
-        <>
-          {compareLoading && <div className="loading">对比中…</div>}
-          {compareError && <div className="error">{compareError}</div>}
-          {compareRows && compareRows.length > 0 && (
-            <SourceCompare rows={compareRows} copied={copied} onCopy={doCopy} />
-          )}
-          {compareRows && compareRows.length === 0 && !compareLoading && (
-            <div className="error">没有可对比的额外源，可在设置 → 翻译里勾选</div>
-          )}
-        </>
-      )}
-
-      {/* 翻译中遮罩：盖住 card-body，旧内容留在下面，结果回来才替换 */}
-      {busy && (
-        <div className={s.busy} role="status">
-          翻译中…
-        </div>
-      )}
+      {/* 翻译中遮罩：盖住 card-body，旧内容留在下面，结果回来才替换；
+          首查（句子/新词）无旧内容可垫，由 pad 撑起卡片高度 */}
+      <LoadingOverlay show={busy} pad={!info && !shotResult} />
 
       {/* 划词小释义卡：fixed 定位挂在视口上，不参与窗口自适应的 scrollHeight 测量 */}
       <DictPop

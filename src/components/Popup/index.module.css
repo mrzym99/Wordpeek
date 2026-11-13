@@ -11,22 +11,10 @@
   height: 24px;
   margin-bottom: 8px;
 }
-/* 右上角按钮组：对比各源，两种模式都固定在标题行右上 */
-.headActions {
-  position: absolute;
-  right: 0;
-  top: 1px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  z-index: 2; /* 盖过顶部拖拽热区，保证可点击 */
-}
-
 /* 顶部拖拽热区：覆盖卡片内「上边框 1px + 上 padding 16px + 标题行 24px」，共 41px，
    隐形但鼠标移入变移动光标；从品牌字上也能按住拖动。
    卡片已贴窗口边缘，热区从 0 开始，贴着卡片边框走。
-   fixed 钉在窗口顶部，内容滚动时热区不会跟着跑；
-   右上角按钮组（.headActions）z-index 更高，不受热区遮挡 */
+   fixed 钉在窗口顶部，内容滚动时热区不会跟着跑 */
 .dragStrip {
   position: fixed;
   top: 0;
@@ -161,19 +149,6 @@
 
 /* ===== 截图翻译结果区 ===== */
 /* 翻译中的遮罩：旧内容不卸载，只盖一层薄雾 + 提示，结果回来才替换 → 卡片只跳一次 */
-.busy {
-  position: absolute;
-  inset: 0;
-  z-index: 3;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--r-sm);
-  background: color-mix(in srgb, var(--paper) 62%, transparent);
-  color: var(--ink-3);
-  font-size: var(--t-small);
-  cursor: progress;
-}
 /* 内容框里的截图释义：灰底块 + 去序号 */
 .shotSenses {
   margin: 0 0 10px;

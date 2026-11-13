@@ -38,7 +38,7 @@ pub(crate) trait TranslateSource: Sync {
         true
     }
 
-    /// 前置条件（密钥等）是否就绪：未就绪的源被 enabled_sources 剥掉，不进翻译链与对比区
+    /// 前置条件（密钥等）是否就绪：未就绪的源在逐源尝试时被跳过（自动降级到下一个源）
     fn ready(&self, cfg: &AppConfig) -> bool {
         let _ = cfg;
         true
@@ -53,14 +53,14 @@ pub(crate) trait TranslateSource: Sync {
     ) -> TranslateFut<'a>;
 }
 
-/// 静态注册表：5 个源编译期已知，数组遍历即实现分发与降级。
+/// 静态注册表：编译期已知，数组遍历即实现分发与降级。
 /// ID 放元组而非 trait 关联常量：关联常量无法经 trait 对象访问
 static SOURCES: &[(&str, &dyn TranslateSource)] = &[
     ("youdao", &youdao_dict::YoudaoDict),
     ("bing", &bing::Bing),
     ("youdaoai", &youdao_ai::YouDaoAi),
-    ("baidu", &baidu::Baidu),
-    ("tencent", &tencent::Tencent),
+    ("glm", &glm::Glm),
+    ("deepl", &deepl::Deepl),
 ];
 
 /// 按 id 取源实现；未知 id（老配置残留等）返回 None
@@ -68,21 +68,9 @@ pub(crate) fn find_source(id: &str) -> Option<&'static dyn TranslateSource> {
     SOURCES.iter().find(|(s, _)| *s == id).map(|(_, v)| *v)
 }
 
-/// 对比区逐行展示的源名称
-pub(crate) fn source_label(source: &str) -> &'static str {
-    match source {
-        "youdao" => "有道词典",
-        "bing" => "必应翻译",
-        "youdaoai" => "有道翻译",
-        "baidu" => "百度翻译",
-        "tencent" => "腾讯翻译",
-        _ => "未知源",
-    }
-}
-
-pub(crate) mod baidu;
 pub(crate) mod bing;
-pub(crate) mod tencent;
+pub(crate) mod deepl;
+pub(crate) mod glm;
 pub(crate) mod youdao_ai;
 pub(crate) mod youdao_dict;
 
@@ -91,16 +79,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn source_labels_are_human_readable() {
-        assert_eq!(source_label("youdao"), "有道词典");
-        assert_eq!(source_label("bing"), "必应翻译");
-        assert_eq!(source_label("baidu"), "百度翻译");
-        assert_eq!(source_label("nope"), "未知源");
-    }
-
-    #[test]
     fn registry_contains_all_declared_sources() {
-        for id in ["youdao", "bing", "youdaoai", "baidu", "tencent"] {
+        for id in ["youdao", "bing", "youdaoai", "glm", "deepl"] {
             assert!(find_source(id).is_some(), "注册表缺源: {id}");
         }
         assert!(find_source("nope").is_none());

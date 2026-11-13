@@ -1,0 +1,20 @@
+/* 翻译中遮罩：半透明盖住容器，旧内容隐约可见 + 文字脉冲 */
+.overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--paper) 75%, transparent);
+  color: var(--ink-3);
+  font-size: var(--t-small);
+  cursor: progress;
+  animation: soft-pulse 1.4s var(--ease) infinite;
+}
+
+/* 垫高占位：首查没有任何旧内容时撑起卡片，别让遮罩缩成一条 */
+.pad {
+  min-height: 140px;
+}
