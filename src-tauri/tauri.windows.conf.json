@@ -1,0 +1,45 @@
+{
+  "app": {
+    "windows": [
+      {
+        "title": "Wordpeek",
+        "width": 400,
+        "height": 360,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "transparent": false,
+        "visible": false,
+        "resizable": true,
+        "shadow": true
+      },
+      {
+        "label": "icon",
+        "url": "/?page=icon",
+        "width": 40,
+        "height": 40,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "shadow": false,
+        "resizable": false,
+        "acceptFirstMouse": true
+      },
+      {
+        "label": "screenshot",
+        "url": "/?page=screenshot",
+        "width": 100,
+        "height": 100,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "shadow": false,
+        "resizable": false
+      }
+    ]
+  }
+}

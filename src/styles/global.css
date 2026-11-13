@@ -106,11 +106,9 @@ body,
   flex-direction: column;
   /* padding 决定 autofit 的 CARD_CHROME，改这里要同步改 */
   padding: 16px 18px;
-  border-radius: var(--r-lg);
   background: var(--paper);
   color: var(--ink);
   font: var(--t-body) / 1.65 var(--font-ui);
-  border: 1px solid var(--line);
   overflow-y: auto;
   user-select: text;
 }

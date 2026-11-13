@@ -137,9 +137,10 @@ fn main() {
             app.manage(screenshot::ScreenshotState::default());
             app.manage(selection::SessionManager::default());
             
-            // Win11 给透明弹窗再叠一层 ~8px 系统圆角，弹窗类全关掉只留 CSS 一层（设置/输入窗有标题栏，保留系统圆角）
+            // 图标/截图遮罩关掉 Win11 系统圆角（贴边、不要投影）。
+            // 主弹窗和输入窗都**不**关：保留 DWM 默认的 8px 圆角 + 系统投影，那是原生观感的来源
             #[cfg(windows)]
-            for label in ["main", "icon", "screenshot"] {
+            for label in ["icon", "screenshot"] {
                 if let Some(win) = app.get_webview_window(label) {
                     platform::disable_rounding(&win);
                 }
