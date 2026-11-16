@@ -88,15 +88,15 @@ fn default_selection_icon() -> bool {
 }
 
 fn default_sources() -> Vec<String> {
-    // 句子主源单选（设置页互斥）；必应永远在链尾兜底，不靠这个字段
-    vec!["deepl".into()]
+    // 句子默认走必应（免 Key、无 IP 频控）；DeepL 是设置页可勾选的增强：勾上才进链，排在必应前面
+    vec!["bing".into()]
 }
 
 /// 老配置迁移：句子源多选勾选归一化——只留 deepl/bing，
 /// 按固定顺序去重，空则回默认；旧 sentence_source 字段由 serde 忽略
 fn migrate_sources(cfg: &mut AppConfig) {
     let has = |id: &str| cfg.sources.iter().any(|s| s == id);
-    // 句子源已改成单选：老配置里 deepl+bing 同时勾的收敛到 deepl（必应永远在链尾兜底）
+    // 老配置里勾过 deepl 的保留勾选（不抹掉用户选过的源），其余收敛到单选
     cfg.sources = if has("deepl") {
         vec!["deepl".into()]
     } else if has("bing") {
@@ -473,10 +473,10 @@ mod tests {
 
     #[test]
     fn migrate_sources_normalizes_to_single_source() {
-        // 新配置无勾选：默认 DeepL（必应永远在链尾兜底）
+        // 新配置无勾选：默认必应
         let mut cfg: AppConfig = serde_json::from_str("{}").unwrap();
         migrate_sources(&mut cfg);
-        assert_eq!(cfg.sources, vec!["deepl"]);
+        assert_eq!(cfg.sources, vec!["bing"]);
         // 老配置同时勾了 deepl+bing（还带未知 id）：收敛到 deepl
         let mut cfg: AppConfig =
             serde_json::from_str(r#"{"sources":["bing","glm","deepl"]}"#).unwrap();
@@ -486,21 +486,21 @@ mod tests {
         let mut cfg: AppConfig = serde_json::from_str(r#"{"sources":["bing"]}"#).unwrap();
         migrate_sources(&mut cfg);
         assert_eq!(cfg.sources, vec!["bing"]);
-        // 勾选为空/全不可用：回默认
+        // 勾选为空/全不可用：回默认（必应）
         let mut cfg: AppConfig = serde_json::from_str(r#"{"sources":["glm"]}"#).unwrap();
         migrate_sources(&mut cfg);
-        assert_eq!(cfg.sources, vec!["deepl"]);
+        assert_eq!(cfg.sources, vec!["bing"]);
     }
 
     #[test]
     fn legacy_baidu_primary_migrates_to_default_sources() {
-        // 旧「启用为主源」= source: "baidu"；百度源已下线（Depl 可能已勾过）→ 句子主源 Deepl
+        // 旧「启用为主源」= source: "baidu"；百度源已下线 → 句子源回默认必应
         let mut cfg: AppConfig = serde_json::from_str(
             r#"{"source":"baidu","baidu":{"appid":"a","secret":"b"}}"#,
         )
         .unwrap();
         migrate_sources(&mut cfg);
-        assert_eq!(cfg.sources, vec!["deepl"]);
+        assert_eq!(cfg.sources, vec!["bing"]);
     }
 
     #[test]

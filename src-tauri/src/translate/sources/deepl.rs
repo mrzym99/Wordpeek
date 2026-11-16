@@ -52,6 +52,12 @@ async fn translate_deepl(text: &str, to: &str) -> Result<WordInfo, String> {
     // Authorization: None 是字面量——匿名档的认证标记，缺了走另一条服务端分支
     // Windows 的可执行名叫 curl.exe（Win10 1803+ 自带）；macOS 叫 curl，硬写 curl.exe 会 spawn ENOENT
     let mut cmd = tokio::process::Command::new(if cfg!(windows) { "curl.exe" } else { "curl" });
+    // Windows 的 curl.exe 是控制台程序：GUI 子系统进程（无控制台）spawn 它时系统会新分配一个
+    // 黑窗口并抢前台，卡片刚 show 就被这个窗口抢走焦点 → blur 收起 → 用户只看到弹终端没看到译文。
+    // CREATE_NO_WINDOW：不建控制台，stdout 照旧走管道。
+    // tokio::process::Command 自带 creation_flags（仅 Windows 编译），无需 std 的 CommandExt
+    #[cfg(windows)]
+    cmd.creation_flags(0x0800_0000);
     cmd.args([
         "-s",
         "--max-time",

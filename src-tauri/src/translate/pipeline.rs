@@ -71,10 +71,14 @@ mod tests {
 
     #[test]
     fn youdao_is_always_first() {
-        // 默认主源 DeepL：有道 → DeepL → 必应兜底
+        // 默认（未勾 DeepL）：有道 → 必应
         let cfg = AppConfig::default();
+        assert_eq!(build_order(&cfg), vec!["youdao", "bing"]);
+        // 勾了 DeepL：DeepL 排在必应前，必应仍在链尾
+        let mut cfg = AppConfig::default();
+        cfg.sources = vec!["deepl".into()];
         assert_eq!(build_order(&cfg), vec!["youdao", "deepl", "bing"]);
-        // 主源选必应：DeepL 不进链，必应只进一次
+        // 只勾必应：必应只进一次
         let mut cfg = AppConfig::default();
         cfg.sources = vec!["bing".into()];
         assert_eq!(build_order(&cfg), vec!["youdao", "bing"]);
@@ -87,11 +91,12 @@ mod tests {
     #[test]
     fn capable_order_filters_by_supports_and_ready() {
         let mut cfg = AppConfig::default();
-        // 译为英文：有道词典（仅英→中）被 supports 过滤，DeepL 仍是第一主力
+        // 默认（未勾 DeepL）：译为英文时有道（仅英→中）被 supports 过滤，链里只剩必应
+        assert_eq!(capable_order(&cfg, "en"), vec!["bing"]);
+        // 勾了 DeepL：DeepL 顶到最前，必应兜底；译为中文时有道仍在链首
+        cfg.sources = vec!["deepl".into()];
         assert_eq!(capable_order(&cfg, "en"), vec!["deepl", "bing"]);
-        // 只勾必应：链里只剩必应
-        cfg.sources = vec!["bing".into()];
-        assert_eq!(capable_order(&cfg, "zh"), vec!["youdao", "bing"]);
+        assert_eq!(capable_order(&cfg, "zh"), vec!["youdao", "deepl", "bing"]);
     }
 
     // 真网络请求：默认忽略，跑法 cargo test -- --ignored
@@ -112,7 +117,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn default_strategy_falls_back_to_bing() {
-        // 默认（DeepL/必应链）：整句走 有道→DeepL→必应，最终应拿到必应的译文
+        // 默认（未勾 DeepL）：整句走 有道→必应，最终应拿到必应的译文
         let cfg = AppConfig::default();
         let info = translate_text(&cfg, "The rain in Spain falls mainly on the plain", "zh")
             .await
