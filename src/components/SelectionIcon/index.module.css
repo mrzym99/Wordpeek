@@ -21,7 +21,7 @@
     transform 180ms ease;
 }
 /* logo 本体是圆角方块；静止态裁成圆形小点，展开才露出方块圆角（border-radius 过渡形变）。
-   静止态虚化（低透明度 + 微模糊）压低存在感，hover/展开才清晰。
+   静止态虚化（低透明度 + 微模糊）压低存在感，展开（主动靠近）才清晰。
    阴影画在 img 上，天然跟随圆角。不能用父元素 filter: drop-shadow */
 .logo {
   display: block;
@@ -41,7 +41,8 @@
 .chip:hover {
   transform: scale(1.12);
 }
-.chip:hover .logo,
+/* 清晰态只跟展开（proximity 主动靠近）绑定：小点生在光标手边，hover 一来就压在
+   上面，若 hover 也解除虚化，点一辈子都虚化不了 */
 .expanded .logo {
   opacity: 1;
   filter: brightness(1.08);
