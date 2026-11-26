@@ -1,11 +1,11 @@
 //! 热键路径的选区获取：UIA/AX 直读先行，读不到才按用户授权走剪贴板兜底
-//! （模拟复制键 + 全程备份/恢复）。这是唯一允许碰剪贴板的路径；划词图标路径绝不走这里。
+//! （模拟复制键 + 全程备份/恢复）。这是唯一允许碰剪贴板的路径；划词轻提示路径绝不走这里。
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use tauri::AppHandle;
 
-use super::icon::hide_selection_icon;
+use super::dot::hide_selection_dot;
 use super::{SessionManager, SOURCE_HOTKEY, SOURCE_HOTKEY_FALLBACK};
 use crate::platform;
 
@@ -16,7 +16,7 @@ pub(crate) fn grab_in_progress() -> bool {
     GRAB_IN_PROGRESS.load(Ordering::SeqCst)
 }
 
-/// 模拟复制键抓取当前选中文本（热键路径的兜底；划词图标路径绝不走这里）。
+/// 模拟复制键抓取当前选中文本（热键路径的兜底；划词轻提示路径绝不走这里）。
 /// 全程对剪贴板只有两次写入：目标应用响应复制键的一次 + 我们恢复备份的一次。
 /// 不再写哨兵——注入前先取剪贴板「变更序号」基线，序号一动即有人写入，
 /// 选中内容与旧内容相同也不会漏判（旧哨兵法是比内容，相同即误判），
@@ -136,7 +136,7 @@ fn open_settings_if_permission_missing(app: &AppHandle) {
 
 /// 快捷键触发：UIA/AX 直读选区先行（零剪贴板访问）；读不到就走剪贴板兜底
 /// （技术安全闸见 foreground_context——老控制台/密码框/Secure Input 一律不注入）。
-/// 这是唯一允许碰剪贴板的路径；划词图标路径绝不走这里
+/// 这是唯一允许碰剪贴板的路径；划词轻提示路径绝不走这里
 pub(crate) fn handle_hotkey_trigger(app: &AppHandle) {
     println!("[shortcut] triggered");
     crate::platform::debug_log("hotkey triggered"); // [DEBUG-m0u5]
@@ -148,7 +148,7 @@ pub(crate) fn handle_hotkey_trigger(app: &AppHandle) {
         if let platform::SelectionRead::Text(text) = platform::focused_selection_untracked() {
             println!("[grab] UIA/AX 直读命中");
             let (cx, cy) = platform::cursor_pos();
-            hide_selection_icon(&app);
+            hide_selection_dot(&app);
             SessionManager::show_card(&app, &text, cx, cy, SOURCE_HOTKEY);
             return;
         }
@@ -158,7 +158,7 @@ pub(crate) fn handle_hotkey_trigger(app: &AppHandle) {
                 let (cx, cy) = platform::cursor_pos();
                 println!("[grab] got text: {:?} at ({}, {})", text, cx, cy);
                 crate::platform::debug_log(&format!("grab got {:.20}", text)); // [DEBUG-m0u5]
-                hide_selection_icon(&app);
+                hide_selection_dot(&app);
                 SessionManager::show_card(&app, &text, cx, cy, SOURCE_HOTKEY_FALLBACK);
             }
             None => {

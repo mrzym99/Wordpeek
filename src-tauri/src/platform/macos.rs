@@ -517,6 +517,34 @@ fn secure_input_active() -> bool {
     }
 }
 
+/// 焦点控件是否可编辑（AXEditable 属性存在即算可编辑）或系统安全输入开启中。
+/// 与 Windows 侧同理：只是轻提示降噪闸，查不到按否处理，Secure Input 恒拦
+pub fn focused_editable() -> bool {
+    if secure_input_active() {
+        return true;
+    }
+    unsafe {
+        let system = AXUIElementCreateSystemWide();
+        if system.is_null() {
+            return false;
+        }
+        let focused = ax_attr(system, "AXFocusedUIElement");
+        CFRelease(system);
+        let Some(focused) = focused else {
+            return false;
+        };
+        let editable = match ax_attr(focused, "AXEditable") {
+            Some(v) => {
+                CFRelease(v);
+                true
+            }
+            None => false,
+        };
+        CFRelease(focused);
+        editable
+    }
+}
+
 /// 前台应用上下文一次性查询（热键兜底注入前的安全闸）。macOS 无老控制台/管理员
 /// 完整性问题（恒允许/恒否），密码框由 Secure Input 覆盖
 pub fn foreground_context() -> super::ForegroundContext {

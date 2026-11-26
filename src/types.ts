@@ -19,7 +19,7 @@ export interface AppConfig {
   /** 设置窗口上次停留的一级菜单，重开时恢复 */
   settings_section?: string;
   theme?: "system" | "light" | "dark";
-  selection_icon?: boolean;
+  selection_dot?: boolean;
 }
 
 export interface UpdateStatus {

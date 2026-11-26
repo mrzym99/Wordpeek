@@ -155,8 +155,8 @@ fn main() {
         translate::log_panic(&panic_dir, &info.to_string());
     }));
 
-            // 划词图标：全局鼠标监听（跟设置里的开关无关，开关在探测时现读）
-            selection::start_selection_icon(&handle);
+            // 划词轻提示：全局鼠标监听（跟设置里的开关无关，开关在探测时现读）
+            selection::start_selection_dot(&handle);
 
             // 启动后后台把截图遮罩窗口预铺到虚拟屏尺寸（常驻隐藏），首次截图无需 resize，避免闪动
             let shot_handle = handle.clone();
@@ -235,7 +235,7 @@ fn main() {
             copy_text,
             last_mouse_down,
             cursor_pos,
-            selection::icon::translate_selection_icon,
+            selection::dot::translate_selection_dot,
             translate::translate,
             translate::get_config,
             translate::save_sources,

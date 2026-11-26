@@ -106,7 +106,7 @@ pub(crate) fn register_hotkeys(app: &AppHandle, cfg: &crate::translate::AppConfi
     });
     reg!(cfg.icon_hotkey, |app: &AppHandle, _s, event| {
         if event.state == ShortcutState::Pressed {
-            crate::translate::toggle_selection_icon(app);
+            crate::translate::toggle_selection_dot(app);
         }
     });
     failed

@@ -1,37 +1,82 @@
-/* 划词图标：40×40 透明小窗口里的一颗圆按钮，四周留白给阴影 */
-.icon {
-  width: 28px;
-  height: 28px;
-  margin: 6px;
+/* 轻提示：84×44 透明窗口。静止态 16px 圆点（logo 圆形裁切）；near 时同一颗放大成
+   28px 并露出应用图标的圆角方块——圆点即图标的种子，宽高/圆角/投影走过渡，形变而非硬切。
+   图标自带深蓝底，投影用深色，浅深主题下都成立。
+   引导态窗口临时扩到 220×78，气泡挂在小点下方 */
+.chip {
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  width: 16px;
+  height: 16px;
   padding: 0;
   border: none;
   background: none;
   cursor: pointer;
+  transition:
+    left 180ms ease,
+    top 180ms ease,
+    width 180ms ease,
+    height 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms ease;
 }
-.icon img {
+/* logo 本体是圆角方块；静止态裁成圆形小点，展开才露出方块圆角（border-radius 过渡形变）。
+   静止态虚化（低透明度 + 微模糊）压低存在感，hover/展开才清晰。
+   阴影画在 img 上，天然跟随圆角。不能用父元素 filter: drop-shadow */
+.logo {
+  display: block;
   width: 100%;
   height: 100%;
-  display: block;
-  /* logo 自身就是圆角方块；阴影用 box-shadow 画在 img 上，天然跟随圆角。
-     不能用父元素 filter: drop-shadow —— Chromium 不认子元素的 border-radius
-     裁剪，阴影会画成方形 */
-  border-radius: 7px;
+  border-radius: 50%;
+  opacity: 0.65;
+  filter: blur(0.5px);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
   -webkit-user-drag: none;
-  transition: box-shadow 120ms ease, filter 120ms ease;
+  transition:
+    border-radius 180ms ease,
+    box-shadow 180ms ease,
+    filter 180ms ease,
+    opacity 180ms ease;
 }
-.icon:hover img {
-  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.45);
-  filter: brightness(1.06);
+.chip:hover {
+  transform: scale(1.12);
 }
-.icon:active {
-  transform: translateY(1px);
+.chip:hover .logo,
+.expanded .logo {
+  opacity: 1;
+  filter: brightness(1.08);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
 }
+.chip:active {
+  transform: translateY(1px) scale(1.12);
+}
+.chip.expanded {
+  width: 28px;
+  height: 28px;
+}
+.expanded .logo {
+  border-radius: 7px;
+  box-shadow: none;
+}
+
+.guide {
+  position: absolute;
+  left: 4px;
+  top: 44px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--ink);
+  color: var(--paper);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .icon img {
+  .chip,
+  .logo {
     transition: none;
   }
-  .icon:active {
+  .chip:active {
     transform: none;
   }
 }

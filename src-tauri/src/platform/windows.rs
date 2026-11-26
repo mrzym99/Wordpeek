@@ -191,6 +191,39 @@ fn password_focused() -> bool {
     }
 }
 
+/// 焦点控件是否可编辑/敏感（UIA IsPassword，或 ValuePattern 存在且非只读）。
+/// 轻提示的降噪闸：输入框/IDE 编辑区划词重选不弹小点。查不到（COM 起不来/无焦点
+/// 元素/无 ValuePattern）一律按否处理——只是降噪，不能反过来拦下正常翻译
+pub fn focused_editable() -> bool {
+    use windows::core::Interface as _;
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
+    };
+    use windows::Win32::UI::Accessibility::{CUIAutomation, IUIAutomationValuePattern, UIA_ValuePatternId};
+
+    if password_focused() {
+        return true;
+    }
+    unsafe {
+        // 与 read_focused_selection / password_focused 同理用 MTA（见 password_focused 注释）
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let automation: windows::Win32::UI::Accessibility::IUIAutomation =
+            match CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) {
+                Ok(a) => a,
+                Err(_) => return false,
+            };
+        let Ok(el) = automation.GetFocusedElement() else {
+            return false;
+        };
+        el.GetCurrentPattern(UIA_ValuePatternId)
+            .ok()
+            .and_then(|u| u.cast::<IUIAutomationValuePattern>().ok())
+            .and_then(|p| p.CurrentIsReadOnly().ok())
+            .map(|ro| !ro.as_bool())
+            .unwrap_or(false)
+    }
+}
+
 pub fn cursor_pos() -> (i32, i32) {
     unsafe {
         let mut p = POINT { x: 0, y: 0 };

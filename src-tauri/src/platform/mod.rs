@@ -241,12 +241,13 @@ pub enum SelectionRead {
     Error,
 }
 
+/// 焦点控件是否可编辑/敏感：轻提示不出小点的降噪闸（两平台统一语义，见各自实现）
 #[cfg(windows)]
-pub use windows::{foreground_pid, read_focused_selection, warm_uia};
+pub use windows::{focused_editable, foreground_pid, read_focused_selection, warm_uia};
 #[cfg(windows)]
 pub(crate) use windows::is_chromium_browser;
 #[cfg(target_os = "macos")]
-pub use macos::{foreground_pid, read_focused_selection};
+pub use macos::{focused_editable, foreground_pid, read_focused_selection};
 /// macOS 上的 Chromium 系判定：Chrome/Edge/Electron 的 AX 树空闲后会被拆，
 /// 前几轮探测必然 NoTextPattern，照常三振会误拉黑 10 分钟（Windows 侧早有这条豁免，
 /// mac 漏了——这是「连拖几下以后再也不出图标」的直接原因）

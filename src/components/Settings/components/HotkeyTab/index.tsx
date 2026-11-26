@@ -2,7 +2,7 @@ import type { ConfigForm } from "../../../../hooks/useConfigForm";
 import { IS_MAC } from "../../../../hooks/useConfigForm";
 import HotkeyRecorder from "../../../HotkeyRecorder";
 
-/** 「快捷键」页：划词/输入/截图翻译快捷键 + 划词图标开关（图标开关只由快捷键控制，设置页无复选框） */
+/** 「快捷键」页：划词/输入/截图翻译快捷键 + 划词轻提示开关（开关只由快捷键/托盘控制，设置页无复选框） */
 export default function HotkeyTab({ f }: { f: ConfigForm }) {
   return (
     <>
@@ -11,7 +11,7 @@ export default function HotkeyTab({ f }: { f: ConfigForm }) {
         <HotkeyRecorder value={f.hotkey} onChange={f.setHotkey} />
       </label>
       <label className="field" style={{ marginTop: 12 }}>
-        划词图标是否显示
+        划词轻提示是否开启
         <HotkeyRecorder value={f.iconHotkey} onChange={f.setIconHotkey} />
       </label>
       <label className="field" style={{ marginTop: 12 }}>

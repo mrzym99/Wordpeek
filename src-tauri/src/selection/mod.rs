@@ -1,8 +1,8 @@
-//! 划词会话域：手势判定（gesture）、图标显隐（icon）、探测（probe）、
+//! 划词会话域：手势判定（gesture）、轻提示显隐（dot）、探测（probe）、
 //! 热键兜底（fallback）与选区文本清洗（normalize）。
 //!
 //! 会话状态收敛在 [`SessionManager`]（Tauri managed state）——划词会话唯一所有者；
-//! 钩子回调触达的鼠标原始数据留在 gesture.rs / icon.rs 的静态变量（回调拿不到
+//! 钩子回调触达的鼠标原始数据留在 gesture.rs / dot.rs 的静态变量（回调拿不到
 //! AppHandle，且平台层铁律要求回调内只做内存读）。
 //!
 //! 所有进卡片的路径统一走 [`SessionManager::show_card`] 合流点：格式清洗 →
@@ -11,14 +11,14 @@
 mod fallback;
 pub(crate) mod normalize;
 pub(crate) mod probe; // windows.rs 看门狗读 LAST_WORKER_UP_MS（[DEBUG-m0u5] 插桩，诊断完改回 mod probe）
-// gesture / icon 的个别符号被 main.rs 命令与 invoke_handler 直接引用，公开到 crate 内
+// gesture / dot 的个别符号被 main.rs 命令与 invoke_handler 直接引用，公开到 crate 内
 pub(crate) mod gesture;
-pub(crate) mod icon;
+pub(crate) mod dot;
 
 use tauri::{AppHandle, Emitter, Manager};
 
 pub(crate) use fallback::handle_hotkey_trigger;
-pub(crate) use probe::start_selection_icon;
+pub(crate) use probe::start_selection_dot;
 
 /// 下发卡片弹窗的来源（随 `selection` 事件带给前端/诊断日志）
 pub(crate) const SOURCE_ICON: &str = "icon";
@@ -52,12 +52,12 @@ struct Session {
     /// 选区代次：每次鼠标按下 +1。探测异步做（不能堵 worker），show 前对代次，
     /// 期间有新按下（用户已开始新选区）就放弃
     gen: u64,
-    /// 划词图标最近一次探测到的选中文本，点图标时直接用；
+    /// 划词轻提示最近一次探测到的选中文本，点小点时直接用；
     /// 点击后焦点已转走，再读源应用选区就读不到了
-    icon_text: Option<String>,
-    /// 刚点过图标的时刻（毫秒）。点击后的松开事件仍会触发探测且源应用选区还在，
-    /// 图标会立刻弹回，故静默窗口内的探测跳过
-    icon_clicked_at: u64,
+    dot_text: Option<String>,
+    /// 刚点过小点的时刻（毫秒）。点击后的松开事件仍会触发探测且源应用选区还在，
+    /// 小点会立刻弹回，故静默窗口内的探测跳过
+    dot_clicked_at: u64,
     /// 上一次下发卡片的内容与时刻：同文本去重用（连点/抖动不重复弹）
     last_text: Option<String>,
     last_shown_ms: u64,
@@ -77,25 +77,25 @@ impl SessionManager {
         self.lock().gen
     }
 
-    /// 记录探测到的选中文本（弹图标前）
-    pub(crate) fn set_icon_text(&self, text: Option<String>) {
-        self.lock().icon_text = text;
+    /// 记录探测到的选中文本（弹小点前）
+    pub(crate) fn set_dot_text(&self, text: Option<String>) {
+        self.lock().dot_text = text;
     }
 
-    /// 点图标：取走缓存的文本并记录点击时刻
-    pub(crate) fn take_icon_text(&self, now: u64) -> Option<String> {
+    /// 点小点：取走缓存的文本并记录点击时刻
+    pub(crate) fn take_dot_text(&self, now: u64) -> Option<String> {
         let mut s = self.lock();
-        s.icon_clicked_at = now;
-        s.icon_text.take()
+        s.dot_clicked_at = now;
+        s.dot_text.take()
     }
 
-    /// 刚点过图标不久（探测静默窗口内，防「点完图标图标立刻弹回」）
-    pub(crate) fn icon_clicked_recently(&self, now: u64) -> bool {
+    /// 刚点过小点不久（探测静默窗口内，防「点完小点小点立刻弹回」）
+    pub(crate) fn dot_clicked_recently(&self, now: u64) -> bool {
         let s = self.lock();
-        now.saturating_sub(s.icon_clicked_at) < probe::ICON_REPROBE_QUIET_MS
+        now.saturating_sub(s.dot_clicked_at) < probe::DOT_REPROBE_QUIET_MS
     }
 
-    /// 卡片下发合流点：图标点击与热键路径都走这里。统一做格式清洗（拦截空壳）、
+    /// 卡片下发合流点：小点点击与热键路径都走这里。统一做格式清洗（拦截空壳）、
     /// 同文本去重（窗口内且卡片仍可见）、位置钳制，再发 `selection` 事件
     pub(crate) fn show_card(app: &AppHandle, raw: &str, x: i32, y: i32, source: &'static str) {
         let Some(text) = normalize::normalize_selection(raw) else {

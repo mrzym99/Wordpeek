@@ -90,7 +90,13 @@ export function useConfigForm() {
     setSaveError("");
     try {
       // OCR 语言不再单独设置，固定跟随系统（后端 save_settings 仍带这个字段）
-      await saveSettings({ hotkey, screenshotHotkey, inputHotkey, iconHotkey, ocrLang: "auto" });
+      await saveSettings({
+        hotkey,
+        screenshotHotkey,
+        inputHotkey,
+        iconHotkey,
+        ocrLang: "auto",
+      });
       flashSaved();
     } catch (err) {
       setSaveError(String(err));

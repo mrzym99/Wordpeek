@@ -30,7 +30,7 @@ pub struct AppConfig {
     pub ocr_lang: String,
     #[serde(default = "default_input_hotkey")]
     pub input_hotkey: String,
-    /// 划词图标开关的快捷键：按下翻转 selection_icon，不用进取设置页
+    /// 划词轻提示开关的快捷键：按下翻转 selection_dot，不用进取设置页
     #[serde(default = "default_icon_hotkey")]
     pub icon_hotkey: String,
     /// 划词弹窗宽度（逻辑像素）：用户拖拽后落盘，重启恢复；高度自适应不存
@@ -42,9 +42,12 @@ pub struct AppConfig {
     /// 外观主题："system"（跟随系统）| "light" | "dark"
     #[serde(default = "default_theme")]
     pub theme: String,
-    /// 选中文字后在光标旁弹翻译按钮（默认开）
-    #[serde(default = "default_selection_icon")]
-    pub selection_icon: bool,
+    /// 划词轻提示开关：开=静置后弹半透明小点，关=仅快捷键（不出点）。快捷键 icon_hotkey 翻转
+    #[serde(default = "default_selection_dot", alias = "selection_icon")]
+    pub selection_dot: bool,
+    /// 首次引导气泡已展示过（展示时即刻置位落盘，失败不重试）
+    #[serde(default)]
+    pub dot_guide_shown: bool,
 }
 
 fn default_source() -> String {
@@ -83,7 +86,7 @@ fn default_theme() -> String {
     "system".into()
 }
 
-fn default_selection_icon() -> bool {
+fn default_selection_dot() -> bool {
     true
 }
 
@@ -118,7 +121,8 @@ impl Default for AppConfig {
             icon_hotkey: default_icon_hotkey(),
             popup_width: default_popup_width(),
             settings_section: default_settings_section(),
-            selection_icon: default_selection_icon(),
+            selection_dot: default_selection_dot(),
+            dot_guide_shown: false,
             theme: default_theme(),
         }
     }
@@ -282,7 +286,7 @@ pub fn save_sources(
     })
 }
 
-/// 快捷键 + OCR 语言（快捷键/截图翻译 tab 的「保存」按钮）
+/// 快捷键 + OCR 语言（快捷键 tab 的「保存」按钮）
 #[tauri::command]
 pub fn save_settings(
     app: AppHandle,
@@ -358,36 +362,54 @@ pub fn save_theme(app: AppHandle, state: State<SharedConfig>, theme: String) -> 
     write_config(&path, &snapshot)
 }
 
-/// 划词图标开关（全局快捷键 icon_hotkey 触发）：翻转 selection_icon 并落盘；
-/// 鼠标监听后台探测时每次现读该字段，改完立即生效。切换后弹系统通知反馈新状态
-/// （mac 未授权通知时静默失败，功能不受影响）
-pub(crate) fn toggle_selection_icon(app: &AppHandle) {
+/// 内部小改动落盘（如 dot_guide_shown 置位）：锁内改字段取快照，锁外写盘。
+/// 与 persist 的区别：不重注册快捷键、不发 config-changed（单布尔无需广播）
+pub(crate) fn with_config_write(app: &AppHandle, mutate: impl FnOnce(&mut AppConfig)) {
     let Some(path) = config_path(app) else {
-        eprintln!("[icon] 无法定位配置目录，切换未落盘");
+        eprintln!("[config] 无法定位配置目录，改动未落盘");
+        return;
+    };
+    let snapshot = {
+        let shared = app.state::<SharedConfig>();
+        let mut guard = shared.lock();
+        mutate(&mut guard);
+        guard.clone()
+    };
+    let _write = CONFIG_WRITE.lock();
+    if let Err(e) = write_config(&path, &snapshot) {
+        eprintln!("[config] 落盘失败: {e}");
+    }
+}
+
+/// 划词轻提示开关（全局快捷键 icon_hotkey / 托盘勾选项触发）：翻转 selection_dot 并落盘；
+/// 鼠标监听后台探测时每次现读该字段，改完立即生效。切换后 HUD 反馈新状态并刷新托盘勾选
+pub(crate) fn toggle_selection_dot(app: &AppHandle) {
+    let Some(path) = config_path(app) else {
+        eprintln!("[dot] 无法定位配置目录，切换未落盘");
         return;
     };
     // 锁内只翻字段取快照，磁盘 I/O 在锁外（同其余 save_* 命令）
     let (enabled, snapshot) = {
         let shared = app.state::<SharedConfig>();
         let mut guard = shared.lock();
-        guard.selection_icon = !guard.selection_icon;
-        (guard.selection_icon, guard.clone())
+        guard.selection_dot = !guard.selection_dot;
+        (guard.selection_dot, guard.clone())
     };
     let _write = CONFIG_WRITE.lock();
     if let Err(e) = write_config(&path, &snapshot) {
-        eprintln!("[icon] 切换落盘失败: {e}");
+        eprintln!("[dot] 切换落盘失败: {e}");
     }
-    // 关闭时顺手把可能还显着的图标收掉
+    // 关闭时顺手把可能还显着的小点收掉
     if !enabled {
         if let Some(win) = app.get_webview_window("icon") {
             let _ = win.hide();
         }
     }
-    // 反馈用屏上 HUD（系统 toast 显示太久且连按排队，看不出当前状态；mac 无 toast 也能统一）
     crate::windows::show_hud(
         app,
-        if enabled { "划词图标已开启" } else { "划词图标已关闭" },
+        if enabled { "划词轻提示已开启" } else { "划词轻提示已关闭" },
     );
+    crate::tray::refresh_dot_item(app, enabled);
 }
 
 /// 语言方向检测：按「中文词数 vs 英文词数」加权判定主体语言（中文词 ≈2 汉字、英文词 5~6 字母，
@@ -509,6 +531,18 @@ mod tests {
         assert_eq!(cfg.input_hotkey, "Alt+X");
         assert_eq!(cfg.popup_width, 400.0);
         assert_eq!(cfg.settings_section, "translate");
+    }
+
+    #[test]
+    fn selection_dot_reads_legacy_selection_icon_field() {
+        // 旧配置文件里字段名是 selection_icon，serde alias 必须平滑读取
+        let json = r#"{"source":"youdao","sources":["bing"],"hotkey":"Alt+Z","screenshot_hotkey":"Alt+S","ocr_lang":"auto","input_hotkey":"Alt+X","icon_hotkey":"Alt+W","popup_width":400.0,"settings_section":"translate","theme":"system","selection_icon":false}"#;
+        let cfg: AppConfig = serde_json::from_str(json).unwrap();
+        assert!(!cfg.selection_dot);
+        // 新序列化写出的是新字段名
+        let out = serde_json::to_string(&cfg).unwrap();
+        assert!(out.contains("\"selection_dot\":false"));
+        assert!(!out.contains("selection_icon"));
     }
 
     #[test]
