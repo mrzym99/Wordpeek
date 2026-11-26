@@ -5,12 +5,11 @@
 
 /// 鼠标事件回调（进程内只装一次，钩子函数从静态里取）
 pub(crate) type MouseCallback = Box<dyn Fn() + Send + Sync>;
-/// 鼠标移动回调：参数是钩子/事件自带的光标物理像素坐标（不额外调 GetCursorPos）。
-/// macOS 未用 move：监视器加 mouseMoved 会每帧唤醒主线程，不值得
+/// 鼠标移动回调：参数是钩子/事件自带的光标物理像素坐标。macOS 侧走 listen-only CGEventTap（见
+/// macos.rs 的 start_mouse_watch），Windows 侧走低级钩子
 pub(crate) type MoveCallback = Box<dyn Fn(i32, i32) + Send + Sync>;
 pub(crate) static MOUSE_ON_DOWN: std::sync::OnceLock<MouseCallback> = std::sync::OnceLock::new();
 pub(crate) static MOUSE_ON_UP: std::sync::OnceLock<MouseCallback> = std::sync::OnceLock::new();
-#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) static MOUSE_ON_MOVE: std::sync::OnceLock<MoveCallback> = std::sync::OnceLock::new();
 
 #[cfg(windows)]

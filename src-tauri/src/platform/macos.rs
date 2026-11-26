@@ -170,6 +170,20 @@ fn init_mac_screens() {
 
 // ---------- 光标与工作区 ----------
 
+/// CGEvent 坐标（点、左上原点）→ 物理像素：按点所在屏的缩放换算
+fn physical_from_point(x: f64, y: f64) -> (i32, i32) {
+    let scale = MAC_SCREENS
+        .get()
+        .and_then(|screens| {
+            screens
+                .iter()
+                .find(|s| x >= s.x && x < s.x + s.w && y >= s.y && y < s.y + s.h)
+        })
+        .map(|s| s.scale)
+        .unwrap_or(2.0);
+    ((x * scale).round() as i32, (y * scale).round() as i32)
+}
+
 pub fn cursor_pos() -> (i32, i32) {
     use core_graphics::event::CGEvent;
     use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
@@ -181,17 +195,7 @@ pub fn cursor_pos() -> (i32, i32) {
         return (100, 100);
     };
     let p = ev.location();
-    // CGEvent location 是点（左上原点），物理像素 = 点 × 所在屏的缩放
-    let scale = MAC_SCREENS
-        .get()
-        .and_then(|screens| {
-            screens
-                .iter()
-                .find(|s| p.x >= s.x && p.x < s.x + s.w && p.y >= s.y && p.y < s.y + s.h)
-        })
-        .map(|s| s.scale)
-        .unwrap_or(2.0);
-    ((p.x * scale).round() as i32, (p.y * scale).round() as i32)
+    physical_from_point(p.x, p.y)
 }
 
 /// 光标所在显示器的工作区（物理像素，排除菜单栏/Dock）；拿不到时返回 (0,0,0,0)，
@@ -333,22 +337,51 @@ pub fn clipboard_owner_is_self() -> bool {
 
 // ---------- 划词图标：全局鼠标监听 + 系统选区 ----------
 
-// 回调槽（MOUSE_ON_*）在 super（platform/mod.rs）共用；MOUSE_ON_MOVE 在 macOS 未用（见 super 的 MoveCallback 注释）
-use super::{MOUSE_ON_DOWN, MOUSE_ON_UP, MouseCallback, MoveCallback};
+// 回调槽（MOUSE_ON_*）在 super（platform/mod.rs）共用
+use super::{MOUSE_ON_DOWN, MOUSE_ON_MOVE, MOUSE_ON_UP, MouseCallback, MoveCallback};
 
 /// 装全局鼠标监听：左键按下/松开各回调一次。用 AppKit 全局监视器而非 CGEventTap：鼠标事件
 /// 不需要额外授权，也不会让全系统鼠标事件排队等回调。监视器必须主线程注册，token 一释放
 /// 监视器就失效——泄漏掉最省心（进程活多久它就活多久）。
+/// 移动另走 listen-only 的 CGEventTap：AppKit 全局监视器收不到别的 app 的 mouseMoved（实测 0 事件），
+/// 而小点 hover 展开（proximity）就靠它。tap 装不上只影响展开，按下/松开照旧。
 pub fn start_mouse_watch(
     on_down: MouseCallback,
     on_up: MouseCallback,
-    _on_move: MoveCallback,
+    on_move: MoveCallback,
 ) -> bool {
     use objc2_app_kit::{NSEvent, NSEventMask};
     use std::ptr::NonNull;
 
     let _ = MOUSE_ON_DOWN.set(on_down);
     let _ = MOUSE_ON_UP.set(on_up);
+    let _ = MOUSE_ON_MOVE.set(on_move);
+    // tap 的 run loop 会一直阻塞，独立线程跑；回调从静态槽取，避免和按下/松开抢所有权
+    std::thread::spawn(|| {
+        use core_foundation::runloop::CFRunLoop;
+        use core_graphics::event::{
+            CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventType,
+            CallbackResult,
+        };
+        let installed = CGEventTap::with_enabled(
+            CGEventTapLocation::HID,
+            CGEventTapPlacement::HeadInsertEventTap,
+            CGEventTapOptions::ListenOnly,
+            vec![CGEventType::MouseMoved],
+            |_proxy, _ty, event| {
+                if let Some(cb) = MOUSE_ON_MOVE.get() {
+                    let p = event.location();
+                    let (x, y) = physical_from_point(p.x, p.y);
+                    cb(x, y);
+                }
+                CallbackResult::Keep
+            },
+            || CFRunLoop::run_current(),
+        );
+        if installed.is_err() {
+            crate::platform::debug_log("[dot] CGEventTap 装不上，小点 hover 展开不可用（查辅助功能授权）");
+        }
+    });
     {
         let down = block2::RcBlock::new(|_e: NonNull<NSEvent>| {
             if let Some(cb) = MOUSE_ON_DOWN.get() {
