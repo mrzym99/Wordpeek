@@ -25,8 +25,6 @@ enum Signal {
 const SETTLE_MS: u64 = 350;
 /// 静置期间光标漂移超过这么远（曼哈顿距离，物理像素）就算「挪走了」，不出点
 const SETTLE_DRIFT_PX: i32 = 10;
-/// 光标进入小点窗口外扩这么远的矩形即「靠近」，展开「翻译」胶囊（far→near 边沿触发）
-const DOT_PROXIMITY_PX: i32 = 36;
 /// 小点无交互这么久自动收起（展开态无超时；收回小点时重新计时）
 const DOT_TIMEOUT_MS: u64 = 2500;
 /// 探测完成时光标离松手点超过这么远就丢弃：很多应用一直报旧选区，人不在不该弹；400px 给 Cmd+C 兜底（≥300ms）留余量
@@ -49,14 +47,11 @@ fn settle_passes(dirty: bool, gen_start: u64, gen_now: u64, enabled: bool) -> bo
     !dirty && gen_start == gen_now && enabled
 }
 
-/// 纯判定：光标是否落在矩形外扩 margin 的盒内（与旧 Leave 判定同构取反）；
-/// 盒状而非欧氏距离，判定只做四次比较，钩子回调可用
-fn within_margin(x: i32, y: i32, rect: (i32, i32, u32, u32), margin: i32) -> bool {
+/// 纯判定：光标是否落在矩形内（含左/上边，不含右/下边）；
+/// 盒状判定只做四次比较，钩子回调可用
+fn within_rect(x: i32, y: i32, rect: (i32, i32, u32, u32)) -> bool {
     let (rx, ry, rw, rh) = rect;
-    x >= rx - margin
-        && x < rx + rw as i32 + margin
-        && y >= ry - margin
-        && y < ry + rh as i32 + margin
+    x >= rx && x < rx + rw as i32 && y >= ry && y < ry + rh as i32
 }
 
 /// 纯判定：小点是否已超时无交互
@@ -91,8 +86,13 @@ pub(crate) fn start_selection_dot(app: &AppHandle) {
                     SETTLE_DIRTY.store(true, Ordering::Relaxed);
                 }
             }
-            let near = if let Some(rect) = *super::dot::DOT_RECT.lock() {
-                within_margin(x, y, rect, DOT_PROXIMITY_PX)
+            let near = if let Some(rect) = if super::dot::DOT_EXPANDED.load(Ordering::Relaxed) {
+                // 展开态认 28px 展开矩形（滞回）：hover 到 16px 本体才展开，离开展开图标才收回
+                *super::dot::DOT_CHIP_EXPANDED_RECT.lock()
+            } else {
+                *super::dot::DOT_CHIP_RECT.lock()
+            } {
+                within_rect(x, y, rect)
             } else {
                 false
             };
@@ -311,18 +311,16 @@ fn arm_dot_timeout(worker: &AppHandle) {
 mod tests {
     use super::*;
 
-    const RECT: (i32, i32, u32, u32) = (100, 100, 40, 40);
-
     #[test]
-    fn within_margin_is_box_expanded_rect() {
+    fn within_rect_is_box_containment() {
+        const RECT: (i32, i32, u32, u32) = (100, 100, 40, 40);
         // 矩形内 → 近
-        assert!(within_margin(120, 120, RECT, DOT_PROXIMITY_PX));
-        // 外扩 margin 的边界内（含边）→ 近：x 最大 100+40+36-1=175
-        assert!(within_margin(175, 120, RECT, DOT_PROXIMITY_PX));
-        // 边界外 1px → 远
-        assert!(!within_margin(176, 120, RECT, DOT_PROXIMITY_PX));
-        assert!(!within_margin(63, 120, RECT, DOT_PROXIMITY_PX)); // 100-36-1
-        assert!(!within_margin(120, 176, RECT, DOT_PROXIMITY_PX));
+        assert!(within_rect(120, 120, RECT));
+        // 左/上边含、右/下边不含
+        assert!(within_rect(100, 100, RECT));
+        assert!(!within_rect(140, 120, RECT));
+        assert!(!within_rect(99, 120, RECT));
+        assert!(!within_rect(120, 140, RECT));
     }
 
     #[test]

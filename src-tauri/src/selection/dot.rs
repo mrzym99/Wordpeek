@@ -12,6 +12,12 @@ pub(crate) static DOWN_ON_DOT: AtomicBool = AtomicBool::new(false);
 /// 划词轻提示最近一次 show 的屏幕矩形（物理像素 x,y,w,h）：钩子回调用它判断是否点在小点上，
 /// 避免回调里跨线程查窗口
 pub(crate) static DOT_RECT: Mutex<Option<(i32, i32, u32, u32)>> = Mutex::new(None);
+/// 可见小点本体（chip，窗口内逻辑偏移 (2,2)）的屏幕矩形（物理像素）：静止态 16×16，展开态
+/// 28×28（同左上角）。展开判定只认小点本体——整个 84×44 窗口大部分是透明留白，拿窗口矩形
+/// 判「靠近」会离得老远就展开；两个矩形构成滞回：hover 到 16px 本体才展开，离开 28px 展开
+/// 图标才收回，避免在展开图标边缘来回抖
+pub(crate) static DOT_CHIP_RECT: Mutex<Option<(i32, i32, u32, u32)>> = Mutex::new(None);
+pub(crate) static DOT_CHIP_EXPANDED_RECT: Mutex<Option<(i32, i32, u32, u32)>> = Mutex::new(None);
 /// 光标当前是否在小点 proximity 盒内（move 回调记、边沿检测用）
 pub(crate) static CURSOR_NEAR: AtomicBool = AtomicBool::new(false);
 /// 「翻译」胶囊是否处于展开态（超时定时器据此不误收展开态）
@@ -29,6 +35,8 @@ pub(crate) struct DotState {
 
 pub(crate) fn hide_selection_dot(app: &AppHandle) {
     *DOT_RECT.lock() = None;
+    *DOT_CHIP_RECT.lock() = None;
+    *DOT_CHIP_EXPANDED_RECT.lock() = None;
     if let Some(win) = app.get_webview_window("icon") {
         let _ = win.hide();
     }
@@ -67,6 +75,15 @@ pub(crate) fn show_selection_dot(app: &AppHandle, text: String, ax: i32, ay: i32
         if let Ok(size) = &outer {
             *DOT_RECT.lock() = Some((x, y, size.width, size.height));
         }
+        // chip 在窗口内的逻辑偏移 (2,2)：静止态 16×16、展开态 28×28（同左上角，见 SelectionIcon
+        // 样式），按 scale 换算成物理像素
+        let scale = win.scale_factor().unwrap_or(1.0);
+        let chip_xy = (2.0 * scale).round() as i32;
+        let chip_w = (16.0 * scale).round() as u32;
+        let chip_w_expanded = (28.0 * scale).round() as u32;
+        *DOT_CHIP_RECT.lock() = Some((x + chip_xy, y + chip_xy, chip_w, chip_w));
+        *DOT_CHIP_EXPANDED_RECT.lock() =
+            Some((x + chip_xy, y + chip_xy, chip_w_expanded, chip_w_expanded));
         let shown = win.show();
         let _ = inner.emit(
             "dot-state",
